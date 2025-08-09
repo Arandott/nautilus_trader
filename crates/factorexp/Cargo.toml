@@ -1,0 +1,42 @@
+[package]
+name = "nautilus-factorexp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "High-performance factor expression operators for Nautilus Trader"
+license.workspace = true
+
+[lib]
+name = "nautilus_factorexp"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+arraydeque = "0.5"
+nalgebra = "0.33"
+num-traits = "0.2"
+rayon = { version = "1.10", optional = true }
+statrs = "0.17"
+thiserror = "2"
+
+# Nautilus dependencies
+nautilus-model = { workspace = true }
+
+# Python bindings
+pyo3 = { workspace = true, optional = true }
+pyo3-async-runtimes = { workspace = true, optional = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+proptest = { workspace = true }
+rstest = { workspace = true }
+
+[features]
+default = []
+extension-module = ["pyo3/extension-module"]
+python = ["dep:pyo3", "dep:pyo3-async-runtimes"]
+parallel = ["dep:rayon"]
+
+[[bench]]
+name = "operators"
+harness = false

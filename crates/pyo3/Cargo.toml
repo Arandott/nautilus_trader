@@ -36,6 +36,7 @@ extension-module = [
   "nautilus-coinbase-intx/extension-module",
   "nautilus-databento/extension-module",
   "nautilus-tardis/extension-module",
+  "nautilus-factorexp/extension-module",
 ]
 ffi = [
   "nautilus-common/ffi",
@@ -57,6 +58,7 @@ nautilus-common = { workspace = true, features = ["python"] }
 nautilus-core = { workspace = true, features = ["python"] }
 nautilus-cryptography = { workspace = true, features = ["python"] }
 nautilus-execution = { workspace = true, features = ["python"] }
+nautilus-factorexp = { workspace = true, features = ["python"] }
 nautilus-indicators = { workspace = true, features = ["python"] }
 nautilus-infrastructure = { workspace = true, features = ["python"] }
 nautilus-model = { workspace = true, features = ["python"] }

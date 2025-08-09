@@ -39,6 +39,7 @@ extension-module = [
   "nautilus-deribit/extension-module",
   "nautilus-dydx/extension-module",
   "nautilus-execution/extension-module",
+  "nautilus-factorexp/extension-module",
   "nautilus-hyperliquid/extension-module",
   "nautilus-indicators/extension-module",
   "nautilus-kraken/extension-module",
@@ -77,6 +78,7 @@ nautilus-common = { workspace = true, features = ["python"] }
 nautilus-core = { workspace = true, features = ["python"] }
 nautilus-cryptography = { workspace = true, features = ["python"] }
 nautilus-execution = { workspace = true, features = ["python"] }
+nautilus-factorexp = { workspace = true, features = ["python"] }
 nautilus-indicators = { workspace = true, features = ["python"] }
 nautilus-infrastructure = { workspace = true, features = ["python"] }
 nautilus-live = { workspace = true, features = ["python"] }

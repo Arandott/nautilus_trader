@@ -21,6 +21,7 @@ statrs = "0.17"
 thiserror = "2"
 
 # Nautilus dependencies
+nautilus-core = { workspace = true }
 nautilus-model = { workspace = true }
 
 # Python bindings

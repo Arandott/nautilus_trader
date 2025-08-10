@@ -1,0 +1,24 @@
+
+graph TB
+    subgraph "Current FactorExp Architecture"
+        E1[Expression String] --> P1[Parser]
+        P1 --> AST1[AST]
+        AST1 --> V1[Visitor Pattern]
+        V1 --> R1[Python Computation]
+    end
+    
+    subgraph "Proposed Hybrid Architecture"
+        E2[Expression String] --> P2[Parser]
+        P2 --> AST2[AST]
+        AST2 --> OPT[Optimizer]
+        OPT --> |Adaptable| NA[Native Adapter]
+        OPT --> |Custom| FE[FactorExp Engine]
+        NA --> NT[NT Native Indicators<br/>Rust/Cython]
+        FE --> PC[Python Computation]
+        NT --> R2[Result]
+        PC --> R2
+    end
+    
+    style NT fill:#afa,stroke:#333,stroke-width:3px
+    style NA fill:#aaf,stroke:#333,stroke-width:2px
+    style OPT fill:#faa,stroke:#333,stroke-width:2px

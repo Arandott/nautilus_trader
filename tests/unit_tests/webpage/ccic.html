@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>朝乾资本 - 数字货币多策略投资</title>
+    <!-- 引入Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        /* 自定义样式 */
+        body {
+            font-family: 'Inter', 'Noto Serif SC', serif;
+            background-color: #121212; /* 深黑色背景 */
+            color: #E5E7EB; /* 默认文字颜色 */
+        }
+        /* 定义金色 */
+        .text-gold {
+            color: #bda777;
+        }
+        .bg-gold {
+            background-color: #bda777;
+        }
+        .border-gold {
+            border-color: #bda777;
+        }
+        /* 滚动行为 */
+        html {
+            scroll-behavior: smooth;
+        }
+        /* 标题字体 */
+        h1, h2, h3 {
+            font-family: 'Noto Serif SC', serif;
+        }
+        /* 导航栏激活状态 */
+        .nav-link.active {
+            color: #bda777;
+            border-bottom: 2px solid #bda777;
+        }
+        /* 渐变背景 */
+        .hero-gradient {
+            background: radial-gradient(ellipse at center, rgba(40, 40, 40, 0.5) 0%, #121212 70%);
+        }
+        .section-divider {
+            border-top: 1px solid rgba(189, 167, 119, 0.2);
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <!-- 导航栏 -->
+    <header id="navbar" class="bg-black bg-opacity-80 backdrop-blur-sm sticky top-0 z-50 transition-all duration-300">
+        <div class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <img src="https://storage.googleapis.com/gemini-prod-us-west1-433553959293/uploaded/20240307_%E6%9C%9D%E4%B9%BE%E8%B5%84%E6%9C%ACS6-%E4%BA%A4%E4%BB%98-15.jpg" alt="朝乾资本 Logo" class="h-10 w-10 object-contain">
+                <span class="text-xl font-bold text-white tracking-wider">朝乾资本</span>
+            </div>
+            <nav class="hidden md:flex space-x-8">
+                <a href="#home" class="nav-link text-gray-300 hover:text-gold transition duration-300 pb-1">首页</a>
+                <a href="#services" class="nav-link text-gray-300 hover:text-gold transition duration-300 pb-1">主营业务</a>
+                <a href="#advantages" class="nav-link text-gray-300 hover:text-gold transition duration-300 pb-1">核心优势</a>
+                <a href="#audience" class="nav-link text-gray-300 hover:text-gold transition duration-300 pb-1">目标客户</a>
+                <a href="#contact" class="nav-link text-gray-300 hover:text-gold transition duration-300 pb-1">联系我们</a>
+            </nav>
+            <div class="md:hidden">
+                <button id="menu-btn" class="text-white focus:outline-none">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+                </button>
+            </div>
+        </div>
+        <!-- 移动端菜单 -->
+        <div id="mobile-menu" class="hidden md:hidden">
+            <a href="#home" class="block py-2 px-6 text-sm text-gray-300 hover:bg-gray-800">首页</a>
+            <a href="#services" class="block py-2 px-6 text-sm text-gray-300 hover:bg-gray-800">主营业务</a>
+            <a href="#advantages" class="block py-2 px-6 text-sm text-gray-300 hover:bg-gray-800">核心优势</a>
+            <a href="#audience" class="block py-2 px-6 text-sm text-gray-300 hover:bg-gray-800">目标客户</a>
+            <a href="#contact" class="block py-2 px-6 text-sm text-gray-300 hover:bg-gray-800">联系我们</a>
+        </div>
+    </header>
+
+    <!-- 主体内容 -->
+    <main>
+        <!-- Hero Section -->
+        <section id="home" class="min-h-screen flex items-center justify-center text-center hero-gradient">
+            <div class="container mx-auto px-6">
+                <img src="https://storage.googleapis.com/gemini-prod-us-west1-433553959293/uploaded/20240307_%E6%9C%9D%E4%B9%BE%E8%B5%84%E6%9C%ACS6-%E4%BA%A4%E4%BB%98-15.jpg" alt="朝乾资本 Logo" class="w-40 h-40 mx-auto mb-6" onerror="this.onerror=null; this.src='https://placehold.co/160x160/121212/bda777?text=Logo';">
+                <h1 class="text-4xl md:text-6xl font-bold text-white mb-4 tracking-widest">朝乾资本</h1>
+                <p class="text-lg md:text-2xl text-gold font-semibold tracking-wider">数字货币多策略价值投资</p>
+            </div>
+        </section>
+
+        <!-- 主营业务 Section -->
+        <section id="services" class="py-20 md:py-32 bg-black">
+            <div class="container mx-auto px-6 text-center">
+                <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">主营业务</h2>
+                <div class="w-20 h-1 bg-gold mx-auto mb-12"></div>
+                <p class="max-w-3xl mx-auto text-lg text-gray-400 mb-16">
+                    我们专注于数字货币领域，通过严谨的多策略分析与执行，为投资者在全球加密市场中捕捉稳健且具有高增长潜力的机会。
+                </p>
+                <div class="grid md:grid-cols-3 gap-8">
+                    <div class="bg-gray-900 p-8 rounded-lg border border-gray-800 transform hover:-translate-y-2 transition-transform duration-300">
+                        <div class="text-gold mb-4">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0h6m-6-10h6m0 10v-6a2 2 0 00-2-2h-2a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2z" /></svg>
+                        </div>
+                        <h3 class="text-xl font-bold text-white mb-2">量化交易</h3>
+                        <p class="text-gray-400">基于数据模型与算法，执行高频、低延迟的交易策略，捕捉市场微小波动。</p>
+                    </div>
+                    <div class="bg-gray-900 p-8 rounded-lg border border-gray-800 transform hover:-translate-y-2 transition-transform duration-300">
+                        <div class="text-gold mb-4">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+                        </div>
+                        <h3 class="text-xl font-bold text-white mb-2">价值投资</h3>
+                        <p class="text-gray-400">深入研究项目基本面，发掘被市场低估的、具有长期增长潜力的数字资产。</p>
+                    </div>
+                    <div class="bg-gray-900 p-8 rounded-lg border border-gray-800 transform hover:-translate-y-2 transition-transform duration-300">
+                        <div class="text-gold mb-4">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                        </div>
+                        <h3 class="text-xl font-bold text-white mb-2">风险管理</h3>
+                        <p class="text-gray-400">构建多元化的资产组合，利用对冲工具，有效控制市场系统性风险。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <div class="container mx-auto section-divider"></div>
+
+        <!-- 核心优势 Section -->
+        <section id="advantages" class="py-20 md:py-32 bg-[#121212]">
+            <div class="container mx-auto px-6">
+                <div class="text-center mb-16">
+                    <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">核心优势</h2>
+                    <div class="w-20 h-1 bg-gold mx-auto"></div>
+                </div>
+                <div class="grid md:grid-cols-2 gap-12 items-center">
+                    <div class="text-center md:text-left">
+                        <h3 class="text-2xl md:text-3xl font-bold text-gold mb-4">严格的投资风格</h3>
+                        <p class="text-lg text-gray-400 leading-relaxed">
+                            我们秉持“朝乾夕惕”的古训，以秩序和纪律为准则。每一项投资决策都基于深度研究与数据驱动，摒弃市场噪音与投机情绪，追求确定性收益。我们的风格是审慎、严谨且始终如一的。
+                        </p>
+                    </div>
+                    <div class="text-center md:text-left">
+                        <h3 class="text-2xl md:text-3xl font-bold text-gold mb-4">优越的投资收益</h3>
+                        <p class="text-lg text-gray-400 leading-relaxed">
+                            在严格风控的前提下，我们凭借专业的投研团队和先进的交易系统，为客户创造了长期、稳定且超越市场平均水平的优越回报。历史业绩证明了我们策略的有效性与前瞻性。
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <div class="container mx-auto section-divider"></div>
+
+        <!-- 目标客户 Section -->
+        <section id="audience" class="py-20 md:py-32 bg-black">
+            <div class="container mx-auto px-6 text-center">
+                <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">目标客户</h2>
+                <div class="w-20 h-1 bg-gold mx-auto mb-12"></div>
+                <div class="max-w-4xl mx-auto grid md:grid-cols-2 gap-8 text-left">
+                    <div class="bg-gray-900 p-8 rounded-lg border border-gray-800">
+                        <h3 class="text-2xl font-bold text-white mb-3">个人投资者</h3>
+                        <p class="text-gray-400">
+                            为高净值个人客户提供专业的数字资产管理服务，帮助您在复杂的市场中实现财富的保值增值。我们提供透明的报告和一对一的咨询。
+                        </p>
+                    </div>
+                    <div class="bg-gray-900 p-8 rounded-lg border border-gray-800">
+                        <h3 class="text-2xl font-bold text-white mb-3">机构投资者</h3>
+                        <p class="text-gray-400">
+                            为家族办公室、基金会及其他机构提供定制化的数字货币投资解决方案。我们严格的合规与风控体系，是您值得信赖的合作伙伴。
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 页脚 -->
+    <footer id="contact" class="bg-black border-t border-gray-800">
+        <div class="container mx-auto py-12 px-6 text-center text-gray-400">
+            <h2 class="text-2xl font-bold text-white mb-6">联系我们</h2>
+            <p class="mb-2">开启您的数字财富之旅</p>
+            <a href="mailto:contact@chaochiencap.com" class="text-lg text-gold hover:underline">contact@chaochiencap.com</a>
+            <p class="mt-6 text-sm">地址：[公司地址] | 电话：[公司电话]</p>
+            <div class="mt-8 border-t border-gray-700 pt-8">
+                <p class="text-xs">&copy; 2024 朝乾资本 (Chaochien Capital). All Rights Reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // 移动菜单切换
+        const menuBtn = document.getElementById('menu-btn');
+        const mobileMenu = document.getElementById('mobile-menu');
+        menuBtn.addEventListener('click', () => {
+            mobileMenu.classList.toggle('hidden');
+        });
+
+        // 导航栏滚动效果和激活状态
+        const navbar = document.getElementById('navbar');
+        const navLinks = document.querySelectorAll('.nav-link');
+        const sections = document.querySelectorAll('section');
+
+        window.addEventListener('scroll', () => {
+            // 导航栏背景变化
+            if (window.scrollY > 50) {
+                navbar.classList.add('shadow-lg');
+            } else {
+                navbar.classList.remove('shadow-lg');
+            }
+
+            // 导航链接激活状态
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                if (pageYOffset >= sectionTop - 100) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            navLinks.forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('href').includes(current)) {
+                    link.classList.add('active');
+                }
+            });
+        });
+
+        // 关闭移动菜单当点击链接时
+        document.querySelectorAll('#mobile-menu a').forEach(link => {
+            link.addEventListener('click', () => {
+                mobileMenu.classList.add('hidden');
+            });
+        });
+    </script>
+
+</body>
+</html>

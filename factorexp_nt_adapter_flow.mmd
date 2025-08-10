@@ -1,0 +1,36 @@
+
+sequenceDiagram
+    participant User
+    participant FEI as FactorExpIndicator
+    participant AE as AdapterEngine
+    participant NA as NativeAdapter
+    participant NT as NT Indicator
+    participant FE as FactorExp Engine
+    
+    User->>FEI: Create("TS_Mean($close, 20)")
+    FEI->>FEI: Parse expression
+    FEI->>AE: Can adapt this expression?
+    
+    alt Expression is adaptable
+        AE->>NA: Create adapter
+        NA->>NT: Create SimpleMovingAverage(20)
+        NA-->>FEI: Return native indicator
+        Note right of FEI: Use native indicator<br/>for all computations
+        
+        loop On each update
+            User->>FEI: update_raw(value)
+            FEI->>NT: update_raw(value)
+            NT-->>FEI: Computed result
+        end
+        
+    else Expression not adaptable
+        AE-->>FEI: Cannot adapt
+        FEI->>FE: Setup FactorExp engine
+        Note right of FEI: Use Python engine
+        
+        loop On each update
+            User->>FEI: update_raw(value)
+            FEI->>FE: compute(value)
+            FE-->>FEI: Computed result
+        end
+    end

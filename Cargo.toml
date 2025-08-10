@@ -14,6 +14,7 @@ members = [
     "crates/cryptography",
     "crates/data",
     "crates/execution",
+    "crates/factorexp",
     "crates/indicators",
     "crates/infrastructure",
     "crates/live",
@@ -52,6 +53,7 @@ nautilus-core = { path = "crates/core", version = "0.49.0" }
 nautilus-cryptography = { path = "crates/cryptography", version = "0.49.0" }
 nautilus-data = { path = "crates/data", version = "0.49.0" }
 nautilus-execution = { path = "crates/execution", version = "0.49.0" }
+nautilus-factorexp = { path = "crates/factorexp", version = "0.49.0" }
 nautilus-indicators = { path = "crates/indicators", version = "0.49.0" }
 nautilus-infrastructure = { path = "crates/infrastructure", version = "0.49.0" }
 nautilus-live = { path = "crates/live", version = "0.49.0" }

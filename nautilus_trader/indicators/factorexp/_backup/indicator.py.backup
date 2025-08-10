@@ -1,0 +1,383 @@
+"""
+Main FactorExp indicator for Nautilus Trader.
+
+This module provides the core indicator class that enables FactorExp
+expressions to be used within Nautilus Trader strategies.
+"""
+
+from typing import Optional, Dict, Any
+import numpy as np
+
+from nautilus_trader.core.correctness import PyCondition
+from nautilus_trader.indicators.base.indicator import Indicator
+from nautilus_trader.model.data import Bar, QuoteTick, TradeTick
+from nautilus_trader.model.enums import PriceType
+
+from nautilus_trader.indicators.factorexp.expressions.parser import ExpressionParser, ParseError
+from nautilus_trader.indicators.factorexp.expressions.validator import ExpressionValidator
+from nautilus_trader.indicators.factorexp.expressions.ast import Expression
+from nautilus_trader.indicators.factorexp.security.config import SecurityConfig, SecurityLevel
+from nautilus_trader.indicators.factorexp.core.engine import (
+    ComputationEngine,
+    ComputationContext,
+    ExpressionCompiler,
+)
+from nautilus_trader.indicators.factorexp.core.bridge import StreamingBridge
+from nautilus_trader.indicators.factorexp.operators.rolling import RollingOperators
+from nautilus_trader.indicators.factorexp.operators.cross_sectional import CrossSectionalManager
+
+
+class FactorExpIndicator(Indicator):
+    """
+    An indicator that evaluates FactorExp expressions on streaming market data.
+    
+    Provides a bridge between FactorExp's expression language and Nautilus Trader's
+    indicator framework, enabling complex factor computations in live trading.
+    
+    Parameters
+    ----------
+    expression : str
+        The FactorExp expression to evaluate (e.g., "TS_Mean($close, 20)")
+    period : int, optional
+        The maximum lookback period required by the expression
+    security_config : SecurityConfig, optional
+        Security configuration for expression validation and execution
+    name : str, optional
+        Custom name for the indicator (defaults to the expression)
+    cache_enabled : bool, default=True
+        Whether to cache parsed expressions for performance
+    
+    Raises
+    ------
+    ParseError
+        If the expression cannot be parsed
+    ValueError
+        If the expression fails validation
+    
+    Examples
+    --------
+    >>> # Simple moving average ratio
+    >>> indicator = FactorExpIndicator("TS_Mean($close, 20) / TS_Mean($close, 50)")
+    
+    >>> # Sharpe ratio approximation
+    >>> indicator = FactorExpIndicator(
+    ...     "TS_Mean($close, 20) / TS_Std($close, 20)",
+    ...     period=20,
+    ...     name="SharpeApprox"
+    ... )
+    
+    >>> # Complex factor with security config
+    >>> config = SecurityConfig.standard()
+    >>> indicator = FactorExpIndicator(
+    ...     "ZScore(TS_Mean($volume * $close, 10) / TS_Mean($volume, 10))",
+    ...     period=10,
+    ...     security_config=config
+    ... )
+    """
+    
+    def __init__(
+        self,
+        expression: str,
+        period: Optional[int] = None,
+        security_config: Optional[SecurityConfig] = None,
+        name: Optional[str] = None,
+        cache_enabled: bool = True,
+        multi_instrument: bool = False,
+        time_tolerance_ns: int = 1_000_000,  # 1ms default
+        use_rust: bool = True,  # Enable Rust operators by default
+    ):
+        """Initialize the FactorExp indicator."""
+        # Validate inputs
+        PyCondition.not_none(expression, "expression")
+        PyCondition.not_empty(expression.strip(), "expression")
+        if period is not None:
+            PyCondition.positive_int(period, "period")
+        
+        # Set up security config
+        self.security_config = security_config or SecurityConfig.standard()
+        
+        # Parse and validate expression
+        self._parser = ExpressionParser()
+        self._validator = ExpressionValidator(
+            max_depth=self.security_config.max_expression_depth,
+            max_features=self.security_config.max_features,
+            max_operators=self.security_config.max_operators,
+            max_window=self.security_config.max_window_size,
+            allowed_operators=self.security_config.allowed_operators,
+            allowed_features=self.security_config.forbidden_features,
+        )
+        
+        try:
+            self._ast = self._parser.parse(expression)
+        except ParseError as e:
+            raise ValueError(f"Failed to parse expression: {str(e)}")
+        
+        # Validate expression
+        validation_result = self._validator.validate(self._ast)
+        if not validation_result.is_valid:
+            raise ValueError(f"Expression validation failed: {validation_result.error}")
+        
+        # Issue warnings if any
+        for warning in validation_result.warnings:
+            print(f"Warning: {warning}")
+        
+        # Extract metadata
+        self._features = list(set(self._ast.get_features()))
+        self._operators = self._ast.get_operators()
+        self._has_cross_sectional = validation_result.metadata.get('has_cross_sectional', False)
+        
+        # Determine period if not provided
+        if period is None:
+            period = self._estimate_required_period()
+        
+        # Initialize base class
+        super().__init__(params=[expression, period])
+        
+        # Set indicator properties
+        self.expression = expression
+        self.period = period
+        self.name = name or self._generate_name(expression)
+        self.cache_enabled = cache_enabled
+        self.multi_instrument = multi_instrument
+        self.time_tolerance_ns = time_tolerance_ns
+        
+        # Initialize state
+        self.value = 0.0
+        self.count = 0
+        self._data_buffer: Dict[str, list] = {
+            feature: [] for feature in self._features
+        }
+        
+        # Initialize cross-sectional manager if needed
+        self._cross_sectional_manager = None
+        if self.multi_instrument:
+            self._cross_sectional_manager = CrossSectionalManager(time_tolerance_ns)
+            # Store current instrument ID (will be set during registration)
+            self._instrument_id = None
+        
+        # Cache for computed values
+        self._cache: Dict[str, Any] = {}
+        
+        # Initialize computation engine and context
+        self._engine = ComputationEngine(
+            security_config=self.security_config,
+            use_rust=use_rust
+        )
+        self._compiler = ExpressionCompiler()
+        self._compiled_expr = self._compiler.compile(self._ast)
+        
+        # Create computation context
+        self._computation_context = ComputationContext(
+            security_config=self.security_config,
+            cross_sectional_manager=self._cross_sectional_manager
+        )
+        
+        # Register additional streaming operators
+        self._register_extended_operators()
+    
+    def _estimate_required_period(self) -> int:
+        """Estimate the required period based on the expression."""
+        # Find maximum window size in the expression
+        max_window = 1
+        
+        for op in self._ast.get_operators():
+            # This is a simplified approach - will be enhanced when implementing operators
+            if op.startswith('TS_'):
+                # For now, use a default window size
+                max_window = max(max_window, 20)
+        
+        return max_window
+    
+    def _generate_name(self, expression: str) -> str:
+        """Generate a readable name from the expression."""
+        # Truncate long expressions
+        if len(expression) > 30:
+            return f"FactorExp_{expression[:27]}..."
+        return f"FactorExp_{expression}"
+    
+    def _register_extended_operators(self):
+        """Register extended streaming operators with the bridge."""
+        # Register operators from RollingOperators
+        for operator_name, operator_class in RollingOperators.OPERATORS.items():
+            if operator_class is not None:
+                StreamingBridge.register_computation(operator_name, operator_class)
+    
+    def handle_quote_tick(self, tick: QuoteTick):
+        """
+        Update the indicator with a quote tick.
+        
+        Parameters
+        ----------
+        tick : QuoteTick
+            The quote tick to process
+        """
+        PyCondition.not_none(tick, "tick")
+        
+        # Extract relevant prices
+        data = {
+            'bid': tick.bid_price.as_double(),
+            'ask': tick.ask_price.as_double(),
+            'mid': (tick.bid_price.as_double() + tick.ask_price.as_double()) / 2,
+            'spread': tick.ask_price.as_double() - tick.bid_price.as_double(),
+            'bid_size': tick.bid_size.as_double(),
+            'ask_size': tick.ask_size.as_double(),
+        }
+        
+        self._update_with_data(data, tick.ts_event, None)
+    
+    def handle_trade_tick(self, tick: TradeTick):
+        """
+        Update the indicator with a trade tick.
+        
+        Parameters
+        ----------
+        tick : TradeTick
+            The trade tick to process
+        """
+        PyCondition.not_none(tick, "tick")
+        
+        # Extract trade data
+        data = {
+            'price': tick.price.as_double(),
+            'size': tick.size.as_double(),
+        }
+        
+        self._update_with_data(data, tick.ts_event, None)
+    
+    def handle_bar(self, bar: Bar):
+        """
+        Update the indicator with a bar.
+        
+        Parameters
+        ----------
+        bar : Bar
+            The bar to process
+        """
+        PyCondition.not_none(bar, "bar")
+        
+        # Extract instrument ID if in multi-instrument mode
+        instrument_id = None
+        if self.multi_instrument and bar.bar_type:
+            instrument_id = str(bar.bar_type.instrument_id)
+        
+        # Extract OHLCV data
+        data = {
+            'open': bar.open.as_double(),
+            'high': bar.high.as_double(), 
+            'low': bar.low.as_double(),
+            'close': bar.close.as_double(),
+            'volume': bar.volume.as_double(),
+        }
+        
+        self._update_with_data(data, bar.ts_event, instrument_id)
+    
+    def _update_with_data(self, data: Dict[str, float], timestamp: int, instrument_id: Optional[str] = None):
+        """
+        Update the indicator with new data.
+        
+        Parameters
+        ----------
+        data : Dict[str, float]
+            Dictionary of feature values
+        timestamp : int
+            Event timestamp in nanoseconds
+        instrument_id : Optional[str]
+            Instrument identifier for multi-instrument mode
+        """
+        # Update buffers for available features
+        for feature in self._features:
+            if feature in data:
+                self._data_buffer[feature].append(data[feature])
+                
+                # Maintain buffer size
+                if len(self._data_buffer[feature]) > self.period:
+                    self._data_buffer[feature].pop(0)
+        
+        # Check if we have enough data
+        min_buffer_len = min(len(buffer) for buffer in self._data_buffer.values())
+        if min_buffer_len == 0:
+            return
+        
+        # Mark that we have inputs
+        if not self.has_inputs:
+            self._set_has_inputs(True)
+        
+        # Increment count
+        self.count += 1
+        
+        # Compute value if we have enough history
+        if self.count >= self.period:
+            if not self.initialized:
+                self._set_initialized(True)
+            
+            # Compute the expression value
+            self._compute_value(timestamp, instrument_id)
+    
+    def _compute_value(self, timestamp: int, instrument_id: Optional[str] = None):
+        """Compute the current value of the expression."""
+        # Get latest data values
+        data = {}
+        for feature in self._features:
+            if feature in self._data_buffer and self._data_buffer[feature]:
+                # Use the most recent value
+                data[feature] = self._data_buffer[feature][-1]
+        
+        if not data:
+            # No data available
+            self.value = 0.0
+            return
+        
+        # Update context with current instrument and timestamp for cross-sectional ops
+        self._computation_context.instrument_id = instrument_id
+        self._computation_context.timestamp = timestamp
+        
+        try:
+            # Compute using the engine
+            self.value = self._engine.compute(
+                self._compiled_expr.expression,
+                data,
+                self._computation_context
+            )
+        except Exception as e:
+            # Log error and use previous value
+            print(f"Computation error in {self.name}: {str(e)}")
+            # Keep previous value on error
+    
+    def _reset(self):
+        """Reset the indicator state."""
+        self.value = 0.0
+        self.count = 0
+        
+        # Clear buffers
+        for feature in self._features:
+            self._data_buffer[feature].clear()
+        
+        # Clear cache
+        self._cache.clear()
+        
+        # Reset computation context
+        self._computation_context = ComputationContext(
+            security_config=self.security_config
+        )
+        
+        # Reset engine
+        self._engine.reset()
+    
+    @property
+    def features_used(self) -> list[str]:
+        """Get the list of features used by this expression."""
+        return self._features.copy()
+    
+    @property
+    def operators_used(self) -> list[str]:
+        """Get the list of operators used by this expression."""
+        return self._operators.copy()
+    
+    @property
+    def requires_cross_sectional(self) -> bool:
+        """Check if this expression requires cross-sectional data."""
+        return self._has_cross_sectional
+    
+    def __repr__(self) -> str:
+        """Return string representation of the indicator."""
+        return f"{self.name}('{self.expression}', period={self.period})"

@@ -16,6 +16,7 @@ arraydeque = "0.5"
 nalgebra = "0.33"
 num-traits = "0.2"
 rayon = { version = "1.10", optional = true }
+serde = { workspace = true }
 statrs = "0.17"
 thiserror = "2"
 

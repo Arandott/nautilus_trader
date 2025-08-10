@@ -39,7 +39,7 @@ pub enum ExprNode {
 }
 
 /// A compiled expression ready for evaluation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompiledExpression {
     /// The expression tree node.
     pub node: ExprNode,
@@ -48,7 +48,7 @@ pub struct CompiledExpression {
 }
 
 /// Metadata about an expression.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ExpressionMetadata {
     /// List of features used in the expression.
     pub features: Vec<String>,

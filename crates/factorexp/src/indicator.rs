@@ -23,7 +23,7 @@ use nautilus_model::{
 
 use crate::{
     buffer::RollingBuffer,
-    expression::{CompiledExpression, ExpressionError},
+    expression::CompiledExpression,
     engine::ComputationEngine,
 };
 
@@ -213,20 +213,32 @@ impl FactorIndicator for FactorExpIndicator {
 mod tests {
     use super::*;
     use crate::expression::{CompiledExpression, ExprNode};
-    use nautilus_model::identifiers::InstrumentId;
-    use nautilus_model::types::{Price, Quantity};
+    use nautilus_model::{
+        types::{Price, Quantity},
+        identifiers::{InstrumentId, BarType},
+        data::{BarSpecification},
+        enums::{BarAggregation, AggregationSource},
+    };
+    use nautilus_core::nanos::UnixNanos;
     
     fn create_test_bar(close: f64) -> Bar {
-        Bar {
-            bar_type: Default::default(),
-            open: Price::from(close - 1.0),
-            high: Price::from(close + 1.0),
-            low: Price::from(close - 2.0),
-            close: Price::from(close),
-            volume: Quantity::from(1000),
-            ts_event: 0,
-            ts_init: 0,
-        }
+        let instrument_id = InstrumentId::from("TEST/USDT.SIM");
+        let bar_type = BarType::new(
+            instrument_id,
+            BarSpecification::new(1, BarAggregation::Minute, PriceType::Mid),
+            AggregationSource::External,
+        );
+        
+        Bar::new(
+            bar_type,
+            Price::new(close - 1.0, 2),
+            Price::new(close + 1.0, 2),
+            Price::new(close - 2.0, 2),
+            Price::new(close, 2),
+            Quantity::new(1000.0, 0),
+            UnixNanos::from(0),
+            UnixNanos::from(0),
+        )
     }
     
     #[test]

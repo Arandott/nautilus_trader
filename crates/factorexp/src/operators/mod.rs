@@ -20,9 +20,10 @@ pub mod rolling;
 pub mod stats;
 
 use crate::buffer::RollingBuffer;
+use std::fmt::Debug;
 
 /// Common trait for all rolling operators.
-pub trait RollingOperator: Send + Sync {
+pub trait RollingOperator: Send + Sync + Debug {
     /// Returns the name of the operator.
     fn name(&self) -> &str;
 
@@ -46,6 +47,7 @@ pub trait RollingOperator: Send + Sync {
 }
 
 /// Base implementation for rolling operators.
+#[derive(Debug)]
 pub struct BaseOperator {
     name: String,
     buffer: RollingBuffer,
@@ -104,6 +106,11 @@ macro_rules! impl_rolling_operator_common {
             #[inline]
             fn value(&self) -> f64 {
                 self.base.value
+            }
+
+            #[inline]
+            fn update(&mut self, value: f64) {
+                self.update_internal(value);
             }
 
             #[inline]

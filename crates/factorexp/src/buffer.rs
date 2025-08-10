@@ -84,11 +84,33 @@ impl RollingBuffer {
         evicted
     }
 
-    /// Returns the current window as a slice.
+    /// Returns the current window as a Vec.
+    /// Note: This allocates a new Vec to handle the circular buffer correctly.
     #[inline]
     #[must_use]
-    pub fn window(&self) -> &[f64] {
-        self.data.as_slice()
+    pub fn window(&self) -> Vec<f64> {
+        self.data.iter().copied().collect()
+    }
+    
+    /// Returns the window as a pair of slices for advanced usage
+    #[inline]
+    #[must_use]
+    pub fn window_slices(&self) -> (&[f64], &[f64]) {
+        self.data.as_slices()
+    }
+    
+    /// Alias for values() method for backward compatibility
+    #[inline]
+    #[must_use]
+    pub fn as_slice(&self) -> Vec<f64> {
+        self.values()
+    }
+
+    /// Returns all values in the buffer as a Vec
+    #[inline]
+    #[must_use]
+    pub fn values(&self) -> Vec<f64> {
+        self.data.iter().copied().collect()
     }
 
     /// Returns the window size.
@@ -218,6 +240,16 @@ impl RollingBuffer {
         self.count = 0;
         self.sum = 0.0;
         self.sum_sq = 0.0;
+    }
+    
+    /// Alias for reset() method
+    pub fn clear(&mut self) {
+        self.reset();
+    }
+    
+    /// Alias for update() method
+    pub fn push(&mut self, value: f64) -> Option<f64> {
+        self.update(value)
     }
 }
 

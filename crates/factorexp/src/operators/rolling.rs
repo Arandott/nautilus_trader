@@ -39,6 +39,7 @@ impl Mean {
 impl_rolling_operator_common!(Mean);
 
 impl Mean {
+    /// Updates the operator with a new value and recalculates the mean.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
@@ -66,6 +67,7 @@ impl Sum {
 impl_rolling_operator_common!(Sum);
 
 impl Sum {
+    /// Updates the operator with a new value and recalculates the sum.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
@@ -95,6 +97,7 @@ impl Std {
 impl_rolling_operator_common!(Std);
 
 impl Std {
+    /// Updates the operator with a new value and recalculates the standard deviation.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
@@ -124,6 +127,7 @@ impl Var {
 impl_rolling_operator_common!(Var);
 
 impl Var {
+    /// Updates the operator with a new value and recalculates the variance.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
@@ -151,6 +155,7 @@ impl Min {
 impl_rolling_operator_common!(Min);
 
 impl Min {
+    /// Updates the operator with a new value and recalculates the minimum.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
@@ -180,6 +185,7 @@ impl Max {
 impl_rolling_operator_common!(Max);
 
 impl Max {
+    /// Updates the operator with a new value and recalculates the maximum.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
@@ -209,6 +215,7 @@ impl Median {
 impl_rolling_operator_common!(Median);
 
 impl Median {
+    /// Updates the operator with a new value and recalculates the median.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
@@ -246,6 +253,7 @@ impl Delta {
 impl_rolling_operator_common!(Delta);
 
 impl Delta {
+    /// Updates the operator with a new value and calculates the delta (difference).
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().len() >= 2 {

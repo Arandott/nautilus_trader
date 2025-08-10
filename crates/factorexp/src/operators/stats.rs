@@ -135,7 +135,7 @@ impl Mad {
             let mean = self.base.buffer().mean();
             
             let mut sum_abs_dev = 0.0;
-            for &val in window {
+            for val in &window {
                 sum_abs_dev += (val - mean).abs();
             }
             

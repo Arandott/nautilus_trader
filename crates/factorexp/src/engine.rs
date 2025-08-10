@@ -195,7 +195,7 @@ impl ComputationEngine {
             // Create or get operator
             let op_key = format!("{}_{}", name, window);
             if !self.operators.contains_key(&op_key) {
-                let operator = get_rolling_operator(name, *window)
+                let operator = get_rolling_operator(name, window)
                     .ok_or_else(|| ExpressionError::UnknownOperator(name.to_string()))?;
                 self.operators.insert(op_key.clone(), operator);
             }
@@ -206,7 +206,7 @@ impl ComputationEngine {
             // Update with all values in buffer
             operator.reset();
             for value in buffer.values() {
-                operator.update(*value);
+                operator.update(value);
             }
             
             Ok(operator.value())

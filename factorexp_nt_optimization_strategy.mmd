@@ -1,0 +1,22 @@
+
+graph TD
+    E[Expression] --> A{Analyze AST}
+    
+    A -->|Simple Op| S[Single Operator<br/>e.g., TS_Mean]
+    A -->|Composite| C[Multiple Operators<br/>e.g., MA1/MA2]
+    A -->|Complex| X[Custom Logic<br/>e.g., If-Then-Else]
+    
+    S --> S1{Has Native<br/>Equivalent?}
+    S1 -->|Yes| SN[Use Native<br/>100% Speed]
+    S1 -->|No| SP[Use Python<br/>Baseline]
+    
+    C --> C1{All Ops<br/>Adaptable?}
+    C1 -->|Yes| CN[Full Native<br/>90% Speed]
+    C1 -->|Partial| CP[Hybrid Mode<br/>50-70% Speed]
+    C1 -->|No| CPY[Pure Python<br/>Baseline]
+    
+    X --> XP[Python Only<br/>Max Flexibility]
+    
+    style SN fill:#4f4,stroke:#333,stroke-width:3px
+    style CN fill:#4f4,stroke:#333,stroke-width:3px
+    style CP fill:#ff4,stroke:#333,stroke-width:2px

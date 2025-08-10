@@ -160,6 +160,7 @@ def _build_rust_libs() -> None:
             "nautilus-backtest",
             "nautilus-common",
             "nautilus-core",
+            "nautilus-factorexp",
             "nautilus-infrastructure",
             "nautilus-model",
             "nautilus-persistence",

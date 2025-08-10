@@ -170,10 +170,10 @@ impl ComputationEngine {
         buffers: &HashMap<String, RollingBuffer>,
     ) -> ExpressionResult<f64> {
         // Get window size
-        let window = params.get("window")
+        let window = *params.get("window")
             .ok_or_else(|| ExpressionError::InvalidParameters(
                 "Time-series operator requires 'window' parameter".to_string()
-            ))? as &usize;
+            ))? as usize;
         
         // For now, we'll compute on the feature buffer directly
         // In a full implementation, we'd handle arbitrary expressions

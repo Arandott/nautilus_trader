@@ -39,7 +39,7 @@ impl Mean {
 impl_rolling_operator_common!(Mean);
 
 impl Mean {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
             self.base.set_value(self.base.buffer().mean());
@@ -66,7 +66,7 @@ impl Sum {
 impl_rolling_operator_common!(Sum);
 
 impl Sum {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
             self.base.set_value(self.base.buffer().sum());
@@ -95,7 +95,7 @@ impl Std {
 impl_rolling_operator_common!(Std);
 
 impl Std {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
             self.base.set_value(self.base.buffer().std(self.ddof));
@@ -124,7 +124,7 @@ impl Var {
 impl_rolling_operator_common!(Var);
 
 impl Var {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
             self.base.set_value(self.base.buffer().variance(self.ddof));
@@ -151,7 +151,7 @@ impl Min {
 impl_rolling_operator_common!(Min);
 
 impl Min {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
             if let Some(min) = self.base.buffer().min() {
@@ -180,7 +180,7 @@ impl Max {
 impl_rolling_operator_common!(Max);
 
 impl Max {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
             if let Some(max) = self.base.buffer().max() {
@@ -209,10 +209,10 @@ impl Median {
 impl_rolling_operator_common!(Median);
 
 impl Median {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().is_ready() {
-            let mut sorted: Vec<f64> = self.base.buffer().window().to_vec();
+            let mut sorted: Vec<f64> = self.base.buffer().window();
             sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let mid = sorted.len() / 2;
             
@@ -246,7 +246,7 @@ impl Delta {
 impl_rolling_operator_common!(Delta);
 
 impl Delta {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         if self.base.buffer().len() >= 2 {
             if let (Some(first), Some(last)) = (

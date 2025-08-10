@@ -39,7 +39,7 @@ impl Skew {
 impl_rolling_operator_common!(Skew);
 
 impl Skew {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         
         if self.base.buffer().len() >= 3 {
@@ -50,7 +50,7 @@ impl Skew {
             
             if std > 0.0 {
                 let mut sum_cubed = 0.0;
-                for &val in window {
+                for &val in &window {
                     let diff = val - mean;
                     sum_cubed += diff * diff * diff;
                 }
@@ -83,7 +83,7 @@ impl Kurtosis {
 impl_rolling_operator_common!(Kurtosis);
 
 impl Kurtosis {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         
         if self.base.buffer().len() >= 4 {
@@ -94,7 +94,7 @@ impl Kurtosis {
             
             if std > 0.0 {
                 let mut sum_fourth = 0.0;
-                for &val in window {
+                for &val in &window {
                     let diff = val - mean;
                     sum_fourth += diff * diff * diff * diff;
                 }
@@ -127,7 +127,7 @@ impl Mad {
 impl_rolling_operator_common!(Mad);
 
 impl Mad {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         
         if self.base.buffer().is_ready() {
@@ -164,7 +164,7 @@ impl Product {
 impl_rolling_operator_common!(Product);
 
 impl Product {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         
         if self.base.buffer().is_ready() {
@@ -193,7 +193,7 @@ impl PctChange {
 impl_rolling_operator_common!(PctChange);
 
 impl PctChange {
-    fn update(&mut self, value: f64) {
+    pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         
         if self.base.buffer().len() >= 2 {

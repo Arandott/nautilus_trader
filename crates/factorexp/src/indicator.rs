@@ -215,11 +215,11 @@ mod tests {
     use crate::expression::{CompiledExpression, ExprNode};
     use nautilus_model::{
         types::{Price, Quantity},
-        identifiers::{InstrumentId, BarType},
-        data::{BarSpecification},
-        enums::{BarAggregation, AggregationSource},
+        identifiers::InstrumentId,
+        data::{BarType, BarSpecification},
+        enums::{BarAggregation, AggregationSource, PriceType},
+        UnixNanos,
     };
-    use nautilus_core::nanos::UnixNanos;
     
     fn create_test_bar(close: f64) -> Bar {
         let instrument_id = InstrumentId::from("TEST/USDT.SIM");

@@ -39,6 +39,7 @@ impl Skew {
 impl_rolling_operator_common!(Skew);
 
 impl Skew {
+    /// Updates the operator with a new value and recalculates the skewness.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         
@@ -83,6 +84,7 @@ impl Kurtosis {
 impl_rolling_operator_common!(Kurtosis);
 
 impl Kurtosis {
+    /// Updates the operator with a new value and recalculates the kurtosis.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         
@@ -127,6 +129,7 @@ impl Mad {
 impl_rolling_operator_common!(Mad);
 
 impl Mad {
+    /// Updates the operator with a new value and recalculates the mean absolute deviation.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         
@@ -164,6 +167,7 @@ impl Product {
 impl_rolling_operator_common!(Product);
 
 impl Product {
+    /// Updates the operator with a new value and recalculates the product.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         
@@ -193,6 +197,7 @@ impl PctChange {
 impl_rolling_operator_common!(PctChange);
 
 impl PctChange {
+    /// Updates the operator with a new value and calculates the percentage change.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
         

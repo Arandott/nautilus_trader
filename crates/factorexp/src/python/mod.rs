@@ -16,6 +16,7 @@
 //! Python bindings for FactorExp operators and indicators.
 
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use crate::operators::{
     RollingOperator,
     rolling::{Mean, Sum, Std, Var, Min, Max, Median, Delta},
@@ -28,8 +29,8 @@ use indicator::{PyFactorExpIndicator, compile_expression_from_python};
 
 /// Base Python wrapper for Rust operators.
 macro_rules! create_python_wrapper {
-    ($name:ident, $rust_type:ty, $constructor:expr) => {
-        #[pyclass(name = stringify!($name))]
+    ($name:ident, $rust_type:ty, $constructor:expr, $pyname:literal) => {
+        #[pyclass(name = $pyname)]
         pub struct $name {
             inner: $rust_type,
         }
@@ -85,19 +86,19 @@ macro_rules! create_python_wrapper {
 }
 
 // Create Python wrappers for all operators
-create_python_wrapper!(PyMean, Mean, Mean::new);
-create_python_wrapper!(PySum, Sum, Sum::new);
-create_python_wrapper!(PyMin, Min, Min::new);
-create_python_wrapper!(PyMax, Max, Max::new);
-create_python_wrapper!(PyMedian, Median, Median::new);
-create_python_wrapper!(PyDelta, Delta, Delta::new);
-create_python_wrapper!(PyEma, Ema, Ema::new);
-create_python_wrapper!(PyWma, Wma, Wma::new);
-create_python_wrapper!(PySkew, Skew, Skew::new);
-create_python_wrapper!(PyKurtosis, Kurtosis, Kurtosis::new);
-create_python_wrapper!(PyMad, Mad, Mad::new);
-create_python_wrapper!(PyProduct, Product, Product::new);
-create_python_wrapper!(PyPctChange, PctChange, PctChange::new);
+create_python_wrapper!(PyMean, Mean, Mean::new, "Mean");
+create_python_wrapper!(PySum, Sum, Sum::new, "Sum");
+create_python_wrapper!(PyMin, Min, Min::new, "Min");
+create_python_wrapper!(PyMax, Max, Max::new, "Max");
+create_python_wrapper!(PyMedian, Median, Median::new, "Median");
+create_python_wrapper!(PyDelta, Delta, Delta::new, "Delta");
+create_python_wrapper!(PyEma, Ema, Ema::new, "Ema");
+create_python_wrapper!(PyWma, Wma, Wma::new, "Wma");
+create_python_wrapper!(PySkew, Skew, Skew::new, "Skew");
+create_python_wrapper!(PyKurtosis, Kurtosis, Kurtosis::new, "Kurtosis");
+create_python_wrapper!(PyMad, Mad, Mad::new, "Mad");
+create_python_wrapper!(PyProduct, Product, Product::new, "Product");
+create_python_wrapper!(PyPctChange, PctChange, PctChange::new, "PctChange");
 
 // Special handling for Std and Var which take ddof parameter
 #[pyclass(name = "Std")]
@@ -210,44 +211,43 @@ impl PyVar {
 #[pyfunction]
 #[pyo3(signature = (operator_name, window_size, **kwargs))]
 pub fn create_operator(
+    py: Python<'_>,
     operator_name: &str,
     window_size: usize,
-    kwargs: Option<&PyDict>,
+    kwargs: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<PyObject> {
-    Python::with_gil(|py| {
-        match operator_name {
-            "TS_Mean" => Ok(PyMean::py_new(window_size)?.into_py(py)),
-            "TS_Sum" => Ok(PySum::py_new(window_size)?.into_py(py)),
-            "TS_Min" => Ok(PyMin::py_new(window_size)?.into_py(py)),
-            "TS_Max" => Ok(PyMax::py_new(window_size)?.into_py(py)),
-            "TS_Med" => Ok(PyMedian::py_new(window_size)?.into_py(py)),
-            "TS_Delta" => Ok(PyDelta::py_new(window_size)?.into_py(py)),
-            "TS_EMA" => Ok(PyEma::py_new(window_size)?.into_py(py)),
-            "TS_WMA" => Ok(PyWma::py_new(window_size)?.into_py(py)),
-            "TS_Skew" => Ok(PySkew::py_new(window_size)?.into_py(py)),
-            "TS_Kurt" => Ok(PyKurtosis::py_new(window_size)?.into_py(py)),
-            "TS_Mad" => Ok(PyMad::py_new(window_size)?.into_py(py)),
-            "TS_Product" => Ok(PyProduct::py_new(window_size)?.into_py(py)),
-            "TS_PctChg" => Ok(PyPctChange::py_new(window_size)?.into_py(py)),
-            "TS_Std" => {
-                let ddof = kwargs
-                    .and_then(|d| d.get_item("ddof"))
-                    .and_then(|v| v.extract::<usize>().ok())
-                    .unwrap_or(1);
-                Ok(PyStd::py_new(window_size, ddof)?.into_py(py))
-            }
-            "TS_Var" => {
-                let ddof = kwargs
-                    .and_then(|d| d.get_item("ddof"))
-                    .and_then(|v| v.extract::<usize>().ok())
-                    .unwrap_or(1);
-                Ok(PyVar::py_new(window_size, ddof)?.into_py(py))
-            }
-            _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                format!("Unknown operator: {}", operator_name),
-            )),
+    match operator_name {
+        "TS_Mean" => Ok(Py::new(py, PyMean::py_new(window_size)?)?.into_any()),
+        "TS_Sum" => Ok(Py::new(py, PySum::py_new(window_size)?)?.into_any()),
+        "TS_Min" => Ok(Py::new(py, PyMin::py_new(window_size)?)?.into_any()),
+        "TS_Max" => Ok(Py::new(py, PyMax::py_new(window_size)?)?.into_any()),
+        "TS_Med" => Ok(Py::new(py, PyMedian::py_new(window_size)?)?.into_any()),
+        "TS_Delta" => Ok(Py::new(py, PyDelta::py_new(window_size)?)?.into_any()),
+        "TS_EMA" => Ok(Py::new(py, PyEma::py_new(window_size)?)?.into_any()),
+        "TS_WMA" => Ok(Py::new(py, PyWma::py_new(window_size)?)?.into_any()),
+        "TS_Skew" => Ok(Py::new(py, PySkew::py_new(window_size)?)?.into_any()),
+        "TS_Kurt" => Ok(Py::new(py, PyKurtosis::py_new(window_size)?)?.into_any()),
+        "TS_Mad" => Ok(Py::new(py, PyMad::py_new(window_size)?)?.into_any()),
+        "TS_Product" => Ok(Py::new(py, PyProduct::py_new(window_size)?)?.into_any()),
+        "TS_PctChg" => Ok(Py::new(py, PyPctChange::py_new(window_size)?)?.into_any()),
+        "TS_Std" => {
+            let ddof = kwargs
+                .and_then(|d| d.get_item("ddof").ok())
+                .and_then(|v| v.extract::<usize>().ok())
+                .unwrap_or(1);
+            Ok(Py::new(py, PyStd::py_new(window_size, ddof)?)?.into_any())
         }
-    })
+        "TS_Var" => {
+            let ddof = kwargs
+                .and_then(|d| d.get_item("ddof").ok())
+                .and_then(|v| v.extract::<usize>().ok())
+                .unwrap_or(1);
+            Ok(Py::new(py, PyVar::py_new(window_size, ddof)?)?.into_any())
+        }
+        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            format!("Unknown operator: {}", operator_name),
+        )),
+    }
 }
 
 /// Python module definition.

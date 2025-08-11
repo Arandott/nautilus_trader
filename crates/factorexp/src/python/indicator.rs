@@ -25,7 +25,7 @@ use nautilus_model::{
 
 use crate::{
     indicator::FactorExpIndicator,
-    expression::{CompiledExpression, ExprNode, ExpressionError, ExpressionMetadata},
+    expression::{CompiledExpression, ExprNode, ExpressionError},
 };
 
 /// Python wrapper for FactorExpIndicator.
@@ -45,7 +45,7 @@ impl PyFactorExpIndicator {
         expression: &str,
         period: Option<usize>,
         price_type: Option<PriceType>,
-        compiled_ast: Option<&PyDict>,
+        compiled_ast: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         // If compiled AST is provided, use it; otherwise try simple parsing
         let compiled = if let Some(ast_dict) = compiled_ast {
@@ -168,31 +168,31 @@ fn parse_simple_expression(expression: &str) -> Result<CompiledExpression, Expre
 }
 
 /// Convert Python AST dictionary to Rust ExprNode.
-fn dict_to_expr_node(py: Python, dict: &PyDict) -> PyResult<ExprNode> {
-    let node_type = dict.get_item("type")
+fn dict_to_expr_node(py: Python, dict: &Bound<'_, PyDict>) -> PyResult<ExprNode> {
+    let node_type = dict.get_item("type")?
         .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'type' field"))?
         .extract::<String>()?;
     
     match node_type.as_str() {
         "Feature" => {
-            let name = dict.get_item("name")
+            let name = dict.get_item("name")?
                 .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'name' field"))?
                 .extract::<String>()?;
             Ok(ExprNode::Feature(name))
         },
         "Constant" => {
-            let value = dict.get_item("value")
+            let value = dict.get_item("value")?
                 .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'value' field"))?
                 .extract::<f64>()?;
             Ok(ExprNode::Constant(value))
         },
         "Operator" => {
-            let name = dict.get_item("name")
+            let name = dict.get_item("name")?
                 .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'name' field"))?
                 .extract::<String>()?;
             
             // Parse arguments
-            let args_list = dict.get_item("args")
+            let args_list = dict.get_item("args")?
                 .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'args' field"))?
                 .downcast::<PyList>()
                 .map_err(|_| PyErr::new::<pyo3::exceptions::PyTypeError, _>("'args' must be a list"))?;
@@ -201,13 +201,13 @@ fn dict_to_expr_node(py: Python, dict: &PyDict) -> PyResult<ExprNode> {
             for arg in args_list.iter() {
                 let arg_dict = arg.downcast::<PyDict>()
                     .map_err(|_| PyErr::new::<pyo3::exceptions::PyTypeError, _>("Argument must be a dictionary"))?;
-                let node = dict_to_expr_node(py, arg_dict)?;
+                let node = dict_to_expr_node(py, &arg_dict)?;
                 args.push(CompiledExpression::new(node));
             }
             
             // Parse parameters
             let mut params = HashMap::new();
-            if let Some(params_dict) = dict.get_item("params") {
+            if let Some(params_dict) = dict.get_item("params")? {
                 let params_dict = params_dict.downcast::<PyDict>()
                     .map_err(|_| PyErr::new::<pyo3::exceptions::PyTypeError, _>("'params' must be a dictionary"))?;
                 for (key, value) in params_dict.iter() {
@@ -243,31 +243,30 @@ fn serialize_expr_node(py: Python, node: &ExprNode) -> PyResult<PyObject> {
             dict.set_item("name", name)?;
             
             // Serialize arguments
-            let args_list = PyList::new(py, Vec::<PyObject>::new());
+            let args_list = PyList::empty(py);
             for arg in args {
                 let arg_dict = serialize_expr_node(py, &arg.node)?;
                 args_list.append(arg_dict)?;
             }
-            dict.set_item("args", args_list)?;
+            dict.set_item("args", &args_list)?;
             
             // Serialize parameters
             let params_dict = PyDict::new(py);
             for (key, value) in params {
                 params_dict.set_item(key, value)?;
             }
-            dict.set_item("params", params_dict)?;
+            dict.set_item("params", &params_dict)?;
         }
     }
     
-    Ok(dict.into())
-}
+    Ok(dict.into_any().unbind())
 
 /// Factory function to create and compile expressions from Python.
 #[pyfunction]
 #[pyo3(signature = (ast_dict))]
 pub fn compile_expression_from_python(
     py: Python,
-    ast_dict: &PyDict,
+    ast_dict: &Bound<'_, PyDict>,
 ) -> PyResult<PyObject> {
     // Convert Python AST dictionary to Rust ExprNode
     let node = dict_to_expr_node(py, ast_dict)?;
@@ -289,7 +288,7 @@ pub fn compile_expression_from_python(
     metadata_dict.set_item("has_cross_sectional", compiled.metadata.has_cross_sectional)?;
     metadata_dict.set_item("operators", compiled.metadata.operators.clone())?;
     metadata_dict.set_item("complexity", compiled.metadata.complexity)?;
-    result.set_item("metadata", metadata_dict)?;
+    result.set_item("metadata", &metadata_dict)?;
     
-    Ok(result.into())
+    Ok(result.into_any().unbind())
 }

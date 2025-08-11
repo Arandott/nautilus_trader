@@ -34,7 +34,7 @@ from nautilus_trader.model.data cimport TradeTick
 # Import Rust implementation from PyO3
 # This will be available after the Rust code is compiled
 try:
-    from nautilus_trader.core.nautilus_pyo3.indicators import FactorExpIndicator as RustFactorExpIndicator
+    from nautilus_trader.core.nautilus_pyo3.factorexp import FactorExpIndicator as RustFactorExpIndicator
 except ImportError:
     # Fallback for development/testing when Rust module not yet compiled
     RustFactorExpIndicator = None
@@ -110,10 +110,24 @@ cdef class FactorExpIndicator(Indicator):
         
         # Create Rust indicator
         try:
-            if period > 0:
-                self._rust_indicator = RustFactorExpIndicator(expression, period, price_type)
-            else:
-                self._rust_indicator = RustFactorExpIndicator(expression, price_type=price_type)
+            # Try to parse the expression using Python parser for complex expressions
+            try:
+                from nautilus_trader.indicators.factorexp.bridge import parse_expression
+                compiled_ast = parse_expression(expression)
+                if period > 0:
+                    self._rust_indicator = RustFactorExpIndicator(
+                        expression, period, price_type, compiled_ast=compiled_ast
+                    )
+                else:
+                    self._rust_indicator = RustFactorExpIndicator(
+                        expression, price_type=price_type, compiled_ast=compiled_ast
+                    )
+            except ImportError:
+                # Fallback to direct creation if bridge not available
+                if period > 0:
+                    self._rust_indicator = RustFactorExpIndicator(expression, period, price_type)
+                else:
+                    self._rust_indicator = RustFactorExpIndicator(expression, price_type=price_type)
         except ValueError as e:
             raise ValueError(f"Failed to create FactorExpIndicator: {e}")
         

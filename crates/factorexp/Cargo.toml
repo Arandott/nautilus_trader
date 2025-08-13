@@ -22,7 +22,7 @@ thiserror = "2"
 
 # Nautilus dependencies
 nautilus-core = { workspace = true }
-nautilus-model = { workspace = true }
+nautilus-model = { workspace = true, features = ["python"] }
 
 # Python bindings
 pyo3 = { workspace = true, optional = true }

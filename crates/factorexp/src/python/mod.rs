@@ -253,6 +253,10 @@ pub fn create_operator(
 /// Python module definition.
 #[pymodule]
 pub fn factorexp(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Import PriceType enum (already defined in nautilus_model with pyclass)
+    // This ensures the enum is available for Python-Rust conversion
+    m.add_class::<nautilus_model::enums::PriceType>()?;
+    
     // Register indicator class
     m.add_class::<PyFactorExpIndicator>()?;
     

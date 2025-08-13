@@ -18,6 +18,8 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::HashMap;
+
+// Import from nautilus_model with python feature
 use nautilus_model::{
     data::{Bar, QuoteTick, TradeTick},
     enums::PriceType,

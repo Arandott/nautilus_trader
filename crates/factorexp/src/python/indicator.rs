@@ -192,9 +192,9 @@ fn dict_to_expr_node(py: Python, dict: &Bound<'_, PyDict>) -> PyResult<ExprNode>
                 .extract::<String>()?;
             
             // Parse arguments
-            let args_list = dict.get_item("args")?
-                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'args' field"))?
-                .downcast::<PyList>()
+            let args_value = dict.get_item("args")?
+                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("Missing 'args' field"))?;
+            let args_list = args_value.downcast::<PyList>()
                 .map_err(|_| PyErr::new::<pyo3::exceptions::PyTypeError, _>("'args' must be a list"))?;
             
             let mut args = Vec::new();

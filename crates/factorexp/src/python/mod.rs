@@ -232,14 +232,14 @@ pub fn create_operator(
         "TS_PctChg" => Ok(Py::new(py, PyPctChange::py_new(window_size)?)?.into_any()),
         "TS_Std" => {
             let ddof = kwargs
-                .and_then(|d| d.get_item("ddof").ok())
+                .and_then(|d| d.get_item("ddof").ok().flatten())
                 .and_then(|v| v.extract::<usize>().ok())
                 .unwrap_or(1);
             Ok(Py::new(py, PyStd::py_new(window_size, ddof)?)?.into_any())
         }
         "TS_Var" => {
             let ddof = kwargs
-                .and_then(|d| d.get_item("ddof").ok())
+                .and_then(|d| d.get_item("ddof").ok().flatten())
                 .and_then(|v| v.extract::<usize>().ok())
                 .unwrap_or(1);
             Ok(Py::new(py, PyVar::py_new(window_size, ddof)?)?.into_any())

@@ -260,6 +260,7 @@ fn serialize_expr_node(py: Python, node: &ExprNode) -> PyResult<PyObject> {
     }
     
     Ok(dict.into_any().unbind())
+}
 
 /// Factory function to create and compile expressions from Python.
 #[pyfunction]

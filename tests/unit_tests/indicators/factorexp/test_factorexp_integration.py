@@ -103,7 +103,7 @@ def test_indicator_creation():
     # Create test bar
     bar_type = BarType(
         instrument_id=InstrumentId(Symbol("TEST"), Venue("SIM")),
-        bar_spec=BarSpecification(1, BarAggregation.MINUTE),
+        bar_spec=BarSpecification(1, BarAggregation.MINUTE, PriceType.LAST),
         aggregation_source=AggregationSource.EXTERNAL,
     )
     

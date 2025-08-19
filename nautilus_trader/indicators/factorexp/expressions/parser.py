@@ -16,7 +16,6 @@ from nautilus_trader.indicators.factorexp.expressions.ast import (
     BinaryOp,
     RollingOp,
     PairRollingOp,
-    CrossSectionalOp,
 )
 
 
@@ -38,15 +37,14 @@ class ExpressionParser:
     - Arithmetic: +, -, *, /, ^
     - Unary operators: Log, Abs, Sign, etc.
     - Binary operators: Add, Sub, Mul, Div, Pow, etc.
-    - Rolling operators: TS_Mean, TS_Std, TS_Min, TS_Max, etc.
-    - Pair rolling operators: TS_Corr, TS_Cov
-    - Cross-sectional operators: CSRank, Demean, ZScore
+    - Rolling operators: TS_Mean, TS_Std, TS_Min, TS_Max, ZScore, Demean, etc.
+    - Pair rolling operators: TS_Corr, TS_Cov, TS_Beta
     """
     
     # Token patterns
     FEATURE_PATTERN = r'\$([a-zA-Z_][a-zA-Z0-9_]*)'
     NUMBER_PATTERN = r'-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?'
-    OPERATOR_PATTERN = r'[A-Z][A-Za-z_]*'
+    OPERATOR_PATTERN = r'[A-Z][A-Za-z_]*\d*'  # Allow digits at end for Log10, Log2, etc.
     
     # Operator categories
     UNARY_OPS = {
@@ -65,17 +63,13 @@ class ExpressionParser:
     ROLLING_OPS = {
         'TS_Mean', 'TS_Sum', 'TS_Std', 'TS_Var', 'TS_Skew', 'TS_Kurt',
         'TS_Max', 'TS_Min', 'TS_Med', 'TS_Mad', 'TS_WMA', 'TS_EMA', 
-        'TS_EMStd', 'TS_Delta', 'TS_Ref', 'TS_Rank', 'TS_Count',
+        'TS_EMStd', 'TS_Delta', 'TS_Ref', 'TS_Rank',
         'TS_Argmax', 'TS_Argmin', 'TS_Product',
+        'ZScore', 'Demean',
     }
     
     PAIR_ROLLING_OPS = {
         'TS_Cov', 'TS_Corr', 'TS_Beta',
-    }
-    
-    CROSS_SECTIONAL_OPS = {
-        'CSRank', 'CSMinMax', 'Demean', 'ZScore',
-        'CSQuantile', 'CSMean', 'CSStd', 'CSSum',
     }
     
     def __init__(self):
@@ -141,8 +135,8 @@ class ExpressionParser:
         """Create a regex tokenizer for the expression language."""
         patterns = [
             ('FEATURE', self.FEATURE_PATTERN),
+            ('OPERATOR', self.OPERATOR_PATTERN),  # Move before NUMBER to match Log10 correctly
             ('NUMBER', self.NUMBER_PATTERN),
-            ('OPERATOR', self.OPERATOR_PATTERN),
             ('LPAREN', r'\('),
             ('RPAREN', r'\)'),
             ('COMMA', r','),
@@ -391,11 +385,6 @@ class ExpressionParser:
                 raise ParseError(f"{op_name} window must be positive, got {window}")
                 
             return PairRollingOp(op_name, args[0], args[1], window)
-            
-        elif op_name in self.CROSS_SECTIONAL_OPS:
-            if len(args) != 1:
-                raise ParseError(f"{op_name} expects 1 argument, got {len(args)}")
-            return CrossSectionalOp(op_name, args[0])
             
         else:
             raise ParseError(f"Unknown operator: {op_name}")

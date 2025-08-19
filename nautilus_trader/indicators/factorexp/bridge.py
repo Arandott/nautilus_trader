@@ -32,7 +32,6 @@ from nautilus_trader.indicators.factorexp.expressions.ast import (
     BinaryOp,
     RollingOp,
     PairRollingOp,
-    CrossSectionalOp,
 )
 
 
@@ -151,18 +150,6 @@ class ExpressionBridge:
                 "params": {
                     "window": float(expr.window)
                 }
-            }
-        
-        elif isinstance(expr, CrossSectionalOp):
-            params = {}
-            if hasattr(expr, 'quantile'):
-                params["quantile"] = float(expr.quantile)
-            
-            return {
-                "type": "Operator",
-                "name": expr.operator,
-                "args": [self._convert_ast_to_dict(expr.operand)],
-                "params": params
             }
         
         else:

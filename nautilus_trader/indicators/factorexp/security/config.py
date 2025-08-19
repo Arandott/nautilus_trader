@@ -157,7 +157,7 @@ class SecurityConfig:
             # Extended rolling
             "TS_Med", "TS_Mad", "TS_EMA", "TS_WMA",
             "TS_Skew", "TS_Kurt", "TS_Rank",
-            "TS_Delta", "TS_Ref", "TS_Count",
+            "TS_Delta", "TS_Ref",
             # Pair operations
             "TS_Cov", "TS_Corr",
             # Cross-sectional

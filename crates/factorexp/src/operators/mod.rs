@@ -16,6 +16,7 @@
 //! High-performance rolling operators for factor expressions.
 
 pub mod ma;
+pub mod pair_rolling;
 pub mod rolling;
 pub mod stats;
 
@@ -52,6 +53,8 @@ pub struct BaseOperator {
     name: String,
     buffer: RollingBuffer,
     value: f64,
+    valid_count: usize,
+    last_valid_value: Option<f64>,
 }
 
 impl BaseOperator {
@@ -60,7 +63,9 @@ impl BaseOperator {
         Self {
             name: name.into(),
             buffer: RollingBuffer::new(window_size),
-            value: 0.0,
+            value: f64::NAN,
+            valid_count: 0,
+            last_valid_value: None,
         }
     }
 
@@ -80,6 +85,25 @@ impl BaseOperator {
     #[inline]
     pub fn set_value(&mut self, value: f64) {
         self.value = value;
+        self.last_valid_value = Some(value);
+    }
+    
+    /// Gets the valid count.
+    #[inline]
+    pub fn valid_count(&self) -> usize {
+        self.valid_count
+    }
+    
+    /// Increments the valid count.
+    #[inline]
+    pub fn increment_valid_count(&mut self) {
+        self.valid_count += 1;
+    }
+    
+    /// Gets the last valid value.
+    #[inline]
+    pub fn last_valid_value(&self) -> Option<f64> {
+        self.last_valid_value
     }
 }
 
@@ -100,12 +124,16 @@ macro_rules! impl_rolling_operator_common {
 
             #[inline]
             fn is_ready(&self) -> bool {
-                self.base.buffer.is_ready()
+                self.base.valid_count >= self.base.buffer.window_size()
             }
 
             #[inline]
             fn value(&self) -> f64 {
-                self.base.value
+                if self.is_ready() {
+                    self.base.value
+                } else {
+                    f64::NAN
+                }
             }
 
             #[inline]
@@ -120,10 +148,22 @@ macro_rules! impl_rolling_operator_common {
 
             fn reset(&mut self) {
                 self.base.buffer.reset();
-                self.base.value = 0.0;
+                self.base.value = f64::NAN;
+                self.base.valid_count = 0;
+                self.base.last_valid_value = None;
             }
         }
     };
+}
+
+/// Factory function to create pair rolling operators by name.
+pub fn get_pair_rolling_operator(name: &str, window_size: usize) -> Option<Box<dyn pair_rolling::PairRollingOperator>> {
+    match name {
+        "TS_Corr" => Some(Box::new(pair_rolling::Correlation::new(window_size))),
+        "TS_Cov" => Some(Box::new(pair_rolling::Covariance::new(window_size, 1))),
+        "TS_Beta" => Some(Box::new(pair_rolling::Beta::new(window_size, 1))),
+        _ => None,
+    }
 }
 
 /// Factory function to create rolling operators by name.
@@ -141,6 +181,26 @@ pub fn get_rolling_operator(name: &str, window_size: usize) -> Option<Box<dyn Ro
         "TS_Skew" => Some(Box::new(stats::Skew::new(window_size))),
         "TS_Kurt" | "TS_Kurtosis" => Some(Box::new(stats::Kurtosis::new(window_size))),
         "TS_Mad" => Some(Box::new(stats::Mad::new(window_size))),
+        "TS_Delta" => {
+            // For TS_Delta, the window_size parameter is the period (lookback)
+            // Delta always needs at least 2 values to compute difference
+            let period = window_size;
+            let actual_window_size = std::cmp::max(2, period + 1);
+            Some(Box::new(rolling::Delta::new(actual_window_size)))
+        },
+        "TS_Ref" => {
+            // For TS_Ref, the window_size parameter is actually the period (lookback)
+            // Buffer needs to hold period + 1 values to look back 'period' positions
+            let period = window_size;
+            let actual_window_size = period + 1;
+            Some(Box::new(rolling::Ref::new(actual_window_size, period)))
+        },
+        "TS_Rank" => Some(Box::new(rolling::Rank::new(window_size))),
+        "TS_Argmax" => Some(Box::new(rolling::Argmax::new(window_size))),
+        "TS_Argmin" => Some(Box::new(rolling::Argmin::new(window_size))),
+        "TS_Product" => Some(Box::new(rolling::Product::new(window_size))),
+        "ZScore" => Some(Box::new(rolling::ZScore::new(window_size, 0))),
+        "Demean" => Some(Box::new(rolling::Demean::new(window_size))),
         _ => None,
     }
 }

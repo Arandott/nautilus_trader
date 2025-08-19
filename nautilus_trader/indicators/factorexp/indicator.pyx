@@ -110,24 +110,27 @@ cdef class FactorExpIndicator(Indicator):
         
         # Create Rust indicator
         try:
+            # Convert Cython PriceType to string for PyO3 compatibility
+            price_type_str = self._price_type_to_string(price_type)
+            
             # Try to parse the expression using Python parser for complex expressions
             try:
                 from nautilus_trader.indicators.factorexp.bridge import parse_expression
                 compiled_ast = parse_expression(expression)
                 if period > 0:
                     self._rust_indicator = RustFactorExpIndicator(
-                        expression, period, price_type, compiled_ast=compiled_ast
+                        expression, period, price_type_str, compiled_ast=compiled_ast
                     )
                 else:
                     self._rust_indicator = RustFactorExpIndicator(
-                        expression, price_type=price_type, compiled_ast=compiled_ast
+                        expression, price_type=price_type_str, compiled_ast=compiled_ast
                     )
             except ImportError:
                 # Fallback to direct creation if bridge not available
                 if period > 0:
-                    self._rust_indicator = RustFactorExpIndicator(expression, period, price_type)
+                    self._rust_indicator = RustFactorExpIndicator(expression, period, price_type_str)
                 else:
-                    self._rust_indicator = RustFactorExpIndicator(expression, price_type=price_type)
+                    self._rust_indicator = RustFactorExpIndicator(expression, price_type=price_type_str)
         except ValueError as e:
             raise ValueError(f"Failed to create FactorExpIndicator: {e}")
         
@@ -151,6 +154,21 @@ cdef class FactorExpIndicator(Indicator):
         if len(expression) > 40:
             return f"FactorExp({expression[:37]}...)"
         return f"FactorExp({expression})"
+    
+    cdef str _price_type_to_string(self, PriceType price_type):
+        """Convert Cython PriceType enum to string for PyO3 compatibility."""
+        if price_type == PriceType.BID:
+            return "BID"
+        elif price_type == PriceType.ASK:
+            return "ASK"
+        elif price_type == PriceType.MID:
+            return "MID"
+        elif price_type == PriceType.LAST:
+            return "LAST"
+        elif price_type == PriceType.MARK:
+            return "MARK"
+        else:
+            return "LAST"  # Default fallback
     
     @property
     def expression(self) -> str:
@@ -188,7 +206,7 @@ cdef class FactorExpIndicator(Indicator):
         """
         Condition.not_none(tick, "tick")
         
-        self._rust_indicator.handle_quote_tick(tick)
+        self._rust_indicator.handle_quote_tick(tick.to_pyo3())
         self._update_state()
         
     cpdef void handle_trade_tick(self, TradeTick tick):
@@ -203,7 +221,7 @@ cdef class FactorExpIndicator(Indicator):
         """
         Condition.not_none(tick, "tick")
         
-        self._rust_indicator.handle_trade_tick(tick)
+        self._rust_indicator.handle_trade_tick(tick.to_pyo3())
         self._update_state()
     
     cpdef void handle_bar(self, Bar bar):
@@ -218,7 +236,7 @@ cdef class FactorExpIndicator(Indicator):
         """
         Condition.not_none(bar, "bar")
         
-        self._rust_indicator.handle_bar(bar)
+        self._rust_indicator.handle_bar(bar.to_pyo3())
         self._update_state()
     
     cdef void _update_state(self):
@@ -232,7 +250,7 @@ cdef class FactorExpIndicator(Indicator):
             self._set_initialized(True)
         
         # Update has_inputs
-        if self.count > 0 and not self._has_inputs:
+        if self.count > 0 and not self.has_inputs:
             self._set_has_inputs(True)
     
     cpdef void reset(self):

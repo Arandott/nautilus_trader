@@ -49,7 +49,7 @@ pub struct FactorExpIndicator {
 }
 
 impl FactorExpIndicator {
-    /// Creates a new [`FactorExpIndicator`] instance.
+    /// Creates a new [`FactorExpIndicator`] instance using unified node architecture.
     pub fn new(expression: CompiledExpression, period: usize, price_type: PriceType) -> Self {
         // Initialize buffers for each feature
         let mut buffers = HashMap::new();
@@ -57,13 +57,19 @@ impl FactorExpIndicator {
             buffers.insert(feature.clone(), RollingBuffer::new(period));
         }
         
+        // Create engine and build expression tree for optimal performance
+        let mut engine = ComputationEngine::new();
+        if let Err(e) = engine.build_tree(&expression) {
+            eprintln!("Warning: Failed to build unified expression tree: {}. Falling back to compatibility mode.", e);
+        }
+        
         Self {
             expression,
-            engine: ComputationEngine::new(),
+            engine,
             buffers,
             period,
             price_type,
-            value: 0.0,
+            value: f64::NAN,
             count: 0,
             initialized: false,
         }
@@ -118,7 +124,7 @@ impl FactorExpIndicator {
         self.update_with_data(data);
     }
     
-    /// Updates the indicator with new data.
+    /// Updates the indicator with new data using unified architecture.
     fn update_with_data(&mut self, data: HashMap<String, f64>) {
         // Update buffers with available features
         for (feature, value) in data {
@@ -129,26 +135,32 @@ impl FactorExpIndicator {
         
         self.count += 1;
         
-        // Compute if we have enough data
-        if self.count >= self.period {
-            match self.engine.compute(&self.expression, &self.buffers) {
-                Ok(value) => {
-                    self.value = value;
-                    if !self.initialized {
-                        self.initialized = true;
-                    }
+        // Try unified architecture first
+        match self.engine.update_and_compute(&self.buffers) {
+            Ok(Some(value)) => {
+                // Valid value computed
+                self.value = value;
+                if !self.initialized {
+                    self.initialized = true;
                 }
-                Err(e) => {
-                    // Log error but keep previous value
-                    eprintln!("FactorExp computation error: {}", e);
+            }
+            Ok(None) => {
+                // Not ready yet (warm-up period) - set to NaN
+                if !self.initialized {
+                    self.value = f64::NAN;
                 }
+                // Keep previous value if already initialized
+            }
+            Err(e) => {
+                // Real error - log and keep previous value
+                eprintln!("FactorExp computation error: {}", e);
             }
         }
     }
     
     /// Resets the indicator state.
     pub fn reset(&mut self) {
-        self.value = 0.0;
+        self.value = f64::NAN;
         self.count = 0;
         self.initialized = false;
         
@@ -252,7 +264,7 @@ mod tests {
         assert_eq!(indicator.period, 1);
         assert_eq!(indicator.count, 0);
         assert!(!indicator.initialized);
-        assert_eq!(indicator.value, 0.0);
+        assert!(indicator.value.is_nan());
     }
     
     #[test]

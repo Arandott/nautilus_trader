@@ -46,7 +46,7 @@ impl PyFactorExpIndicator {
         py: Python,
         expression: &str,
         period: Option<usize>,
-        price_type: Option<PriceType>,
+        price_type: Option<&str>,
         compiled_ast: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         // If compiled AST is provided, use it; otherwise try simple parsing
@@ -64,7 +64,13 @@ impl PyFactorExpIndicator {
         
         // Auto-detect period if not provided
         let period = period.unwrap_or(compiled.metadata.max_window.max(1));
-        let price_type = price_type.unwrap_or(PriceType::Last);
+        
+        // Parse price_type string to PriceType enum
+        let price_type = if let Some(price_type_str) = price_type {
+            parse_price_type(price_type_str)?
+        } else {
+            PriceType::Last
+        };
         
         Ok(Self {
             inner: FactorExpIndicator::new(compiled, period, price_type),
@@ -294,4 +300,18 @@ pub fn compile_expression_from_python(
     result.set_item("metadata", &metadata_dict)?;
     
     Ok(result.into_any().unbind())
+}
+
+/// Parse a string to PriceType enum.
+fn parse_price_type(price_type_str: &str) -> PyResult<PriceType> {
+    match price_type_str {
+        "BID" => Ok(PriceType::Bid),
+        "ASK" => Ok(PriceType::Ask),
+        "MID" => Ok(PriceType::Mid),
+        "LAST" => Ok(PriceType::Last),
+        "MARK" => Ok(PriceType::Mark),
+        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            format!("Invalid PriceType string: '{}'. Valid values are: BID, ASK, MID, LAST, MARK", price_type_str)
+        ))
+    }
 }

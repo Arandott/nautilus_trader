@@ -10,6 +10,7 @@ This script tests the complete integration of:
 
 import sys
 from pathlib import Path
+import traceback
 
 # Add project to path
 project_root = Path(__file__).parent
@@ -90,7 +91,8 @@ def test_indicator_creation():
         from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
         from nautilus_trader.model.data import Bar, BarType, BarSpecification
         from nautilus_trader.model.objects import Price, Quantity
-        from nautilus_trader.model.enums import BarAggregation, AggregationSource, PriceType
+        from nautilus_trader.model.enums import BarAggregation, AggregationSource
+        from nautilus_trader.core.nautilus_pyo3 import PriceType
         from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
         from nautilus_trader.core.uuid import UUID4
         import time
@@ -122,10 +124,13 @@ def test_indicator_creation():
     print("\nTesting simple expression: $close")
     try:
         indicator = FactorExpIndicator("$close")
+        print("Pass.")
         indicator.handle_bar(bar)
         print(f"✅ Value: {indicator.value}")
     except Exception as e:
         print(f"❌ Failed: {e}")
+        traceback.print_exc()
+        # print(f"❌ Failed: {e}")
     
     # Test rolling operator
     print("\nTesting rolling operator: TS_Mean($close, 5)")
@@ -149,9 +154,9 @@ def test_indicator_creation():
         print(f"❌ Failed: {e}")
     
     # Test complex expression
-    print("\nTesting complex expression: TS_Mean($close, 5) / TS_Mean($close, 10)")
+    print("\nTesting complex expression: TS_Mean($close, 2) / TS_Mean($close, 15)")
     try:
-        indicator = FactorExpIndicator("TS_Mean($close, 5) / TS_Mean($close, 10)")
+        indicator = FactorExpIndicator("TS_Mean($close, 2) / TS_Mean($close, 15)")
         for i in range(15):
             bar = Bar(
                 bar_type=bar_type,

@@ -16,7 +16,6 @@ from nautilus_trader.indicators.factorexp.expressions.ast import (
     BinaryOp,
     RollingOp,
     PairRollingOp,
-    CrossSectionalOp,
     ExpressionVisitor,
 )
 
@@ -174,7 +173,6 @@ class ExpressionValidator(ExpressionVisitor):
                     'feature_count': len(unique_features),
                     'unique_features': list(unique_features),
                     'estimated_memory_mb': self._estimate_memory_usage(expression),
-                    'has_cross_sectional': self._has_cross_sectional,
                 }
             )
             
@@ -191,7 +189,6 @@ class ExpressionValidator(ExpressionVisitor):
         self._visited_features: Set[str] = set()
         self._operator_count = 0
         self._max_window_seen = 0
-        self._has_cross_sectional = False
     
     def _is_operator_allowed(self, operator: str) -> bool:
         """Check if an operator is allowed."""
@@ -225,14 +222,7 @@ class ExpressionValidator(ExpressionVisitor):
         # Add memory for rolling windows
         window_memory = (self._max_window_seen * 8 * len(self._visited_features)) / 1_000_000
         
-        # Add memory for cross-sectional operations
-        if self._has_cross_sectional:
-            # Assume 100 instruments for estimation
-            cross_section_memory = (100 * 8 * len(self._visited_features)) / 1_000_000
-        else:
-            cross_section_memory = 0
-        
-        total_memory = base_memory + window_memory + cross_section_memory
+        total_memory = base_memory + window_memory
         return round(total_memory, 2)
     
     def visit_feature(self, expr: Feature) -> None:
@@ -405,21 +395,3 @@ class ExpressionValidator(ExpressionVisitor):
             self._errors.append(
                 f"{expr.operator} requires window size >= 2"
             )
-    
-    def visit_cross_sectional_op(self, expr: CrossSectionalOp) -> None:
-        """Validate a cross-sectional operation."""
-        self._operator_count += 1
-        self._has_cross_sectional = True
-        
-        # Check if operator is allowed
-        if not self._is_operator_allowed(expr.operator):
-            self._errors.append(f"Forbidden operator: {expr.operator}")
-            return
-        
-        # Validate operand
-        expr.operand.accept(self)
-        
-        # Warn about cross-sectional operations
-        self._warnings.append(
-            f"Cross-sectional operation '{expr.operator}' requires multi-asset data"
-        )

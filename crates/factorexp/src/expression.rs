@@ -112,17 +112,12 @@ impl CompiledExpression {
                     "TS_Mean" | "TS_Sum" => 1.0,
                     "TS_Std" | "TS_Var" => 2.0,
                     "TS_Skew" | "TS_Kurt" => 3.0,
-                    "CS_Rank" | "CS_Zscore" => 5.0,
+                    "ZScore" | "Demean" => 2.0,
                     _ => 1.5,
                 };
                 
-                // Check for cross-sectional operators
-                if name.starts_with("CS_") {
-                    metadata.has_cross_sectional = true;
-                }
-                
-                // Extract window size for time-series operators
-                if name.starts_with("TS_") {
+                // Extract window size for rolling operators
+                if name.starts_with("TS_") || name == "ZScore" || name == "Demean" {
                     if let Some(window) = params.get("window") {
                         metadata.max_window = metadata.max_window.max(*window as usize);
                     }

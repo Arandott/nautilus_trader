@@ -131,9 +131,17 @@ impl_rolling_operator_common!(Mad);
 impl Mad {
     /// Updates the operator with a new value and recalculates the mean absolute deviation.
     pub fn update_internal(&mut self, value: f64) {
-        self.base.buffer_mut().update(value);
+        // Handle NaN input: don't push to buffer, return last valid value
+        if value.is_nan() {
+            return;
+        }
         
-        if self.base.buffer().is_ready() {
+        // Valid value: push to buffer and increment valid count
+        self.base.buffer_mut().update(value);
+        self.base.increment_valid_count();
+        
+        // Only compute if we have enough valid samples
+        if self.base.valid_count() >= self.base.buffer().window_size() {
             let window = self.base.buffer().window();
             let mean = self.base.buffer().mean();
             
@@ -169,9 +177,17 @@ impl_rolling_operator_common!(Product);
 impl Product {
     /// Updates the operator with a new value and recalculates the product.
     pub fn update_internal(&mut self, value: f64) {
-        self.base.buffer_mut().update(value);
+        // Handle NaN input: don't push to buffer, return last valid value
+        if value.is_nan() {
+            return;
+        }
         
-        if self.base.buffer().is_ready() {
+        // Valid value: push to buffer and increment valid count
+        self.base.buffer_mut().update(value);
+        self.base.increment_valid_count();
+        
+        // Only compute if we have enough valid samples
+        if self.base.valid_count() >= self.base.buffer().window_size() {
             let product = self.base.buffer().window().iter().product();
             self.base.set_value(product);
         }
@@ -194,14 +210,65 @@ impl PctChange {
     }
 }
 
-impl_rolling_operator_common!(PctChange);
+// PctChange needs special handling - it's ready with just 2 values
+impl RollingOperator for PctChange {
+    #[inline]
+    fn name(&self) -> &str {
+        &self.base.name
+    }
+
+    #[inline]
+    fn window_size(&self) -> usize {
+        self.base.buffer().window_size()
+    }
+
+    #[inline]
+    fn is_ready(&self) -> bool {
+        // PctChange only needs 2 values to compute
+        self.base.valid_count >= 2
+    }
+
+    #[inline]
+    fn value(&self) -> f64 {
+        if self.is_ready() {
+            self.base.value
+        } else {
+            f64::NAN
+        }
+    }
+
+    #[inline]
+    fn update(&mut self, value: f64) {
+        self.update_internal(value);
+    }
+
+    #[inline]
+    fn count(&self) -> usize {
+        self.base.buffer().count()
+    }
+
+    fn reset(&mut self) {
+        self.base.buffer_mut().reset();
+        self.base.value = f64::NAN;
+        self.base.valid_count = 0;
+        self.base.last_valid_value = None;
+    }
+}
 
 impl PctChange {
     /// Updates the operator with a new value and calculates the percentage change.
     pub fn update_internal(&mut self, value: f64) {
-        self.base.buffer_mut().update(value);
+        // Handle NaN input: don't push to buffer, return last valid value
+        if value.is_nan() {
+            return;
+        }
         
-        if self.base.buffer().len() >= 2 {
+        // Valid value: push to buffer and increment valid count
+        self.base.buffer_mut().update(value);
+        self.base.increment_valid_count();
+        
+        // Only compute if we have enough valid samples (at least 2 for pct change)
+        if self.base.valid_count() >= 2 {
             if let (Some(first), Some(last)) = (
                 self.base.buffer().first(),
                 self.base.buffer().last(),

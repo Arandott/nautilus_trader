@@ -190,28 +190,6 @@ class PairRollingOp(Expression):
         return f"{self.operator}({self.left}, {self.right}, {self.window})"
 
 
-@dataclass
-class CrossSectionalOp(Expression):
-    """Represents a cross-sectional operation (e.g., CSRank, Demean, ZScore)."""
-    
-    operator: str
-    operand: Expression
-    
-    def accept(self, visitor: 'ExpressionVisitor') -> Any:
-        return visitor.visit_cross_sectional_op(self)
-    
-    def get_depth(self) -> int:
-        return 1 + self.operand.get_depth()
-    
-    def get_features(self) -> List[str]:
-        return self.operand.get_features()
-    
-    def get_operators(self) -> List[str]:
-        return [self.operator] + self.operand.get_operators()
-    
-    def __str__(self) -> str:
-        return f"{self.operator}({self.operand})"
-
 
 class ExpressionVisitor(ABC):
     """Visitor interface for traversing expression trees.
@@ -248,9 +226,4 @@ class ExpressionVisitor(ABC):
     @abstractmethod
     def visit_pair_rolling_op(self, expr: PairRollingOp) -> Any:
         """Visit a pair rolling operation node."""
-        pass
-    
-    @abstractmethod
-    def visit_cross_sectional_op(self, expr: CrossSectionalOp) -> Any:
-        """Visit a cross-sectional operation node."""
         pass

@@ -109,6 +109,8 @@ impl CompiledExpression {
                 // Update complexity based on operator type
                 metadata.complexity += match name.as_str() {
                     "Add" | "Sub" | "Mul" | "Div" => 0.3,
+                    "And" | "Or" => 0.2,
+                    "When" => 0.4,
                     "TS_Mean" | "TS_Sum" => 1.0,
                     "TS_Std" | "TS_Var" => 2.0,
                     "TS_Skew" | "TS_Kurt" => 3.0,

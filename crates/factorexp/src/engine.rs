@@ -496,6 +496,45 @@ impl InstantOperatorNode {
                 Ok(if (child_values[0] - child_values[1]).abs() >= 1e-10 { 1.0 } else { 0.0 })
             }
             
+            // Conditional operators
+            "When" => {
+                if child_values.len() != 2 {
+                    return Err(ExpressionError::InvalidParameters("When requires 2 arguments (condition, operand)".to_string()));
+                }
+                // When condition is true (non-zero), return operand; otherwise NaN
+                Ok(if child_values[0] != 0.0 && !child_values[0].is_nan() {
+                    child_values[1]
+                } else {
+                    f64::NAN
+                })
+            }
+            
+            // Logical operators
+            "And" => {
+                if child_values.len() != 2 {
+                    return Err(ExpressionError::InvalidParameters("And requires 2 arguments".to_string()));
+                }
+                // Logical AND: both operands must be true (non-zero)
+                Ok(if child_values[0] != 0.0 && !child_values[0].is_nan() && 
+                      child_values[1] != 0.0 && !child_values[1].is_nan() {
+                    1.0
+                } else {
+                    0.0
+                })
+            }
+            "Or" => {
+                if child_values.len() != 2 {
+                    return Err(ExpressionError::InvalidParameters("Or requires 2 arguments".to_string()));
+                }
+                // Logical OR: at least one operand must be true (non-zero)
+                Ok(if (child_values[0] != 0.0 && !child_values[0].is_nan()) || 
+                      (child_values[1] != 0.0 && !child_values[1].is_nan()) {
+                    1.0
+                } else {
+                    0.0
+                })
+            }
+            
             _ => Err(ExpressionError::UnknownOperator(self.operator_name.clone())),
         }
     }
@@ -1017,5 +1056,192 @@ mod tests {
         
         let result = engine.update_and_compute(&buffers).unwrap();
         assert!((result.unwrap() - 0.0).abs() < 1e-10); // sin(0) ≈ 0
+    }
+    
+    #[test]
+    fn test_when_operator() {
+        let mut engine = ComputationEngine::new();
+        
+        // Create When expression: When($volume > 1000, $close)
+        // This will return $close when $volume > 1000, otherwise NaN
+        let expr = CompiledExpression::new(
+            ExprNode::Operator {
+                name: "When".to_string(),
+                args: vec![
+                    CompiledExpression::new(ExprNode::Operator {
+                        name: "Greater".to_string(),
+                        args: vec![
+                            CompiledExpression::new(ExprNode::Feature("$volume".to_string())),
+                            CompiledExpression::new(ExprNode::Constant(1000.0)),
+                        ],
+                        params: HashMap::new(),
+                    }),
+                    CompiledExpression::new(ExprNode::Feature("$close".to_string())),
+                ],
+                params: HashMap::new(),
+            }
+        );
+        
+        // Build the expression tree
+        engine.build_tree(&expr).unwrap();
+        
+        // Test case 1: volume > 1000 (condition true)
+        let mut buffers = HashMap::new();
+        let mut volume_buffer = RollingBuffer::new(10);
+        let mut close_buffer = RollingBuffer::new(10);
+        
+        volume_buffer.push(1500.0);
+        close_buffer.push(100.0);
+        buffers.insert("volume".to_string(), volume_buffer.clone());
+        buffers.insert("close".to_string(), close_buffer.clone());
+        
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(100.0)); // When condition is true, return close value
+        
+        // Test case 2: volume <= 1000 (condition false)
+        engine.reset();
+        let mut volume_buffer2 = RollingBuffer::new(10);
+        let mut close_buffer2 = RollingBuffer::new(10);
+        
+        volume_buffer2.push(500.0);
+        close_buffer2.push(100.0);
+        buffers.insert("volume".to_string(), volume_buffer2);
+        buffers.insert("close".to_string(), close_buffer2);
+        
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert!(result.unwrap().is_nan()); // When condition is false, return NaN
+    }
+    
+    #[test]
+    fn test_and_operator() {
+        let mut engine = ComputationEngine::new();
+        
+        // Create And expression: ($close > 100) And ($volume > 1000)
+        let expr = CompiledExpression::new(
+            ExprNode::Operator {
+                name: "And".to_string(),
+                args: vec![
+                    CompiledExpression::new(ExprNode::Operator {
+                        name: "Greater".to_string(),
+                        args: vec![
+                            CompiledExpression::new(ExprNode::Feature("$close".to_string())),
+                            CompiledExpression::new(ExprNode::Constant(100.0)),
+                        ],
+                        params: HashMap::new(),
+                    }),
+                    CompiledExpression::new(ExprNode::Operator {
+                        name: "Greater".to_string(),
+                        args: vec![
+                            CompiledExpression::new(ExprNode::Feature("$volume".to_string())),
+                            CompiledExpression::new(ExprNode::Constant(1000.0)),
+                        ],
+                        params: HashMap::new(),
+                    }),
+                ],
+                params: HashMap::new(),
+            }
+        );
+        
+        // Build the expression tree
+        engine.build_tree(&expr).unwrap();
+        
+        // Test case 1: both conditions true
+        let mut buffers = HashMap::new();
+        let mut close_buffer = RollingBuffer::new(10);
+        let mut volume_buffer = RollingBuffer::new(10);
+        
+        close_buffer.push(150.0);  // > 100
+        volume_buffer.push(1500.0); // > 1000
+        buffers.insert("close".to_string(), close_buffer);
+        buffers.insert("volume".to_string(), volume_buffer);
+        
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(1.0)); // Both conditions true, And returns 1.0
+        
+        // Test case 2: first condition false
+        engine.reset();
+        let mut close_buffer2 = RollingBuffer::new(10);
+        let mut volume_buffer2 = RollingBuffer::new(10);
+        
+        close_buffer2.push(50.0);   // < 100
+        volume_buffer2.push(1500.0); // > 1000
+        buffers.insert("close".to_string(), close_buffer2);
+        buffers.insert("volume".to_string(), volume_buffer2);
+        
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(0.0)); // One condition false, And returns 0.0
+    }
+    
+    #[test]
+    fn test_or_operator() {
+        let mut engine = ComputationEngine::new();
+        
+        // Create Or expression: ($close > 100) Or ($volume > 1000)
+        let expr = CompiledExpression::new(
+            ExprNode::Operator {
+                name: "Or".to_string(),
+                args: vec![
+                    CompiledExpression::new(ExprNode::Operator {
+                        name: "Greater".to_string(),
+                        args: vec![
+                            CompiledExpression::new(ExprNode::Feature("$close".to_string())),
+                            CompiledExpression::new(ExprNode::Constant(100.0)),
+                        ],
+                        params: HashMap::new(),
+                    }),
+                    CompiledExpression::new(ExprNode::Operator {
+                        name: "Greater".to_string(),
+                        args: vec![
+                            CompiledExpression::new(ExprNode::Feature("$volume".to_string())),
+                            CompiledExpression::new(ExprNode::Constant(1000.0)),
+                        ],
+                        params: HashMap::new(),
+                    }),
+                ],
+                params: HashMap::new(),
+            }
+        );
+        
+        // Build the expression tree
+        engine.build_tree(&expr).unwrap();
+        
+        // Test case 1: both conditions true
+        let mut buffers = HashMap::new();
+        let mut close_buffer = RollingBuffer::new(10);
+        let mut volume_buffer = RollingBuffer::new(10);
+        
+        close_buffer.push(150.0);  // > 100
+        volume_buffer.push(1500.0); // > 1000
+        buffers.insert("close".to_string(), close_buffer);
+        buffers.insert("volume".to_string(), volume_buffer);
+        
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(1.0)); // At least one condition true, Or returns 1.0
+        
+        // Test case 2: only first condition true
+        engine.reset();
+        let mut close_buffer2 = RollingBuffer::new(10);
+        let mut volume_buffer2 = RollingBuffer::new(10);
+        
+        close_buffer2.push(150.0); // > 100
+        volume_buffer2.push(500.0); // < 1000
+        buffers.insert("close".to_string(), close_buffer2);
+        buffers.insert("volume".to_string(), volume_buffer2);
+        
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(1.0)); // At least one condition true, Or returns 1.0
+        
+        // Test case 3: both conditions false
+        engine.reset();
+        let mut close_buffer3 = RollingBuffer::new(10);
+        let mut volume_buffer3 = RollingBuffer::new(10);
+        
+        close_buffer3.push(50.0);  // < 100
+        volume_buffer3.push(500.0); // < 1000
+        buffers.insert("close".to_string(), close_buffer3);
+        buffers.insert("volume".to_string(), volume_buffer3);
+        
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(0.0)); // Both conditions false, Or returns 0.0
     }
 }

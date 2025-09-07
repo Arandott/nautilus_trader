@@ -57,7 +57,7 @@ class ExpressionParser:
     BINARY_OPS = {
         'Add', 'Sub', 'Mul', 'Div', 'Pow',
         'Greater', 'Less', 'GreaterEq', 'LessEq', 'Equal', 'NotEqual',
-        'And', 'Or', 'Max', 'Min',
+        'And', 'Or', 'When', 'Max', 'Min',
     }
     
     ROLLING_OPS = {

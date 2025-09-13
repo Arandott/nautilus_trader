@@ -75,6 +75,7 @@ CLAUDE.md
 CODEX.md
 PERF.JSON
 output.json
+.claude/
 
 # Nautilus specific
 .ipynb_checkpoints/

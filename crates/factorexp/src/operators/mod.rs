@@ -183,10 +183,9 @@ pub fn get_rolling_operator(name: &str, window_size: usize) -> Option<Box<dyn Ro
         "TS_Mad" => Some(Box::new(stats::Mad::new(window_size))),
         "TS_Delta" => {
             // For TS_Delta, the window_size parameter is the period (lookback)
-            // Delta always needs at least 2 values to compute difference
+            // Delta needs period + 1 values to compute difference
             let period = window_size;
-            let actual_window_size = std::cmp::max(2, period + 1);
-            Some(Box::new(rolling::Delta::new(actual_window_size)))
+            Some(Box::new(rolling::Delta::with_period(period + 1, period)))
         },
         "TS_Ref" => {
             // For TS_Ref, the window_size parameter is actually the period (lookback)
@@ -199,6 +198,7 @@ pub fn get_rolling_operator(name: &str, window_size: usize) -> Option<Box<dyn Ro
         "TS_Argmax" => Some(Box::new(rolling::Argmax::new(window_size))),
         "TS_Argmin" => Some(Box::new(rolling::Argmin::new(window_size))),
         "TS_Product" => Some(Box::new(rolling::Product::new(window_size))),
+        "TS_PctChg" => Some(Box::new(rolling::PctChg::new(window_size))),
         "ZScore" => Some(Box::new(rolling::ZScore::new(window_size, 0))),
         "Demean" => Some(Box::new(rolling::Demean::new(window_size))),
         _ => None,

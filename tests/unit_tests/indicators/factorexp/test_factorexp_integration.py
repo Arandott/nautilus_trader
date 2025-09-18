@@ -3,9 +3,9 @@
 Test script for FactorExp Python-Rust integration.
 
 This script tests the complete integration of:
-1. Python expression parsing
-2. Python-to-Rust AST conversion
-3. Rust execution engine
+1. Direct string-to-Rust expression parsing
+2. Rust compilation and execution
+3. Full indicator functionality with market data
 """
 
 import sys
@@ -17,17 +17,20 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 
-def test_bridge():
-    """Test the Python-Rust bridge."""
+def test_direct_rust_parsing():
+    """Test the direct Python-to-Rust string parsing."""
     print("=" * 60)
-    print("Testing Python-Rust Bridge")
+    print("Testing Direct String Parsing in Rust")
     print("=" * 60)
-    
-    from nautilus_trader.indicators.factorexp.bridge import ExpressionBridge
-    
-    bridge = ExpressionBridge()
-    
-    # Test cases
+
+    try:
+        from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
+        print("✅ FactorExpIndicator imported successfully")
+    except ImportError as e:
+        print(f"❌ Import failed: {e}")
+        return
+
+    # Test cases - all parsing happens directly in Rust now
     test_cases = [
         "$close",
         "TS_Mean($close, 20)",
@@ -35,50 +38,53 @@ def test_bridge():
         "($high + $low) / 2",
         "(TS_Mean($close, 20) - TS_Mean($close, 50)) / TS_Std($close, 20)",
     ]
-    
+
     for expr in test_cases:
         print(f"\nExpression: {expr}")
         try:
-            result = bridge.parse_and_convert(expr)
-            print(f"✅ Parsed successfully")
-            print(f"   Result type: {result.get('type')}")
-            if result.get('type') == 'Operator':
-                print(f"   Operator: {result.get('name')}")
-                print(f"   Args count: {len(result.get('args', []))}")
-                print(f"   Params: {result.get('params', {})}")
+            # New architecture: string goes directly to Rust
+            indicator = FactorExpIndicator(expr)
+            print(f"✅ Parsed and compiled successfully in Rust")
+            print(f"   Period: {indicator.period}")
+            print(f"   Expression: {indicator.expression}")
         except Exception as e:
             print(f"❌ Failed: {e}")
 
 
-def test_rust_compilation():
-    """Test the Rust compilation function."""
+def test_rust_module_availability():
+    """Test that the Rust module is compiled and accessible."""
     print("\n" + "=" * 60)
-    print("Testing Rust Compilation")
+    print("Testing Rust Module Availability")
     print("=" * 60)
-    
+
     try:
-        from nautilus_trader.core.nautilus_pyo3.factorexp import compile_expression_from_python
-        print("✅ Rust module imported successfully")
+        # Test that the Rust factorexp module exists
+        from nautilus_trader.core.nautilus_pyo3 import factorexp
+        print("✅ Rust factorexp module found")
+
+        # Check for FactorExpIndicator in the module
+        if hasattr(factorexp, 'FactorExpIndicator'):
+            print("✅ FactorExpIndicator class available in Rust module")
+        else:
+            print("⚠️  FactorExpIndicator not found in module")
+
+        # Test creating an indicator directly from Rust module
+        test_expr = "TS_Mean($close, 20)"
+        print(f"\nTesting Rust indicator creation with: {test_expr}")
+
+        try:
+            # Direct Rust instantiation (with new architecture)
+            rust_indicator = factorexp.FactorExpIndicator(test_expr)
+            print(f"✅ Created Rust indicator directly")
+            print(f"   Period: {rust_indicator.period}")
+            print(f"   Expression: {rust_indicator.expression}")
+        except Exception as e:
+            print(f"❌ Failed to create Rust indicator: {e}")
+
     except ImportError as e:
         print(f"❌ Rust module not available: {e}")
         print("   Please run 'make build' to compile the Rust code")
         return
-    
-    from nautilus_trader.indicators.factorexp.bridge import parse_expression
-    
-    # Test compilation
-    test_expr = "TS_Mean($close, 20)"
-    print(f"\nCompiling: {test_expr}")
-    
-    try:
-        ast_dict = parse_expression(test_expr)
-        print(f"✅ Parsed to AST: {ast_dict}")
-        
-        compiled = compile_expression_from_python(ast_dict)
-        print(f"✅ Compiled successfully")
-        print(f"   Compiled result: {compiled}")
-    except Exception as e:
-        print(f"❌ Compilation failed: {e}")
 
 
 def test_indicator_creation():
@@ -180,16 +186,16 @@ def main():
     print("\n" + "=" * 60)
     print("FactorExp Integration Test Suite")
     print("=" * 60)
-    
-    # Test 1: Bridge
-    test_bridge()
-    
-    # Test 2: Rust compilation
-    test_rust_compilation()
-    
+
+    # Test 1: Direct Rust parsing (new architecture)
+    test_direct_rust_parsing()
+
+    # Test 2: Rust module availability
+    test_rust_module_availability()
+
     # Test 3: Full indicator creation
     test_indicator_creation()
-    
+
     print("\n" + "=" * 60)
     print("Test Suite Complete")
     print("=" * 60)

@@ -25,6 +25,7 @@
 
 pub mod buffer;
 pub mod operators;
+pub mod parser;
 pub mod expression;
 pub mod engine;
 pub mod indicator;

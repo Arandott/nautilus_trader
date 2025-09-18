@@ -25,7 +25,7 @@ use crate::operators::{
 };
 
 mod indicator;
-use indicator::{PyFactorExpIndicator, compile_expression_from_python};
+use indicator::PyFactorExpIndicator;
 
 /// Base Python wrapper for Rust operators.
 macro_rules! create_python_wrapper {
@@ -279,7 +279,7 @@ pub fn factorexp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     
     // Register factory functions
     m.add_function(wrap_pyfunction!(create_operator, m)?)?;
-    m.add_function(wrap_pyfunction!(compile_expression_from_python, m)?)?;
+    // compile_expression_from_python removed - parsing is done directly in Rust
     
     Ok(())
 }

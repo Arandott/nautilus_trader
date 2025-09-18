@@ -108,31 +108,16 @@ cdef class FactorExpIndicator(Indicator):
                 "Please ensure the crate is compiled with 'make build' or 'make install'."
             )
         
-        # Create Rust indicator
-        try:
-            # Convert Cython PriceType to string for PyO3 compatibility
-            price_type_str = self._price_type_to_string(price_type)
-            
-            # Try to parse the expression using Python parser for complex expressions
-            try:
-                from nautilus_trader.indicators.factorexp.bridge import parse_expression
-                compiled_ast = parse_expression(expression)
-                if period > 0:
-                    self._rust_indicator = RustFactorExpIndicator(
-                        expression, period, price_type_str, compiled_ast=compiled_ast
-                    )
-                else:
-                    self._rust_indicator = RustFactorExpIndicator(
-                        expression, price_type=price_type_str, compiled_ast=compiled_ast
-                    )
-            except ImportError:
-                # Fallback to direct creation if bridge not available
-                if period > 0:
-                    self._rust_indicator = RustFactorExpIndicator(expression, period, price_type_str)
-                else:
-                    self._rust_indicator = RustFactorExpIndicator(expression, price_type=price_type_str)
-        except ValueError as e:
-            raise ValueError(f"Failed to create FactorExpIndicator: {e}")
+        # Create Rust indicator - directly pass expression string
+        # Rust handles all parsing internally
+        # Convert Cython PriceType to string for PyO3 compatibility
+        price_type_str = self._price_type_to_string(price_type)
+
+        # Create indicator - Rust will parse and compile internally
+        if period > 0:
+            self._rust_indicator = RustFactorExpIndicator(expression, period, price_type_str)
+        else:
+            self._rust_indicator = RustFactorExpIndicator(expression, price_type=price_type_str)
         
         # Get actual period from Rust
         self.period = self._rust_indicator.period

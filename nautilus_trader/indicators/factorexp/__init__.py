@@ -21,20 +21,9 @@ High-performance expression-based indicators with Rust backend.
 # The main indicator is imported directly from the Cython module:
 # from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
 
-# Expression handling utilities remain in Python for flexibility
-from nautilus_trader.indicators.factorexp.expressions.parser import ExpressionParser, ParseError
-from nautilus_trader.indicators.factorexp.expressions.validator import ExpressionValidator
-from nautilus_trader.indicators.factorexp.expressions.ast import Expression
-from nautilus_trader.indicators.factorexp.security.config import SecurityConfig, SecurityLevel
+# All expression parsing/compilation is handled internally by Rust
+# No parsing interfaces are exposed at the Python level
 
 __all__ = [
-    # Expression handling
-    "ExpressionParser",
-    "ExpressionValidator", 
-    "Expression",
-    "ParseError",
-    
-    # Security
-    "SecurityConfig",
-    "SecurityLevel",
+    # Empty for now - indicator is imported from .indicator module
 ]

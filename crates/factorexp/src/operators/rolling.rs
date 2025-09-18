@@ -284,7 +284,7 @@ impl Median {
         // Only compute if we have enough valid samples
         if self.base.valid_count() >= self.base.buffer().window_size() {
             let mut sorted: Vec<f64> = self.base.buffer().window();
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             let mid = sorted.len() / 2;
             
             let median = if sorted.len() % 2 == 0 {
@@ -298,18 +298,84 @@ impl Median {
     }
 }
 
+/// Rolling percentage change operator.
+#[derive(Debug)]
+pub struct PctChg {
+    base: BaseOperator,
+}
+
+impl PctChg {
+    /// Creates a new rolling percentage change operator.
+    #[must_use]
+    pub fn new(window_size: usize) -> Self {
+        Self {
+            base: BaseOperator::new("TS_PctChg", window_size),
+        }
+    }
+}
+
+impl_rolling_operator_common!(PctChg);
+
+impl PctChg {
+    /// Updates the operator with a new value and calculates the percentage change.
+    pub fn update_internal(&mut self, value: f64) {
+        // Handle NaN input: don't push to buffer, return last valid value
+        if value.is_nan() {
+            return;
+        }
+
+        // Valid value: push to buffer and increment valid count
+        self.base.buffer_mut().update(value);
+        self.base.increment_valid_count();
+
+        // Only compute if we have enough valid samples (at least 2)
+        if self.base.valid_count() >= 2 {
+            let len = self.base.buffer().len();
+            if len >= 2 {
+                if let (Some(previous), Some(current)) = (
+                    self.base.buffer().get(len - 2),
+                    self.base.buffer().get(len - 1),
+                ) {
+                    // Calculate percentage change: (current - previous) / previous * 100
+                    if previous.abs() > 1e-10 {  // Avoid division by zero
+                        self.base.set_value((current - previous) / previous * 100.0);
+                    } else {
+                        self.base.set_value(0.0);  // Return 0 if previous value is essentially zero
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Rolling delta (difference) operator.
+/// Computes the difference between current value and value from n periods ago.
 #[derive(Debug)]
 pub struct Delta {
     base: BaseOperator,
+    period: usize,
 }
 
 impl Delta {
     /// Creates a new rolling delta operator.
+    /// The window_size should be at least period + 1 to hold enough values.
     #[must_use]
     pub fn new(window_size: usize) -> Self {
+        // Default period is 1 (difference from previous value)
+        let period = window_size.saturating_sub(1).max(1);
         Self {
-            base: BaseOperator::new("TS_Delta", window_size),
+            base: BaseOperator::new("TS_Delta", window_size.max(2)),
+            period,
+        }
+    }
+
+    /// Creates a new rolling delta operator with explicit period.
+    #[must_use]
+    pub fn with_period(window_size: usize, period: usize) -> Self {
+        let period = period.max(1);
+        Self {
+            base: BaseOperator::new("TS_Delta", window_size.max(period + 1)),
+            period,
         }
     }
 }
@@ -323,20 +389,21 @@ impl Delta {
         if value.is_nan() {
             return;
         }
-        
+
         // Valid value: push to buffer and increment valid count
         self.base.buffer_mut().update(value);
         self.base.increment_valid_count();
-        
-        // Only compute if we have enough valid samples (at least 2)
-        if self.base.valid_count() >= 2 {
+
+        // Need at least period + 1 valid samples
+        if self.base.valid_count() > self.period {
             let len = self.base.buffer().len();
-            if len >= 2 {
-                if let (Some(previous), Some(current)) = (
-                    self.base.buffer().get(len - 2),
+            if len > self.period {
+                // Get current value and value from 'period' bars ago
+                if let (Some(old_value), Some(current)) = (
+                    self.base.buffer().get(len - self.period - 1),
                     self.base.buffer().get(len - 1),
                 ) {
-                    self.base.set_value(current - previous);
+                    self.base.set_value(current - old_value);
                 }
             }
         }
@@ -480,7 +547,7 @@ impl Argmax {
             
             if let Some((argmax_idx, _)) = values.iter()
                 .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()) {
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)) {
                 self.base.set_value(argmax_idx as f64);
             }
         }
@@ -523,7 +590,7 @@ impl Argmin {
             
             if let Some((argmin_idx, _)) = values.iter()
                 .enumerate()
-                .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()) {
+                .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)) {
                 self.base.set_value(argmin_idx as f64);
             }
         }

@@ -498,14 +498,14 @@ impl InstantOperatorNode {
             
             // Conditional operators
             "When" => {
-                if child_values.len() != 2 {
-                    return Err(ExpressionError::InvalidParameters("When requires 2 arguments (condition, operand)".to_string()));
+                if child_values.len() != 3 {
+                    return Err(ExpressionError::InvalidParameters("When requires 3 arguments (condition, true_value, false_value)".to_string()));
                 }
-                // When condition is true (non-zero), return operand; otherwise NaN
+                // When condition is true (non-zero), return true_value; otherwise false_value
                 Ok(if child_values[0] != 0.0 && !child_values[0].is_nan() {
                     child_values[1]
                 } else {
-                    f64::NAN
+                    child_values[2]
                 })
             }
             
@@ -1061,9 +1061,9 @@ mod tests {
     #[test]
     fn test_when_operator() {
         let mut engine = ComputationEngine::new();
-        
-        // Create When expression: When($volume > 1000, $close)
-        // This will return $close when $volume > 1000, otherwise NaN
+
+        // Create When expression: When($volume > 1000, $close, $low)
+        // This will return $close when $volume > 1000, otherwise $low
         let expr = CompiledExpression::new(
             ExprNode::Operator {
                 name: "When".to_string(),
@@ -1077,6 +1077,7 @@ mod tests {
                         params: HashMap::new(),
                     }),
                     CompiledExpression::new(ExprNode::Feature("$close".to_string())),
+                    CompiledExpression::new(ExprNode::Feature("$low".to_string())),
                 ],
                 params: HashMap::new(),
             }
@@ -1095,21 +1096,28 @@ mod tests {
         buffers.insert("volume".to_string(), volume_buffer.clone());
         buffers.insert("close".to_string(), close_buffer.clone());
         
+        let mut low_buffer = RollingBuffer::new(10);
+        low_buffer.push(95.0);
+        buffers.insert("low".to_string(), low_buffer.clone());
+
         let result = engine.update_and_compute(&buffers).unwrap();
         assert_eq!(result, Some(100.0)); // When condition is true, return close value
-        
+
         // Test case 2: volume <= 1000 (condition false)
         engine.reset();
         let mut volume_buffer2 = RollingBuffer::new(10);
         let mut close_buffer2 = RollingBuffer::new(10);
-        
+        let mut low_buffer2 = RollingBuffer::new(10);
+
         volume_buffer2.push(500.0);
         close_buffer2.push(100.0);
+        low_buffer2.push(95.0);
         buffers.insert("volume".to_string(), volume_buffer2);
         buffers.insert("close".to_string(), close_buffer2);
-        
+        buffers.insert("low".to_string(), low_buffer2);
+
         let result = engine.update_and_compute(&buffers).unwrap();
-        assert!(result.unwrap().is_nan()); // When condition is false, return NaN
+        assert_eq!(result, Some(95.0)); // When condition is false, return low value
     }
     
     #[test]

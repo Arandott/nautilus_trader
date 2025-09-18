@@ -272,14 +272,59 @@ mod tests {
         let expr = CompiledExpression::new(
             ExprNode::Feature("$close".to_string())
         );
-        
+
         let mut indicator = FactorExpIndicator::new(expr, 1, PriceType::Last);
         let bar = create_test_bar(100.0);
-        
+
         indicator.handle_bar(&bar);
-        
+
         assert_eq!(indicator.count, 1);
         assert!(indicator.initialized);
         assert_eq!(indicator.value, 100.0);
+    }
+
+    #[test]
+    fn test_end_to_end_string_parsing_and_calculation() {
+        // Test 1: Simple feature extraction
+        let mut parser = crate::parser::Parser::new("$close");
+        let parsed = parser.parse().expect("Failed to parse");
+        let expr_node = crate::parser::convert_to_expr_node(parsed);
+        let compiled = CompiledExpression::new(expr_node);
+
+        let mut indicator = FactorExpIndicator::new(compiled, 1, PriceType::Last);
+        indicator.handle_bar(&create_test_bar(100.0));
+        assert_eq!(indicator.value, 100.0);
+
+        // Test 2: Simple arithmetic
+        let mut parser = crate::parser::Parser::new("$close + 10");
+        let parsed = parser.parse().expect("Failed to parse");
+        let expr_node = crate::parser::convert_to_expr_node(parsed);
+        let compiled = CompiledExpression::new(expr_node);
+
+        let mut indicator = FactorExpIndicator::new(compiled, 1, PriceType::Last);
+        indicator.handle_bar(&create_test_bar(100.0));
+        assert_eq!(indicator.value, 110.0);
+
+        // Test 3: Rolling mean (requires multiple bars)
+        let mut parser = crate::parser::Parser::new("TS_Mean($close, 3)");
+        let parsed = parser.parse().expect("Failed to parse");
+        let expr_node = crate::parser::convert_to_expr_node(parsed);
+        let compiled = CompiledExpression::new(expr_node);
+
+        let mut indicator = FactorExpIndicator::new(compiled, 3, PriceType::Last);
+        indicator.handle_bar(&create_test_bar(100.0));
+        indicator.handle_bar(&create_test_bar(110.0));
+        indicator.handle_bar(&create_test_bar(120.0));
+        assert_eq!(indicator.value, 110.0); // Mean of [100, 110, 120]
+
+        // Test 4: Complex expression
+        let mut parser = crate::parser::Parser::new("($close - $open) / 2");
+        let parsed = parser.parse().expect("Failed to parse");
+        let expr_node = crate::parser::convert_to_expr_node(parsed);
+        let compiled = CompiledExpression::new(expr_node);
+
+        let mut indicator = FactorExpIndicator::new(compiled, 1, PriceType::Last);
+        indicator.handle_bar(&create_test_bar(100.0)); // open=99, close=100
+        assert_eq!(indicator.value, 0.5); // (100 - 99) / 2
     }
 }

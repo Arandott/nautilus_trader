@@ -54,8 +54,6 @@ pub struct ExpressionMetadata {
     pub features: Vec<String>,
     /// Maximum window size required by any operator.
     pub max_window: usize,
-    /// Whether the expression contains cross-sectional operators.
-    pub has_cross_sectional: bool,
     /// List of operators used in the expression.
     pub operators: Vec<String>,
     /// Estimated computational complexity.
@@ -182,7 +180,7 @@ mod tests {
         
         assert_eq!(expr.metadata.features, vec!["close"]);
         assert_eq!(expr.metadata.max_window, 20);
-        assert!(!expr.metadata.has_cross_sectional);
+        // Cross-sectional check removed - not applicable to single instrument context
         assert_eq!(expr.metadata.operators, vec!["TS_Mean"]);
     }
     

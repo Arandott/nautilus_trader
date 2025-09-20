@@ -148,7 +148,17 @@ impl OperatorNode {
             ))?
             .clone() as usize;
 
-        let operator = get_rolling_operator(&operator_name, window_size);
+        // Special handling for TS_Quantile with phi parameter
+        let operator = if operator_name == "TS_Quantile" {
+            if let Some(&phi) = params.get("phi") {
+                Some(Box::new(crate::operators::rolling::Quantile::new(window_size, phi)) as Box<dyn RollingOperator>)
+            } else {
+                get_rolling_operator(&operator_name, window_size)
+            }
+        } else {
+            get_rolling_operator(&operator_name, window_size)
+        };
+
         let pair_operator = get_pair_rolling_operator(&operator_name, window_size);
         
         Ok(Self {
@@ -508,7 +518,32 @@ impl InstantOperatorNode {
                     child_values[2]
                 })
             }
-            
+
+            // Clipping operator
+            "Clip" => {
+                if child_values.len() != 3 {
+                    return Err(ExpressionError::InvalidParameters("Clip requires 3 arguments (value, min, max)".to_string()));
+                }
+                let value = child_values[0];
+                let min = child_values[1];
+                let max = child_values[2];
+
+                // Handle NaN: if value is NaN, return NaN
+                if value.is_nan() {
+                    return Ok(f64::NAN);
+                }
+
+                // Validate bounds
+                if min > max {
+                    return Err(ExpressionError::InvalidParameters(
+                        format!("Clip min ({}) must be <= max ({})", min, max)
+                    ));
+                }
+
+                // Clip the value
+                Ok(value.max(min).min(max))
+            }
+
             // Logical operators
             "And" => {
                 if child_values.len() != 2 {
@@ -654,7 +689,6 @@ impl ComputationEngine {
             "TS_Med" | "TS_Median" | "TS_Product" | "TS_Delta" | "TS_Ref" | "TS_Rank" |
             "TS_Argmax" | "TS_Argmin" | "TS_EMA" | "TS_WMA" | "TS_Skew" |
             "TS_Kurt" | "TS_Kurtosis" | "TS_Mad" | "TS_Corr" | "TS_Cov" | "TS_Beta" |
-            "TS_PctChg" |
             // Statistical rolling operators without TS_ prefix
             "ZScore" | "Demean"
         )
@@ -1119,7 +1153,176 @@ mod tests {
         let result = engine.update_and_compute(&buffers).unwrap();
         assert_eq!(result, Some(95.0)); // When condition is false, return low value
     }
-    
+
+    #[test]
+    fn test_clip_operator() {
+        let mut engine = ComputationEngine::new();
+
+        // Create Clip expression: Clip($close, 50, 100)
+        // This will clip close price to the range [50, 100]
+        let expr = CompiledExpression::new(
+            ExprNode::Operator {
+                name: "Clip".to_string(),
+                args: vec![
+                    CompiledExpression::new(ExprNode::Feature("$close".to_string())),
+                    CompiledExpression::new(ExprNode::Constant(50.0)),
+                    CompiledExpression::new(ExprNode::Constant(100.0)),
+                ],
+                params: HashMap::new(),
+            }
+        );
+
+        engine.add_expression("clip_test", expr);
+        engine.set_primary_expression("clip_test");
+
+        // Test 1: Value below min - should return min (50)
+        let mut buffers = HashMap::new();
+        let close_buffer1 = Buffer::from_vec(vec![30.0]);
+        buffers.insert("close".to_string(), close_buffer1);
+
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(50.0)); // Clipped to min
+
+        // Test 2: Value above max - should return max (100)
+        let close_buffer2 = Buffer::from_vec(vec![120.0]);
+        buffers.clear();
+        buffers.insert("close".to_string(), close_buffer2);
+
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(100.0)); // Clipped to max
+
+        // Test 3: Value within range - should return value unchanged
+        let close_buffer3 = Buffer::from_vec(vec![75.0]);
+        buffers.clear();
+        buffers.insert("close".to_string(), close_buffer3);
+
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(75.0)); // Within range, unchanged
+
+        // Test 4: Edge cases - exactly at bounds
+        let close_buffer4 = Buffer::from_vec(vec![50.0]);
+        buffers.clear();
+        buffers.insert("close".to_string(), close_buffer4);
+
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(50.0)); // Exactly at min
+
+        let close_buffer5 = Buffer::from_vec(vec![100.0]);
+        buffers.clear();
+        buffers.insert("close".to_string(), close_buffer5);
+
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(100.0)); // Exactly at max
+    }
+
+    #[test]
+    fn test_clip_with_nan() {
+        let mut engine = ComputationEngine::new();
+
+        // Create Clip expression with NaN handling
+        let expr = CompiledExpression::new(
+            ExprNode::Operator {
+                name: "Clip".to_string(),
+                args: vec![
+                    CompiledExpression::new(ExprNode::Feature("$close".to_string())),
+                    CompiledExpression::new(ExprNode::Constant(0.0)),
+                    CompiledExpression::new(ExprNode::Constant(100.0)),
+                ],
+                params: HashMap::new(),
+            }
+        );
+
+        engine.add_expression("clip_nan_test", expr);
+        engine.set_primary_expression("clip_nan_test");
+
+        // Test with NaN input
+        let mut buffers = HashMap::new();
+        let close_buffer = Buffer::from_vec(vec![f64::NAN]);
+        buffers.insert("close".to_string(), close_buffer);
+
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert!(result.unwrap().is_nan()); // NaN input should return NaN
+    }
+
+    #[test]
+    fn test_clip_with_dynamic_bounds() {
+        let mut engine = ComputationEngine::new();
+
+        // Create Clip expression with dynamic bounds: Clip($close, $low, $high)
+        let expr = CompiledExpression::new(
+            ExprNode::Operator {
+                name: "Clip".to_string(),
+                args: vec![
+                    CompiledExpression::new(ExprNode::Feature("$close".to_string())),
+                    CompiledExpression::new(ExprNode::Feature("$low".to_string())),
+                    CompiledExpression::new(ExprNode::Feature("$high".to_string())),
+                ],
+                params: HashMap::new(),
+            }
+        );
+
+        engine.add_expression("clip_dynamic_test", expr);
+        engine.set_primary_expression("clip_dynamic_test");
+
+        // Test with dynamic bounds from market data
+        let mut buffers = HashMap::new();
+        let close_buffer = Buffer::from_vec(vec![105.0]);
+        let low_buffer = Buffer::from_vec(vec![95.0]);
+        let high_buffer = Buffer::from_vec(vec![100.0]);
+        buffers.insert("close".to_string(), close_buffer);
+        buffers.insert("low".to_string(), low_buffer);
+        buffers.insert("high".to_string(), high_buffer);
+
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(100.0)); // Clipped to high
+
+        // Test with close below low
+        let close_buffer2 = Buffer::from_vec(vec![90.0]);
+        buffers.clear();
+        buffers.insert("close".to_string(), close_buffer2);
+        buffers.insert("low".to_string(), Buffer::from_vec(vec![95.0]));
+        buffers.insert("high".to_string(), Buffer::from_vec(vec![100.0]));
+
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(95.0)); // Clipped to low
+    }
+
+    #[test]
+    fn test_clip_end_to_end_parsing() {
+        use crate::parser::{Parser, convert_to_expr_node};
+
+        let mut engine = ComputationEngine::new();
+
+        // Parse a Clip expression from string
+        let mut parser = Parser::new("Clip($close * 1.1, 90, 110)");
+        let parsed_expr = parser.parse().unwrap();
+        let expr_node = convert_to_expr_node(parsed_expr);
+        let compiled = CompiledExpression::new(expr_node);
+
+        engine.add_expression("clip_parsed", compiled);
+        engine.set_primary_expression("clip_parsed");
+
+        // Test with various values
+        let mut buffers = HashMap::new();
+
+        // Test 1: Result within bounds
+        buffers.insert("close".to_string(), Buffer::from_vec(vec![95.0]));
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(104.5)); // 95 * 1.1 = 104.5
+
+        // Test 2: Result exceeds max
+        buffers.clear();
+        buffers.insert("close".to_string(), Buffer::from_vec(vec![105.0]));
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(110.0)); // 105 * 1.1 = 115.5, clipped to 110
+
+        // Test 3: Result below min
+        buffers.clear();
+        buffers.insert("close".to_string(), Buffer::from_vec(vec![80.0]));
+        let result = engine.update_and_compute(&buffers).unwrap();
+        assert_eq!(result, Some(90.0)); // 80 * 1.1 = 88, clipped to 90
+    }
+
     #[test]
     fn test_and_operator() {
         let mut engine = ComputationEngine::new();

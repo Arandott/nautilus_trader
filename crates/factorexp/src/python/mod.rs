@@ -21,7 +21,7 @@ use crate::operators::{
     RollingOperator,
     rolling::{Mean, Sum, Std, Var, Min, Max, Median, Delta},
     ma::{Ema, Wma},
-    stats::{Skew, Kurtosis, Mad, Product, PctChange},
+    stats::{Skew, Kurtosis, Mad, Product},
 };
 
 mod indicator;
@@ -98,7 +98,6 @@ create_python_wrapper!(PySkew, Skew, Skew::new, "Skew");
 create_python_wrapper!(PyKurtosis, Kurtosis, Kurtosis::new, "Kurtosis");
 create_python_wrapper!(PyMad, Mad, Mad::new, "Mad");
 create_python_wrapper!(PyProduct, Product, Product::new, "Product");
-create_python_wrapper!(PyPctChange, PctChange, PctChange::new, "PctChange");
 
 // Special handling for Std and Var which take ddof parameter
 #[pyclass(name = "Std")]
@@ -229,7 +228,6 @@ pub fn create_operator(
         "TS_Kurt" => Ok(Py::new(py, PyKurtosis::py_new(window_size)?)?.into_any()),
         "TS_Mad" => Ok(Py::new(py, PyMad::py_new(window_size)?)?.into_any()),
         "TS_Product" => Ok(Py::new(py, PyProduct::py_new(window_size)?)?.into_any()),
-        "TS_PctChg" => Ok(Py::new(py, PyPctChange::py_new(window_size)?)?.into_any()),
         "TS_Std" => {
             let ddof = kwargs
                 .and_then(|d| d.get_item("ddof").ok().flatten())
@@ -275,7 +273,6 @@ pub fn factorexp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyKurtosis>()?;
     m.add_class::<PyMad>()?;
     m.add_class::<PyProduct>()?;
-    m.add_class::<PyPctChange>()?;
     
     // Register factory functions
     m.add_function(wrap_pyfunction!(create_operator, m)?)?;

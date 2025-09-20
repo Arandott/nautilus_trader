@@ -198,9 +198,9 @@ pub fn get_rolling_operator(name: &str, window_size: usize) -> Option<Box<dyn Ro
         "TS_Argmax" => Some(Box::new(rolling::Argmax::new(window_size))),
         "TS_Argmin" => Some(Box::new(rolling::Argmin::new(window_size))),
         "TS_Product" => Some(Box::new(rolling::Product::new(window_size))),
-        "TS_PctChg" => Some(Box::new(rolling::PctChg::new(window_size))),
         "ZScore" => Some(Box::new(rolling::ZScore::new(window_size, 0))),
         "Demean" => Some(Box::new(rolling::Demean::new(window_size))),
+        "TS_Quantile" => Some(Box::new(rolling::Quantile::new(window_size, 0.5))), // Default to median
         _ => None,
     }
 }

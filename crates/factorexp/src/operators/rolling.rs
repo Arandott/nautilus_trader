@@ -298,55 +298,6 @@ impl Median {
     }
 }
 
-/// Rolling percentage change operator.
-#[derive(Debug)]
-pub struct PctChg {
-    base: BaseOperator,
-}
-
-impl PctChg {
-    /// Creates a new rolling percentage change operator.
-    #[must_use]
-    pub fn new(window_size: usize) -> Self {
-        Self {
-            base: BaseOperator::new("TS_PctChg", window_size),
-        }
-    }
-}
-
-impl_rolling_operator_common!(PctChg);
-
-impl PctChg {
-    /// Updates the operator with a new value and calculates the percentage change.
-    pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
-            return;
-        }
-
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-
-        // Only compute if we have enough valid samples (at least 2)
-        if self.base.valid_count() >= 2 {
-            let len = self.base.buffer().len();
-            if len >= 2 {
-                if let (Some(previous), Some(current)) = (
-                    self.base.buffer().get(len - 2),
-                    self.base.buffer().get(len - 1),
-                ) {
-                    // Calculate percentage change: (current - previous) / previous * 100
-                    if previous.abs() > 1e-10 {  // Avoid division by zero
-                        self.base.set_value((current - previous) / previous * 100.0);
-                    } else {
-                        self.base.set_value(0.0);  // Return 0 if previous value is essentially zero
-                    }
-                }
-            }
-        }
-    }
-}
 
 /// Rolling delta (difference) operator.
 /// Computes the difference between current value and value from n periods ago.
@@ -862,5 +813,514 @@ mod tests {
         // Test NaN handling
         op.update(f64::NAN);
         assert_eq!(op.value(), 1.0); // Should return previous valid value
+    }
+
+    #[test]
+    fn test_quantile_median() {
+        let mut q = Quantile::new(5, 0.5);
+
+        // Add values 1-5
+        for i in 1..=5 {
+            q.update(i as f64);
+        }
+        assert!((q.value() - 3.0).abs() < 1e-10);
+
+        // Rolling update: [2,3,4,5,6]
+        q.update(6.0);
+        assert!((q.value() - 4.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_quantile_percentiles() {
+        let mut q25 = Quantile::new(100, 0.25);
+        let mut q75 = Quantile::new(100, 0.75);
+
+        for i in 1..=100 {
+            q25.update(i as f64);
+            q75.update(i as f64);
+        }
+
+        // Q1 and Q3 of 1-100
+        assert!((q25.value() - 25.75).abs() < 0.1);
+        assert!((q75.value() - 75.25).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_quantile_sorted_array_impl() {
+        // Test with small window to ensure sorted array is used
+        let mut q = Quantile::new(10, 0.5);
+
+        // Test with unsorted data
+        let values = [5.0, 2.0, 8.0, 1.0, 9.0, 3.0, 7.0, 4.0, 6.0, 10.0];
+        for val in values {
+            q.update(val);
+        }
+
+        // Median of [1,2,3,4,5,6,7,8,9,10] should be 5.5
+        assert!((q.value() - 5.5).abs() < 1e-10);
+
+        // Add more values to test rolling
+        q.update(11.0);  // Window: [2,3,4,5,6,7,8,9,10,11]
+        assert!((q.value() - 6.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_quantile_dual_heap_impl() {
+        // Test with large window to ensure dual heap is used
+        let mut q = Quantile::new(2000, 0.5);
+
+        // Fill with values
+        for i in 1..=2000 {
+            q.update(i as f64);
+        }
+
+        // Median should be 1000.5
+        assert!((q.value() - 1000.5).abs() < 1.0);
+
+        // Test rolling update
+        q.update(2001.0);  // Window: [2, 3, ..., 2001]
+        assert!((q.value() - 1001.5).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_quantile_extreme_values() {
+        let mut q_min = Quantile::new(5, 0.0);   // Minimum
+        let mut q_max = Quantile::new(5, 1.0);   // Maximum
+
+        let values = [3.0, 1.0, 4.0, 1.0, 5.0];
+        for val in values {
+            q_min.update(val);
+            q_max.update(val);
+        }
+
+        assert!((q_min.value() - 1.0).abs() < 1e-10);  // Min
+        assert!((q_max.value() - 5.0).abs() < 1e-10);  // Max
+    }
+
+    #[test]
+    fn test_quantile_nan_handling() {
+        let mut q = Quantile::new(5, 0.5);
+
+        // Add some values
+        q.update(1.0);
+        q.update(2.0);
+        q.update(3.0);
+        assert!(q.is_ready());
+        let valid_value = q.value();
+
+        // NaN should be ignored
+        q.update(f64::NAN);
+        assert_eq!(q.value(), valid_value);
+
+        // Inf should be handled properly
+        q.update(f64::INFINITY);
+        assert!(q.value().is_finite() || q.value() == f64::INFINITY);
+    }
+
+    #[test]
+    fn test_quantile_duplicate_values() {
+        let mut q = Quantile::new(10, 0.5);
+
+        // Test with many duplicates
+        for _ in 0..5 {
+            q.update(1.0);
+        }
+        for _ in 0..5 {
+            q.update(2.0);
+        }
+
+        // Median of [1,1,1,1,1,2,2,2,2,2] should be 1.5
+        assert!((q.value() - 1.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_quantile_single_value() {
+        let mut q = Quantile::new(5, 0.5);
+
+        q.update(42.0);
+        assert!(q.is_ready());
+        assert!((q.value() - 42.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_quantile_r7_interpolation() {
+        // Test R-7 interpolation method (pandas default)
+        let mut q = Quantile::new(4, 0.25);
+
+        // Values: [1, 2, 3, 4]
+        for i in 1..=4 {
+            q.update(i as f64);
+        }
+
+        // R-7: h = (n-1)*φ + 1 = 3*0.25 + 1 = 1.75
+        // Q1 should interpolate between 1st (1.0) and 2nd (2.0) values
+        // Result = 1.0 * 0.25 + 2.0 * 0.75 = 1.75
+        assert!((q.value() - 1.75).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_quantile_algorithm_switch() {
+        // Test that algorithm switch at threshold works correctly
+        let mut q_small = Quantile::new(SMALL_WINDOW_THRESHOLD, 0.5);
+        let mut q_large = Quantile::new(SMALL_WINDOW_THRESHOLD + 1, 0.5);
+
+        // Fill both with same data
+        for i in 1..=SMALL_WINDOW_THRESHOLD {
+            let val = i as f64;
+            q_small.update(val);
+            q_large.update(val);
+        }
+
+        // Add one more to large window
+        q_large.update((SMALL_WINDOW_THRESHOLD + 1) as f64);
+
+        // Both should produce valid results
+        assert!(q_small.is_ready());
+        assert!(q_large.is_ready());
+        assert!(q_small.value().is_finite());
+        assert!(q_large.value().is_finite());
+    }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Quantile Implementation
+// -------------------------------------------------------------------------------------------------
+
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
+
+/// Threshold for switching between algorithms
+const SMALL_WINDOW_THRESHOLD: usize = 1024;
+
+/// Rolling quantile operator with adaptive algorithm selection.
+/// Uses sorted array for small windows (≤1024) and dual heap for larger windows.
+#[derive(Debug)]
+pub struct Quantile {
+    base: BaseOperator,
+    phi: f64,  // Quantile level (0.0-1.0)
+    implementation: QuantileImpl,
+}
+
+#[derive(Debug)]
+enum QuantileImpl {
+    SortedArray(SortedArrayQuantile),
+    DualHeap(DualHeapQuantile),
+}
+
+impl Quantile {
+    /// Creates a new rolling quantile operator.
+    #[must_use]
+    pub fn new(window_size: usize, phi: f64) -> Self {
+        assert!(phi >= 0.0 && phi <= 1.0, "Quantile phi must be in [0, 1]");
+
+        let implementation = if window_size <= SMALL_WINDOW_THRESHOLD {
+            QuantileImpl::SortedArray(SortedArrayQuantile::new(window_size))
+        } else {
+            QuantileImpl::DualHeap(DualHeapQuantile::new(window_size, phi))
+        };
+
+        Self {
+            base: BaseOperator::new("TS_Quantile", window_size),
+            phi,
+            implementation,
+        }
+    }
+
+    /// Updates the operator with a new value.
+    pub fn update_internal(&mut self, value: f64) {
+        // Filter NaN values
+        if value.is_nan() {
+            return;
+        }
+
+        self.base.increment_valid_count();
+
+        match &mut self.implementation {
+            QuantileImpl::SortedArray(inner) => {
+                inner.push(value);
+                if inner.is_ready() {
+                    let q = inner.quantile_r7(self.phi);
+                    self.base.set_value(q);
+                }
+            }
+            QuantileImpl::DualHeap(inner) => {
+                inner.push(value);
+                if inner.is_ready() {
+                    let q = inner.quantile_r7();
+                    self.base.set_value(q);
+                }
+            }
+        }
+    }
+}
+
+impl_rolling_operator_common!(Quantile);
+
+/// Sorted array implementation for small windows.
+#[derive(Debug)]
+struct SortedArrayQuantile {
+    window_size: usize,
+    time_order: VecDeque<f64>,  // Maintains insertion order
+    sorted: Vec<f64>,            // Maintains sorted order
+}
+
+impl SortedArrayQuantile {
+    fn new(window_size: usize) -> Self {
+        Self {
+            window_size,
+            time_order: VecDeque::with_capacity(window_size + 1),
+            sorted: Vec::with_capacity(window_size + 1),
+        }
+    }
+
+    fn push(&mut self, value: f64) {
+        // Add to time order queue
+        self.time_order.push_back(value);
+
+        // Binary search insertion into sorted array
+        let pos = self.sorted.binary_search_by(|x| x.partial_cmp(&value).unwrap())
+            .unwrap_or_else(|i| i);
+        self.sorted.insert(pos, value);
+
+        // Remove oldest if window is full
+        if self.time_order.len() > self.window_size {
+            let old_value = self.time_order.pop_front().unwrap();
+
+            // Binary search and remove from sorted array
+            let pos = self.sorted.binary_search_by(|x| x.partial_cmp(&old_value).unwrap())
+                .expect("Value must exist in sorted array");
+            self.sorted.remove(pos);
+        }
+    }
+
+    fn is_ready(&self) -> bool {
+        !self.sorted.is_empty()
+    }
+
+    /// Calculates quantile using R-7 method (pandas default).
+    fn quantile_r7(&self, phi: f64) -> f64 {
+        let n = self.sorted.len();
+        if n == 0 {
+            return f64::NAN;
+        }
+
+        if n == 1 {
+            return self.sorted[0];
+        }
+
+        // R-7 method: h = (n-1)*phi + 1
+        let h = (n as f64 - 1.0) * phi + 1.0;
+        let k = (h.floor() as usize).min(n - 1);
+        let g = h - h.floor();
+
+        if k == n - 1 {
+            self.sorted[n - 1]
+        } else {
+            (1.0 - g) * self.sorted[k] + g * self.sorted[k + 1]
+        }
+    }
+}
+
+/// Dual heap implementation for medium/large windows.
+#[derive(Debug)]
+struct DualHeapQuantile {
+    window_size: usize,
+    phi: f64,
+    time_order: VecDeque<f64>,
+    left: BinaryHeap<OrderedFloat>,        // max-heap for lower quantiles
+    right: BinaryHeap<Reverse<OrderedFloat>>, // min-heap for upper quantiles
+    del_left: HashMap<u64, usize>,         // Lazy deletion counters
+    del_right: HashMap<u64, usize>,
+    active_count: usize,
+}
+
+/// Wrapper for f64 to implement Ord for heap operations.
+#[derive(Debug, Clone, Copy)]
+struct OrderedFloat(f64);
+
+impl PartialEq for OrderedFloat {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.to_bits() == other.0.to_bits()
+    }
+}
+
+impl Eq for OrderedFloat {}
+
+impl PartialOrd for OrderedFloat {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+
+impl Ord for OrderedFloat {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl DualHeapQuantile {
+    fn new(window_size: usize, phi: f64) -> Self {
+        Self {
+            window_size,
+            phi,
+            time_order: VecDeque::with_capacity(window_size + 1),
+            left: BinaryHeap::new(),
+            right: BinaryHeap::new(),
+            del_left: HashMap::new(),
+            del_right: HashMap::new(),
+            active_count: 0,
+        }
+    }
+
+    fn key(x: f64) -> u64 {
+        x.to_bits()
+    }
+
+    fn prune_left(&mut self) {
+        while let Some(&top) = self.left.peek() {
+            let k = Self::key(top.0);
+            if let Some(count) = self.del_left.get_mut(&k) {
+                if *count > 0 {
+                    *count -= 1;
+                    self.left.pop();
+                    if *count == 0 {
+                        self.del_left.remove(&k);
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn prune_right(&mut self) {
+        while let Some(&Reverse(top)) = self.right.peek() {
+            let k = Self::key(top.0);
+            if let Some(count) = self.del_right.get_mut(&k) {
+                if *count > 0 {
+                    *count -= 1;
+                    self.right.pop();
+                    if *count == 0 {
+                        self.del_right.remove(&k);
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn rebalance(&mut self) {
+        let target_left = ((self.active_count as f64) * self.phi).ceil() as usize;
+
+        self.prune_left();
+        self.prune_right();
+
+        // Move elements from left to right if left is too large
+        while self.left.len() > target_left && !self.left.is_empty() {
+            if let Some(x) = self.left.pop() {
+                self.right.push(Reverse(x));
+            }
+            self.prune_left();
+        }
+
+        // Move elements from right to left if left is too small
+        while self.left.len() < target_left && !self.right.is_empty() {
+            if let Some(Reverse(x)) = self.right.pop() {
+                self.left.push(x);
+            }
+            self.prune_right();
+        }
+
+        // Ensure heap invariant: max(left) <= min(right)
+        self.prune_left();
+        self.prune_right();
+
+        if !self.left.is_empty() && !self.right.is_empty() {
+            let left_max = *self.left.peek().unwrap();
+            let right_min = self.right.peek().unwrap().0;
+
+            if left_max > right_min {
+                self.left.pop();
+                self.right.pop();
+                self.left.push(right_min);
+                self.right.push(Reverse(left_max));
+            }
+        }
+    }
+
+    fn push(&mut self, value: f64) {
+        self.time_order.push_back(value);
+        self.active_count += 1;
+
+        let ordered = OrderedFloat(value);
+
+        // Insert into appropriate heap
+        self.prune_left();
+        if self.left.is_empty() || value <= self.left.peek().unwrap().0 {
+            self.left.push(ordered);
+        } else {
+            self.right.push(Reverse(ordered));
+        }
+
+        self.rebalance();
+
+        // Remove oldest if window is full
+        if self.time_order.len() > self.window_size {
+            let old_value = self.time_order.pop_front().unwrap();
+            self.active_count -= 1;
+
+            let k = Self::key(old_value);
+
+            // Determine which heap contains the old value
+            self.prune_left();
+            if !self.left.is_empty() && old_value <= self.left.peek().unwrap().0 {
+                *self.del_left.entry(k).or_insert(0) += 1;
+            } else {
+                *self.del_right.entry(k).or_insert(0) += 1;
+            }
+
+            self.rebalance();
+        }
+    }
+
+    fn is_ready(&self) -> bool {
+        self.active_count > 0
+    }
+
+    /// Calculates quantile using R-7 method with interpolation.
+    fn quantile_r7(&mut self) -> f64 {
+        if self.active_count == 0 {
+            return f64::NAN;
+        }
+
+        let n = self.active_count as f64;
+        let h = (n - 1.0) * self.phi + 1.0;
+        let k = h.floor();
+        let g = h - k;
+
+        self.prune_left();
+        self.prune_right();
+
+        // Handle edge cases
+        if self.left.is_empty() {
+            if self.right.is_empty() {
+                return f64::NAN;
+            }
+            return self.right.peek().unwrap().0.0;
+        }
+
+        let q_low = self.left.peek().unwrap().0;
+
+        if g == 0.0 || self.right.is_empty() {
+            return q_low;
+        }
+
+        let q_high = self.right.peek().unwrap().0.0;
+        (1.0 - g) * q_low + g * q_high
     }
 }

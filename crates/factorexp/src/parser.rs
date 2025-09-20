@@ -57,6 +57,8 @@ pub enum Expr {
         arg: Box<Expr>,
         /// Window size
         window: usize,
+        /// Additional parameters (e.g., phi for quantile)
+        params: HashMap<String, f64>,
     },
 
     /// Pair rolling operation node (correlation, covariance, etc.)
@@ -80,6 +82,16 @@ pub enum Expr {
         /// Value if condition is false
         false_value: Box<Expr>,
     },
+
+    /// Clip operation node (bounds value within min/max range)
+    ClipNode {
+        /// Value expression to clip
+        value: Box<Expr>,
+        /// Minimum bound
+        min: Box<Expr>,
+        /// Maximum bound
+        max: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,7 +112,7 @@ pub enum RollingOpType {
     Mean, Sum, Std, Var, Min, Max, Median,
     Skew, Kurt, Mad, EMA, WMA,
     Delta, Ref, Rank, Argmax, Argmin, Product,
-    ZScore, Demean, PctChg,
+    ZScore, Demean, Quantile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -381,6 +393,19 @@ impl Parser {
             });
         }
 
+        // Special handling for Clip - bounds value within min/max range
+        if name == "Clip" {
+            if args.len() != 3 {
+                return Err(format!("Clip expects 3 arguments (value, min, max), got {}", args.len()));
+            }
+            let mut iter = args.into_iter();
+            return Ok(Expr::ClipNode {
+                value: Box::new(iter.next().ok_or("Missing value")?),
+                min: Box::new(iter.next().ok_or("Missing min")?),
+                max: Box::new(iter.next().ok_or("Missing max")?),
+            });
+        }
+
         // Match binary operators
         if let Ok(op) = self.parse_binary_op(name) {
             if args.len() != 2 {
@@ -424,6 +449,39 @@ impl Parser {
 
         // Single rolling operator
         if let Ok(op) = self.parse_rolling_op(op_name) {
+            // Special handling for Quantile - expects 3 arguments (expr, window, phi)
+            if op == RollingOpType::Quantile {
+                if args.len() != 3 {
+                    return Err(format!("TS_Quantile expects 3 arguments (expr, window, phi), got {}", args.len()));
+                }
+
+                let mut iter = args.into_iter();
+                let arg = iter.next().ok_or("Missing expression argument")?;
+                let window_expr = iter.next().ok_or("Missing window argument")?;
+                let phi_expr = iter.next().ok_or("Missing phi argument")?;
+
+                let window = match window_expr {
+                    Expr::NumNode(n) if n > 0.0 => n as usize,
+                    _ => return Err("Window must be a positive number".to_string()),
+                };
+
+                let phi = match phi_expr {
+                    Expr::NumNode(p) if p >= 0.0 && p <= 1.0 => p,
+                    _ => return Err("Quantile phi must be a number between 0 and 1".to_string()),
+                };
+
+                let mut params = HashMap::new();
+                params.insert("phi".to_string(), phi);
+
+                return Ok(Expr::RollingNode {
+                    op,
+                    arg: Box::new(arg),
+                    window,
+                    params,
+                });
+            }
+
+            // Standard rolling operators - 2 arguments
             if args.len() != 2 {
                 return Err(format!("TS_{} expects 2 arguments, got {}", op_name, args.len()));
             }
@@ -441,6 +499,7 @@ impl Parser {
                 op,
                 arg: Box::new(arg),
                 window,
+                params: HashMap::new(),
             });
         }
 
@@ -506,7 +565,7 @@ impl Parser {
             "Product" => Ok(RollingOpType::Product),
             "ZScore" => Ok(RollingOpType::ZScore),
             "Demean" => Ok(RollingOpType::Demean),
-            "PctChg" => Ok(RollingOpType::PctChg),
+            "Quantile" => Ok(RollingOpType::Quantile),
             _ => Err(format!("Unknown rolling operator: {}", name)),
         }
     }
@@ -606,7 +665,7 @@ pub fn convert_to_expr_node(expr: Expr) -> ExprNode {
             }
         }
 
-        Expr::RollingNode { op, arg, window } => {
+        Expr::RollingNode { op, arg, window, params: extra_params } => {
             let op_name = match op {
                 RollingOpType::Mean => "TS_Mean",
                 RollingOpType::Sum => "TS_Sum",
@@ -628,11 +687,16 @@ pub fn convert_to_expr_node(expr: Expr) -> ExprNode {
                 RollingOpType::Product => "TS_Product",
                 RollingOpType::ZScore => "ZScore",
                 RollingOpType::Demean => "Demean",
-                RollingOpType::PctChg => "TS_PctChg",
+                RollingOpType::Quantile => "TS_Quantile",
             };
 
             let mut params = HashMap::new();
             params.insert("window".to_string(), window as f64);
+
+            // Add any extra parameters (e.g., phi for quantile)
+            for (key, value) in extra_params {
+                params.insert(key, value);
+            }
 
             ExprNode::Operator {
                 name: op_name.to_string(),
@@ -668,6 +732,18 @@ pub fn convert_to_expr_node(expr: Expr) -> ExprNode {
                     CompiledExpression::new(convert_to_expr_node(*condition)),
                     CompiledExpression::new(convert_to_expr_node(*true_value)),
                     CompiledExpression::new(convert_to_expr_node(*false_value)),
+                ],
+                params: HashMap::new(),
+            }
+        }
+        Expr::ClipNode { value, min, max } => {
+            // Clip operator needs 3 arguments: value, min, max
+            ExprNode::Operator {
+                name: "Clip".to_string(),
+                args: vec![
+                    CompiledExpression::new(convert_to_expr_node(*value)),
+                    CompiledExpression::new(convert_to_expr_node(*min)),
+                    CompiledExpression::new(convert_to_expr_node(*max)),
                 ],
                 params: HashMap::new(),
             }
@@ -719,7 +795,7 @@ mod tests {
         let expr = parser.parse().unwrap();
 
         match expr {
-            Expr::RollingNode { op: RollingOpType::Mean, arg, window: 20 } => {
+            Expr::RollingNode { op: RollingOpType::Mean, arg, window: 20, params: _ } => {
                 if let Expr::VarNode(name) = arg.as_ref() {
                     assert_eq!(name, "close");
                 } else {
@@ -736,6 +812,25 @@ mod tests {
         let expr = parser.parse().unwrap();
 
         assert!(matches!(expr, Expr::BinOpNode { op: BinOpType::Div, .. }));
+    }
+
+    #[test]
+    fn test_parse_ts_quantile() {
+        let mut parser = Parser::new("TS_Quantile($close, 100, 0.75)");
+        let expr = parser.parse().unwrap();
+
+        match expr {
+            Expr::RollingNode { op: RollingOpType::Quantile, arg, window: 100, params } => {
+                if let Expr::VarNode(name) = arg.as_ref() {
+                    assert_eq!(name, "close");
+                } else {
+                    panic!("Expected Var");
+                }
+                // Check that phi parameter was stored correctly
+                assert_eq!(params.get("phi"), Some(&0.75));
+            }
+            _ => panic!("Expected TS_Quantile operation"),
+        }
     }
 
     #[test]
@@ -807,6 +902,42 @@ mod tests {
                 assert!(matches!(false_value.as_ref(), Expr::VarNode(name) if name == "low"));
             }
             _ => panic!("Expected TernaryNode for When operator"),
+        }
+    }
+
+    #[test]
+    fn test_parse_clip_operator() {
+        let mut parser = Parser::new("Clip($close, 0, 100)");
+        let expr = parser.parse().unwrap();
+
+        match expr {
+            Expr::ClipNode { value, min, max } => {
+                // Check value is $close
+                assert!(matches!(value.as_ref(), Expr::VarNode(name) if name == "close"));
+                // Check min is 0
+                assert!(matches!(min.as_ref(), Expr::NumNode(val) if *val == 0.0));
+                // Check max is 100
+                assert!(matches!(max.as_ref(), Expr::NumNode(val) if *val == 100.0));
+            }
+            _ => panic!("Expected ClipNode for Clip operator"),
+        }
+    }
+
+    #[test]
+    fn test_parse_clip_with_expressions() {
+        let mut parser = Parser::new("Clip($close * 2, $low, $high)");
+        let expr = parser.parse().unwrap();
+
+        match expr {
+            Expr::ClipNode { value, min, max } => {
+                // Check value is multiplication
+                assert!(matches!(value.as_ref(), Expr::BinOpNode { op: BinOpType::Mul, .. }));
+                // Check min is $low
+                assert!(matches!(min.as_ref(), Expr::VarNode(name) if name == "low"));
+                // Check max is $high
+                assert!(matches!(max.as_ref(), Expr::VarNode(name) if name == "high"));
+            }
+            _ => panic!("Expected ClipNode for Clip operator"),
         }
     }
 }

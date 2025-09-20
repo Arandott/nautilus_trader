@@ -32,11 +32,21 @@ This crate provides Rust implementations of rolling window operators used in fac
 - `TS_Skew` - Rolling skewness
 - `TS_Kurt` - Rolling kurtosis (excess)
 - `TS_Mad` - Mean absolute deviation
+- `TS_Quantile` - Rolling quantile/percentile with adaptive algorithm
 
 ### Other Operators
 - `TS_Delta` - Difference between newest and oldest
 - `TS_Product` - Rolling product
-- `TS_PctChg` - Percentage change
+- `TS_Ref` - Reference value N periods ago
+- `TS_Rank` - Rolling rank (percentile position)
+- `TS_Argmax` - Index of maximum value
+- `TS_Argmin` - Index of minimum value
+- `ZScore` - Standardized score (z-score)
+- `Demean` - Value minus rolling mean
+
+### Conditional & Utility Operators
+- `When` - Conditional expression (if-then-else)
+- `Clip` - Bounds value within min/max range
 
 ## Building
 
@@ -88,6 +98,37 @@ for price in prices {
 }
 ```
 
+### Quantile Usage
+
+```python
+# Python example using FactorExp string
+expression = "TS_Quantile($close, 100, 0.75)"  # 75th percentile over 100 periods
+
+# Rust example
+use nautilus_factorexp::operators::{RollingOperator, rolling::Quantile};
+
+let mut q75 = Quantile::new(100, 0.75);
+for price in prices {
+    q75.update(price);
+    if q75.is_ready() {
+        println!("75th percentile: {}", q75.value());
+    }
+}
+```
+
+### Clip Operator Usage
+
+```python
+# Python example - Clip RSI to [30, 70] range
+expression = "Clip(RSI($close, 14), 30, 70)"  # Bounds RSI between 30 and 70
+
+# Dynamic bounds based on market data
+expression = "Clip($close, $low * 0.95, $high * 1.05)"  # Clip close to 5% beyond day's range
+
+# Normalize values to [0, 1] range
+expression = "Clip(($close - $low) / ($high - $low), 0, 1)"
+```
+
 ## Performance
 
 Benchmark results on M1 MacBook Pro:
@@ -113,6 +154,17 @@ Many operators maintain running statistics:
 - Sum and sum-of-squares for variance calculation
 - Avoids recomputing over entire window
 - Minimal numerical error accumulation
+
+### Adaptive Algorithm Selection
+
+The `TS_Quantile` operator uses adaptive algorithm selection for optimal performance:
+- **Small windows (≤1024)**: Sorted array with binary search insertion
+  - Cache-friendly for small data sets
+  - O(n) insertion, O(1) quantile computation
+- **Large windows (>1024)**: Dual heap with lazy deletion
+  - Efficient for large data sets
+  - O(log n) amortized operations
+- **Interpolation**: R-7 method (pandas default) for accurate percentiles
 
 ## Testing
 

@@ -15,14 +15,14 @@
 
 //! Python bindings for FactorExp operators and indicators.
 
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
 use crate::operators::{
     RollingOperator,
-    rolling::{Mean, Sum, Std, Var, Min, Max, Median, Delta},
     ma::{Ema, Wma},
-    stats::{Skew, Kurtosis, Mad, Product},
+    rolling::{Delta, Max, Mean, Median, Min, Std, Sum, Var},
+    stats::{Kurtosis, Mad, Product, Skew},
 };
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 mod indicator;
 use indicator::PyFactorExpIndicator;
@@ -46,7 +46,11 @@ macro_rules! create_python_wrapper {
             }
 
             fn __repr__(&self) -> String {
-                format!("{}(window_size={})", self.inner.name(), self.inner.window_size())
+                format!(
+                    "{}(window_size={})",
+                    self.inner.name(),
+                    self.inner.window_size()
+                )
             }
 
             #[getter]
@@ -242,9 +246,10 @@ pub fn create_operator(
                 .unwrap_or(1);
             Ok(Py::new(py, PyVar::py_new(window_size, ddof)?)?.into_any())
         }
-        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            format!("Unknown operator: {}", operator_name),
-        )),
+        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Unknown operator: {}",
+            operator_name
+        ))),
     }
 }
 
@@ -254,10 +259,10 @@ pub fn factorexp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Import PriceType enum (already defined in nautilus_model with pyclass)
     // This ensures the enum is available for Python-Rust conversion
     m.add_class::<nautilus_model::enums::PriceType>()?;
-    
+
     // Register indicator class
     m.add_class::<PyFactorExpIndicator>()?;
-    
+
     // Register all operator classes
     m.add_class::<PyMean>()?;
     m.add_class::<PySum>()?;
@@ -273,10 +278,10 @@ pub fn factorexp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyKurtosis>()?;
     m.add_class::<PyMad>()?;
     m.add_class::<PyProduct>()?;
-    
+
     // Register factory functions
     m.add_function(wrap_pyfunction!(create_operator, m)?)?;
     // compile_expression_from_python removed - parsing is done directly in Rust
-    
+
     Ok(())
 }

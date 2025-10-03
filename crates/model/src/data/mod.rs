@@ -21,6 +21,8 @@ pub mod close;
 pub mod delta;
 pub mod deltas;
 pub mod depth;
+#[cfg(feature = "extended_bar")]
+pub mod extended_bar;
 pub mod greeks;
 pub mod order;
 pub mod prices;

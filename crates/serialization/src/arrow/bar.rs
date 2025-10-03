@@ -16,11 +16,21 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use arrow::{
-    array::{FixedSizeBinaryArray, FixedSizeBinaryBuilder, UInt64Array},
+    array::{
+        Array, ArrayRef, BooleanArray, BooleanBuilder, FixedSizeBinaryArray, FixedSizeBinaryBuilder,
+        UInt64Array, UInt64Builder,
+    },
     datatypes::{DataType, Field, Schema},
     error::ArrowError,
     record_batch::RecordBatch,
 };
+#[cfg(feature = "extended_bar")]
+use extended_bar_macros::{
+    bool_get_by_name, bool_set_by_name, price_get_by_name, price_set_by_name,
+    quantity_get_by_name, quantity_set_by_name, u64_get_by_name, u64_set_by_name,
+};
+#[cfg(feature = "extended_bar")]
+use nautilus_model::data::extended_bar;
 use nautilus_model::{
     data::{Bar, BarType},
     types::{Price, Quantity, fixed::PRECISION_BYTES},
@@ -34,9 +44,133 @@ use crate::arrow::{
     ArrowSchemaProvider, Data, DecodeFromRecordBatch, EncodeToRecordBatch, get_raw_price,
 };
 
+#[cfg(feature = "extended_bar")]
+const KEY_EXT_FIELDS: &str = "ext_fields";
+#[cfg(feature = "extended_bar")]
+const KEY_EXT_FIELD_PREFIX: &str = "ext_field.";
+#[cfg(feature = "extended_bar")]
+const KEY_EXT_FIELD_TYPE_SUFFIX: &str = ".type";
+#[cfg(feature = "extended_bar")]
+const KEY_EXT_FIELD_PRECISION_SUFFIX: &str = ".precision";
+
+const BASE_BAR_COLUMN_COUNT: usize = 7;
+
+#[cfg(feature = "extended_bar")]
+#[derive(Clone, Debug)]
+struct ExtColumn {
+    spec: &'static extended_bar::FieldSpec,
+    precision: Option<u8>,
+}
+
+#[cfg(feature = "extended_bar")]
+impl ExtColumn {
+    fn ident(&self) -> &'static str {
+        self.spec.ident
+    }
+
+    fn field_type(&self) -> extended_bar::FieldType {
+        self.spec.field_type
+    }
+
+    fn arrow_field(&self) -> Field {
+        match self.field_type() {
+            extended_bar::FieldType::Quantity | extended_bar::FieldType::Price => Field::new(
+                self.ident(),
+                DataType::FixedSizeBinary(PRECISION_BYTES),
+                true,
+            ),
+            extended_bar::FieldType::U64 => Field::new(self.ident(), DataType::UInt64, true),
+            extended_bar::FieldType::Bool => Field::new(self.ident(), DataType::Boolean, true),
+        }
+    }
+}
+
+#[cfg(feature = "extended_bar")]
+enum ExtColumnBuilder {
+    Quantity(FixedSizeBinaryBuilder),
+    Price(FixedSizeBinaryBuilder),
+    U64(UInt64Builder),
+    Bool(BooleanBuilder),
+}
+
+#[cfg(feature = "extended_bar")]
+impl ExtColumnBuilder {
+    fn new(column: &ExtColumn, capacity: usize) -> Self {
+        match column.field_type() {
+            extended_bar::FieldType::Quantity => Self::Quantity(FixedSizeBinaryBuilder::with_capacity(
+                capacity,
+                PRECISION_BYTES,
+            )),
+            extended_bar::FieldType::Price => Self::Price(FixedSizeBinaryBuilder::with_capacity(
+                capacity,
+                PRECISION_BYTES,
+            )),
+            extended_bar::FieldType::U64 => Self::U64(UInt64Builder::with_capacity(capacity)),
+            extended_bar::FieldType::Bool => Self::Bool(BooleanBuilder::with_capacity(capacity)),
+        }
+    }
+
+    fn append_value(&mut self, column: &mut ExtColumn, bar: &Bar) {
+        match (self, column.field_type()) {
+            (Self::Quantity(builder), extended_bar::FieldType::Quantity) => {
+                if let Some(value) = quantity_get_by_name!(bar, column.ident()) {
+                    let quantity: ::nautilus_model::types::Quantity = value;
+                    let raw_bytes = quantity.raw.to_le_bytes();
+                    let _ = builder.append_value(raw_bytes);
+                    column.precision = column.precision.or(Some(quantity.precision));
+                } else {
+                    let _ = builder.append_null();
+                }
+            }
+            (Self::Price(builder), extended_bar::FieldType::Price) => {
+                if let Some(value) = price_get_by_name!(bar, column.ident()) {
+                    let price: ::nautilus_model::types::Price = value;
+                    let raw_bytes = price.raw.to_le_bytes();
+                    let _ = builder.append_value(raw_bytes);
+                    column.precision = column.precision.or(Some(price.precision));
+                } else {
+                    let _ = builder.append_null();
+                }
+            }
+            (Self::U64(builder), extended_bar::FieldType::U64) => {
+                if let Some(value) = u64_get_by_name!(bar, column.ident()) {
+                    let _ = builder.append_value(value);
+                } else {
+                    let _ = builder.append_null();
+                }
+            }
+            (Self::Bool(builder), extended_bar::FieldType::Bool) => {
+                if let Some(value) = bool_get_by_name!(bar, column.ident()) {
+                    let _ = builder.append_value(value);
+                } else {
+                    let _ = builder.append_null();
+                }
+            }
+            _ => unreachable!("builder variant does not match extended field type"),
+        }
+    }
+
+    fn finish(self) -> ArrayRef {
+        match self {
+            Self::Quantity(mut builder) => Arc::new(builder.finish()) as ArrayRef,
+            Self::Price(mut builder) => Arc::new(builder.finish()) as ArrayRef,
+            Self::U64(mut builder) => Arc::new(builder.finish()) as ArrayRef,
+            Self::Bool(mut builder) => Arc::new(builder.finish()) as ArrayRef,
+        }
+    }
+}
+
+#[cfg(feature = "extended_bar")]
+enum ExtColumnArray<'a> {
+    Fixed(&'a FixedSizeBinaryArray),
+    U64(&'a UInt64Array),
+    Bool(&'a BooleanArray),
+}
+
 impl ArrowSchemaProvider for Bar {
     fn get_schema(metadata: Option<HashMap<String, String>>) -> Schema {
-        let fields = vec![
+        #[allow(unused_mut)]
+        let mut fields = vec![
             Field::new("open", DataType::FixedSizeBinary(PRECISION_BYTES), false),
             Field::new("high", DataType::FixedSizeBinary(PRECISION_BYTES), false),
             Field::new("low", DataType::FixedSizeBinary(PRECISION_BYTES), false),
@@ -47,13 +181,31 @@ impl ArrowSchemaProvider for Bar {
         ];
 
         match metadata {
-            Some(metadata) => Schema::new_with_metadata(fields, metadata),
+            Some(metadata) => {
+                #[cfg(feature = "extended_bar")]
+                {
+                    let ext_columns = parse_ext_fields_from_metadata(&metadata);
+                    for column in &ext_columns {
+                        fields.push(column.arrow_field());
+                    }
+                }
+
+                Schema::new_with_metadata(fields, metadata)
+            }
             None => Schema::new(fields),
         }
     }
 }
 
-fn parse_metadata(metadata: &HashMap<String, String>) -> Result<(BarType, u8, u8), EncodingError> {
+struct ParsedBarMetadata {
+    bar_type: BarType,
+    price_precision: u8,
+    size_precision: u8,
+    #[cfg(feature = "extended_bar")]
+    ext_columns: Vec<ExtColumn>,
+}
+
+fn parse_metadata(metadata: &HashMap<String, String>) -> Result<ParsedBarMetadata, EncodingError> {
     let bar_type_str = metadata
         .get(KEY_BAR_TYPE)
         .ok_or_else(|| EncodingError::MissingMetadata(KEY_BAR_TYPE))?;
@@ -72,7 +224,16 @@ fn parse_metadata(metadata: &HashMap<String, String>) -> Result<(BarType, u8, u8
         .parse::<u8>()
         .map_err(|e| EncodingError::ParseError(KEY_SIZE_PRECISION, e.to_string()))?;
 
-    Ok((bar_type, price_precision, size_precision))
+    #[cfg(feature = "extended_bar")]
+    let ext_columns = parse_ext_fields_from_metadata(metadata);
+
+    Ok(ParsedBarMetadata {
+        bar_type,
+        price_precision,
+        size_precision,
+        #[cfg(feature = "extended_bar")]
+        ext_columns,
+    })
 }
 
 impl EncodeToRecordBatch for Bar {
@@ -87,6 +248,14 @@ impl EncodeToRecordBatch for Bar {
         let mut volume_builder = FixedSizeBinaryBuilder::with_capacity(data.len(), PRECISION_BYTES);
         let mut ts_event_builder = UInt64Array::builder(data.len());
         let mut ts_init_builder = UInt64Array::builder(data.len());
+
+        #[cfg(feature = "extended_bar")]
+        let mut ext_columns = collect_ext_columns_from_data(data);
+        #[cfg(feature = "extended_bar")]
+        let mut ext_builders: Vec<ExtColumnBuilder> = ext_columns
+            .iter()
+            .map(|column| ExtColumnBuilder::new(column, data.len()))
+            .collect();
 
         for bar in data {
             open_builder
@@ -104,6 +273,11 @@ impl EncodeToRecordBatch for Bar {
                 .unwrap();
             ts_event_builder.append_value(bar.ts_event.as_u64());
             ts_init_builder.append_value(bar.ts_init.as_u64());
+
+            #[cfg(feature = "extended_bar")]
+            for (column, builder) in ext_columns.iter_mut().zip(ext_builders.iter_mut()) {
+                builder.append_value(column, bar);
+            }
         }
 
         let open_array = open_builder.finish();
@@ -114,22 +288,57 @@ impl EncodeToRecordBatch for Bar {
         let ts_event_array = ts_event_builder.finish();
         let ts_init_array = ts_init_builder.finish();
 
-        RecordBatch::try_new(
-            Self::get_schema(Some(metadata.clone())).into(),
-            vec![
-                Arc::new(open_array),
-                Arc::new(high_array),
-                Arc::new(low_array),
-                Arc::new(close_array),
-                Arc::new(volume_array),
-                Arc::new(ts_event_array),
-                Arc::new(ts_init_array),
-            ],
-        )
+        #[allow(unused_mut)]
+        let mut columns: Vec<ArrayRef> = vec![
+            Arc::new(open_array) as ArrayRef,
+            Arc::new(high_array) as ArrayRef,
+            Arc::new(low_array) as ArrayRef,
+            Arc::new(close_array) as ArrayRef,
+            Arc::new(volume_array) as ArrayRef,
+            Arc::new(ts_event_array) as ArrayRef,
+            Arc::new(ts_init_array) as ArrayRef,
+        ];
+
+        #[cfg(feature = "extended_bar")]
+        for builder in ext_builders {
+            columns.push(builder.finish());
+        }
+
+        RecordBatch::try_new(Self::get_schema(Some(metadata.clone())).into(), columns)
     }
 
     fn metadata(&self) -> HashMap<String, String> {
-        Bar::get_metadata(&self.bar_type, self.open.precision, self.volume.precision)
+        #[allow(unused_mut)]
+        let mut metadata =
+            Bar::get_metadata(&self.bar_type, self.open.precision, self.volume.precision);
+        #[cfg(feature = "extended_bar")]
+        {
+            let columns = collect_ext_columns_from_data(std::slice::from_ref(self));
+            insert_ext_columns_into_metadata(&mut metadata, &columns);
+        }
+        metadata
+    }
+
+    fn chunk_metadata(chunk: &[Self]) -> HashMap<String, String> {
+        assert!(
+            !chunk.is_empty(),
+            "Chunk must have atleast one element to encode"
+        );
+        let first = &chunk[0];
+        #[allow(unused_mut)]
+        let mut metadata = Bar::get_metadata(
+            &first.bar_type,
+            first.open.precision,
+            first.volume.precision,
+        );
+
+        #[cfg(feature = "extended_bar")]
+        {
+            let columns = collect_ext_columns_from_data(chunk);
+            insert_ext_columns_into_metadata(&mut metadata, &columns);
+        }
+
+        metadata
     }
 }
 
@@ -138,7 +347,10 @@ impl DecodeFromRecordBatch for Bar {
         metadata: &HashMap<String, String>,
         record_batch: RecordBatch,
     ) -> Result<Vec<Self>, EncodingError> {
-        let (bar_type, price_precision, size_precision) = parse_metadata(metadata)?;
+        let parsed = parse_metadata(metadata)?;
+        let bar_type = parsed.bar_type;
+        let price_precision = parsed.price_precision;
+        let size_precision = parsed.size_precision;
         let cols = record_batch.columns();
 
         let open_values = extract_column::<FixedSizeBinaryArray>(
@@ -174,6 +386,41 @@ impl DecodeFromRecordBatch for Bar {
         let ts_event_values = extract_column::<UInt64Array>(cols, "ts_event", 5, DataType::UInt64)?;
         let ts_init_values = extract_column::<UInt64Array>(cols, "ts_init", 6, DataType::UInt64)?;
 
+        #[cfg(feature = "extended_bar")]
+        let ext_arrays: Vec<ExtColumnArray<'_>> = parsed
+            .ext_columns
+            .iter()
+            .enumerate()
+            .map(|(idx, column)| {
+                let column_index = BASE_BAR_COLUMN_COUNT + idx;
+                match column.field_type() {
+                    extended_bar::FieldType::Quantity | extended_bar::FieldType::Price => {
+                        extract_column::<FixedSizeBinaryArray>(
+                            cols,
+                            column.ident(),
+                            column_index,
+                            DataType::FixedSizeBinary(PRECISION_BYTES),
+                        )
+                        .map(ExtColumnArray::Fixed)
+                    }
+                    extended_bar::FieldType::U64 => extract_column::<UInt64Array>(
+                        cols,
+                        column.ident(),
+                        column_index,
+                        DataType::UInt64,
+                    )
+                    .map(ExtColumnArray::U64),
+                    extended_bar::FieldType::Bool => extract_column::<BooleanArray>(
+                        cols,
+                        column.ident(),
+                        column_index,
+                        DataType::Boolean,
+                    )
+                    .map(ExtColumnArray::Bool),
+                }
+            })
+            .collect::<Result<_, _>>()?;
+
         let result: Result<Vec<Self>, EncodingError> = (0..record_batch.num_rows())
             .map(|i| {
                 let open = Price::from_raw(get_raw_price(open_values.value(i)), price_precision);
@@ -185,16 +432,70 @@ impl DecodeFromRecordBatch for Bar {
                 let ts_event = ts_event_values.value(i).into();
                 let ts_init = ts_init_values.value(i).into();
 
-                Ok(Self {
-                    bar_type,
-                    open,
-                    high,
-                    low,
-                    close,
-                    volume,
-                    ts_event,
-                    ts_init,
-                })
+                let mut bar = nautilus_model::bar_new_with_defaults!(
+                    bar_type, open, high, low, close, volume, ts_event, ts_init,
+                );
+
+                #[cfg(feature = "extended_bar")]
+                for (column, array) in parsed.ext_columns.iter().zip(ext_arrays.iter()) {
+                    match (column.field_type(), array) {
+                        (extended_bar::FieldType::Quantity, ExtColumnArray::Fixed(values)) => {
+                            if values.is_null(i) {
+                                continue;
+                            }
+                            let raw = get_raw_quantity(values.value(i));
+                            let precision = column.precision.unwrap_or(size_precision);
+                            let quantity = Quantity::from_raw(raw, precision);
+                            let set = quantity_set_by_name!(bar, column.ident(), quantity);
+                            debug_assert!(
+                                set,
+                                "Failed to assign extended bar field {}",
+                                column.ident()
+                            );
+                        }
+                        (extended_bar::FieldType::Price, ExtColumnArray::Fixed(values)) => {
+                            if values.is_null(i) {
+                                continue;
+                            }
+                            let raw = get_raw_price(values.value(i));
+                            let precision = column.precision.unwrap_or(price_precision);
+                            let _price = Price::from_raw(raw, precision);
+                            let set = price_set_by_name!(bar, column.ident(), _price);
+                            debug_assert!(
+                                set,
+                                "Failed to assign extended bar field {}",
+                                column.ident()
+                            );
+                        }
+                        (extended_bar::FieldType::U64, ExtColumnArray::U64(values)) => {
+                            if values.is_null(i) {
+                                continue;
+                            }
+                            let _value = values.value(i);
+                            let set = u64_set_by_name!(bar, column.ident(), _value);
+                            debug_assert!(
+                                set,
+                                "Failed to assign extended bar field {}",
+                                column.ident()
+                            );
+                        }
+                        (extended_bar::FieldType::Bool, ExtColumnArray::Bool(values)) => {
+                            if values.is_null(i) {
+                                continue;
+                            }
+                            let _value = values.value(i);
+                            let set = bool_set_by_name!(bar, column.ident(), _value);
+                            debug_assert!(
+                                set,
+                                "Failed to assign extended bar field {}",
+                                column.ident()
+                            );
+                        }
+                        _ => unreachable!("extended column array does not match field type"),
+                    }
+                }
+
+                Ok(bar)
             })
             .collect();
 
@@ -210,6 +511,117 @@ impl DecodeDataFromRecordBatch for Bar {
         let bars: Vec<Self> = Self::decode_batch(metadata, record_batch)?;
         Ok(bars.into_iter().map(Data::from).collect())
     }
+}
+
+#[cfg(feature = "extended_bar")]
+fn collect_ext_columns_from_data(data: &[Bar]) -> Vec<ExtColumn> {
+    let mut columns: Vec<ExtColumn> = extended_bar::field_specs()
+        .iter()
+        .map(|spec| ExtColumn {
+            spec,
+            precision: None,
+        })
+        .collect();
+
+    for bar in data {
+        for column in &mut columns {
+            match column.field_type() {
+                extended_bar::FieldType::Quantity => {
+                    if let Some(value) = quantity_get_by_name!(bar, column.ident()) {
+                        let quantity: ::nautilus_model::types::Quantity = value;
+                        column.precision = column.precision.or(Some(quantity.precision));
+                    }
+                }
+                extended_bar::FieldType::Price => {
+                    if let Some(value) = price_get_by_name!(bar, column.ident()) {
+                        let price: ::nautilus_model::types::Price = value;
+                        column.precision = column.precision.or(Some(price.precision));
+                    }
+                }
+                extended_bar::FieldType::U64 | extended_bar::FieldType::Bool => {}
+            }
+        }
+    }
+
+    columns
+}
+
+#[cfg(feature = "extended_bar")]
+fn insert_ext_columns_into_metadata(metadata: &mut HashMap<String, String>, columns: &[ExtColumn]) {
+    if columns.is_empty() {
+        metadata.remove(KEY_EXT_FIELDS);
+        return;
+    }
+
+    let order = columns
+        .iter()
+        .map(|column| column.ident())
+        .collect::<Vec<_>>()
+        .join(",");
+
+    metadata.insert(KEY_EXT_FIELDS.to_string(), order);
+
+    for column in columns {
+        let type_key = format!(
+            "{KEY_EXT_FIELD_PREFIX}{}{KEY_EXT_FIELD_TYPE_SUFFIX}",
+            column.ident()
+        );
+        metadata.insert(type_key, column.field_type().label().to_string());
+
+        if let Some(precision) = column.precision {
+            let precision_key = format!(
+                "{KEY_EXT_FIELD_PREFIX}{}{KEY_EXT_FIELD_PRECISION_SUFFIX}",
+                column.ident()
+            );
+            metadata.insert(precision_key, precision.to_string());
+        }
+    }
+}
+
+#[cfg(feature = "extended_bar")]
+fn parse_ext_fields_from_metadata(metadata: &HashMap<String, String>) -> Vec<ExtColumn> {
+    let names = metadata
+        .get(KEY_EXT_FIELDS)
+        .map(|value| {
+            value
+                .split(',')
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let spec = extended_bar::field_spec(name)?;
+
+            let type_key = format!("{KEY_EXT_FIELD_PREFIX}{name}{KEY_EXT_FIELD_TYPE_SUFFIX}");
+            let resolved_type = metadata
+                .get(&type_key)
+                .and_then(|label| extended_bar::FieldType::from_label(label))
+                .unwrap_or(spec.field_type);
+
+            // If metadata signals a different type than the spec, skip to avoid mismatched decoding.
+            if resolved_type != spec.field_type {
+                return None;
+            }
+
+            let precision = if matches!(
+                spec.field_type,
+                extended_bar::FieldType::Quantity | extended_bar::FieldType::Price
+            ) {
+                let precision_key =
+                    format!("{KEY_EXT_FIELD_PREFIX}{name}{KEY_EXT_FIELD_PRECISION_SUFFIX}");
+                metadata
+                    .get(&precision_key)
+                    .and_then(|value| value.parse::<u8>().ok())
+            } else {
+                None
+            };
+
+            Some(ExtColumn { spec, precision })
+        })
+        .collect()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -264,7 +676,7 @@ mod tests {
         let bar_type = BarType::from_str("AAPL.XNAS-1-MINUTE-LAST-INTERNAL").unwrap();
         let metadata = Bar::get_metadata(&bar_type, 2, 0);
 
-        let bar1 = Bar::new(
+        let bar1 = nautilus_model::bar_new_with_defaults!(
             bar_type,
             Price::from("100.10"),
             Price::from("102.00"),
@@ -274,7 +686,7 @@ mod tests {
             1.into(),
             3.into(),
         );
-        let bar2 = Bar::new(
+        let bar2 = nautilus_model::bar_new_with_defaults!(
             bar_type,
             Price::from("100.00"),
             Price::from("100.10"),

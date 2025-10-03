@@ -216,7 +216,7 @@ fn get_bar(
     volume: f64,
 ) -> Bar {
     let bar_type_str = format!("{}-1-MINUTE-LAST-EXTERNAL", instrument.id());
-    Bar::new(
+    nautilus_model::bar_new_with_defaults!(
         BarType::from(bar_type_str.as_ref()),
         Price::new(open, 0),
         Price::new(high, 0),

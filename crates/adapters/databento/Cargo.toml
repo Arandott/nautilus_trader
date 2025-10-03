@@ -37,6 +37,12 @@ python = [
   "pyo3",
   "pyo3-async-runtimes",
 ]
+extended_bar = [
+  "nautilus-model/extended_bar",
+  "nautilus-common/extended_bar",
+  "nautilus-data/extended_bar",
+  "dep:extended_bar_macros",
+]
 high-precision = [
   "nautilus-model/high-precision",
 ]
@@ -52,6 +58,7 @@ nautilus-data = { workspace = true }
 nautilus-live = { workspace = true, optional = true }
 nautilus-model = { workspace = true }
 nautilus-system = { workspace = true, optional = true }
+extended_bar_macros = { workspace = true, optional = true }
 
 ahash = { workspace = true }
 anyhow = { workspace = true }

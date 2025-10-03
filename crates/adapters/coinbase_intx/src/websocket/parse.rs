@@ -487,7 +487,7 @@ pub fn parse_candle_msg(
     let volume = Quantity::new(candle.volume.parse::<f64>()?, size_precision);
 
     // Create a new bar
-    Ok(Bar::new(
+    Ok(nautilus_model::bar_new_with_defaults!(
         bar_type,
         open_price,
         high_price,

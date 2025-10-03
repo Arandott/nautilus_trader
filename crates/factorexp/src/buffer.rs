@@ -19,7 +19,7 @@ use arraydeque::{ArrayDeque, Wrapping};
 use std::fmt::Display;
 
 /// Maximum supported window size for operators
-pub const MAX_WINDOW_SIZE: usize = 1_024;
+pub const MAX_WINDOW_SIZE: usize = 8_192;
 
 /// A high-performance rolling buffer for streaming computations.
 ///
@@ -91,14 +91,14 @@ impl RollingBuffer {
     pub fn window(&self) -> Vec<f64> {
         self.data.iter().copied().collect()
     }
-    
+
     /// Returns the window as a pair of slices for advanced usage
     #[inline]
     #[must_use]
     pub fn window_slices(&self) -> (&[f64], &[f64]) {
         self.data.as_slices()
     }
-    
+
     /// Alias for values() method for backward compatibility
     #[inline]
     #[must_use]
@@ -241,12 +241,12 @@ impl RollingBuffer {
         self.sum = 0.0;
         self.sum_sq = 0.0;
     }
-    
+
     /// Alias for reset() method
     pub fn clear(&mut self) {
         self.reset();
     }
-    
+
     /// Alias for update() method
     pub fn push(&mut self, value: f64) -> Option<f64> {
         self.update(value)
@@ -301,15 +301,15 @@ mod tests {
     #[test]
     fn test_rolling_buffer_basic() {
         let mut buffer = RollingBuffer::new(3);
-        
+
         assert!(buffer.is_empty());
         assert!(!buffer.is_full());
         assert!(!buffer.is_ready());
-        
+
         buffer.update(1.0);
         buffer.update(2.0);
         buffer.update(3.0);
-        
+
         assert!(buffer.is_full());
         assert!(buffer.is_ready());
         assert_eq!(buffer.len(), 3);
@@ -320,11 +320,11 @@ mod tests {
     #[test]
     fn test_rolling_buffer_eviction() {
         let mut buffer = RollingBuffer::new(2);
-        
+
         buffer.update(1.0);
         buffer.update(2.0);
         let evicted = buffer.update(3.0);
-        
+
         assert_eq!(evicted, Some(1.0));
         assert_eq!(buffer.sum(), 5.0);
         assert_eq!(buffer.mean(), 2.5);
@@ -333,11 +333,11 @@ mod tests {
     #[test]
     fn test_buffer_stats() {
         let mut buffer = RollingBuffer::new(5);
-        
+
         for i in 1..=5 {
             buffer.update(i as f64);
         }
-        
+
         let stats = BufferStats::from_buffer(&buffer, 1);
         assert_eq!(stats.count, 5);
         assert_eq!(stats.mean, 3.0);

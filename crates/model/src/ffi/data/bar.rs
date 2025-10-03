@@ -25,12 +25,21 @@ use nautilus_core::{
     ffi::string::{cstr_as_str, str_to_cstr},
 };
 
+#[cfg(feature = "extended_bar")]
+use extended_bar_macros::extended_bar_ffi_new;
+
 use crate::{
     data::bar::{Bar, BarSpecification, BarType},
     enums::{AggregationSource, BarAggregation, PriceType},
     identifiers::InstrumentId,
     types::{Price, Quantity},
 };
+
+#[cfg(feature = "extended_bar")]
+pub const BAR_HAS_EXTENDED_FIELDS: u8 = 1;
+
+#[cfg(not(feature = "extended_bar"))]
+pub const BAR_HAS_EXTENDED_FIELDS: u8 = 0;
 
 /// # Panics
 ///
@@ -223,6 +232,7 @@ pub extern "C" fn bar_type_to_cstr(bar_type: &BarType) -> *const c_char {
 }
 
 #[unsafe(no_mangle)]
+#[cfg_attr(feature = "extended_bar", extended_bar_ffi_new)]
 #[cfg_attr(feature = "high-precision", allow(improper_ctypes_definitions))]
 pub extern "C" fn bar_new(
     bar_type: BarType,
@@ -234,16 +244,7 @@ pub extern "C" fn bar_new(
     ts_event: UnixNanos,
     ts_init: UnixNanos,
 ) -> Bar {
-    Bar {
-        bar_type,
-        open,
-        high,
-        low,
-        close,
-        volume,
-        ts_event,
-        ts_init,
-    }
+    Bar::new(bar_type, open, high, low, close, volume, ts_event, ts_init)
 }
 
 #[unsafe(no_mangle)]
@@ -263,3 +264,5 @@ pub extern "C" fn bar_hash(bar: &Bar) -> u64 {
 pub extern "C" fn bar_to_cstr(bar: &Bar) -> *const c_char {
     str_to_cstr(&bar.to_string())
 }
+
+// Extended field helpers have been retired; native struct members should be accessed directly.

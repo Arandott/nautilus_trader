@@ -4,6 +4,7 @@ from libc.stdint cimport uint8_t, uint16_t, uint32_t, uint64_t, uintptr_t, int32
 from nautilus_trader.core.rust.core cimport CVec, UUID4_t
 
 DEF HIGH_PRECISION = True  # or False
+DEF EXTENDED_BAR = True  # or False
 
 cdef extern from "../includes/model.h":
     ctypedef unsigned long long uint128_t
@@ -98,6 +99,12 @@ cdef extern from "../includes/model.h":
 
     # The minimum valid quantity value that can be represented.
     const double QUANTITY_MIN # = 0.0
+
+    IF EXTENDED_BAR:
+        const uint8_t BAR_HAS_EXTENDED_FIELDS # = 1
+
+    IF not EXTENDED_BAR:
+        const uint8_t BAR_HAS_EXTENDED_FIELDS # = 0
 
     # An account type provided by a trading venue or broker.
     cpdef enum AccountType:
@@ -1169,7 +1176,8 @@ cdef extern from "../includes/model.h":
                   Price_t close,
                   Quantity_t volume,
                   uint64_t ts_event,
-                  uint64_t ts_init);
+                  uint64_t ts_init,
+                  Quantity_t amt);
 
     uint8_t bar_eq(const Bar_t *lhs, const Bar_t *rhs);
 

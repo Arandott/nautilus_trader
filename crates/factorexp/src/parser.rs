@@ -18,8 +18,8 @@
 //! Following Linus's philosophy: "Perfection is achieved not when there is
 //! nothing more to add, but when there is nothing left to take away."
 
-use std::collections::HashMap;
 use crate::expression::{CompiledExpression, ExprNode};
+use std::collections::HashMap;
 
 /// Expression tree node - clear semantic naming following the xxxNode convention.
 /// NO trait objects, NO virtual dispatch, pure enum-based.
@@ -96,28 +96,67 @@ pub enum Expr {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOpType {
-    Add, Sub, Mul, Div, Pow,
-    Greater, Less, GreaterEq, LessEq, Equal, NotEqual,
-    And, Or, Max, Min,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Pow,
+    Greater,
+    Less,
+    GreaterEq,
+    LessEq,
+    Equal,
+    NotEqual,
+    And,
+    Or,
+    Max,
+    Min,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnOpType {
-    Neg, Abs, Sign, Sqrt, Exp,
-    Log, Log10, Sin, Cos, Tan,
+    Neg,
+    Abs,
+    Sign,
+    Sqrt,
+    Exp,
+    Log,
+    Log10,
+    Sin,
+    Cos,
+    Tan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RollingOpType {
-    Mean, Sum, Std, Var, Min, Max, Median,
-    Skew, Kurt, Mad, EMA, WMA,
-    Delta, Ref, Rank, Argmax, Argmin, Product,
-    ZScore, Demean, Quantile,
+    Mean,
+    Sum,
+    Std,
+    Var,
+    Min,
+    Max,
+    Median,
+    Skew,
+    Kurt,
+    Mad,
+    EMA,
+    WMA,
+    Delta,
+    Ref,
+    Rank,
+    Argmax,
+    Argmin,
+    Product,
+    ZScore,
+    Demean,
+    Quantile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PairRollingOpType {
-    Corr, Cov, Beta,
+    Corr,
+    Cov,
+    Beta,
 }
 
 /// Simple recursive descent parser - no external dependencies, no complexity.
@@ -149,7 +188,110 @@ impl Parser {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, String> {
-        self.parse_additive()
+        self.parse_logical_or()
+    }
+
+    fn parse_logical_or(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_logical_and()?;
+
+        loop {
+            self.skip_whitespace();
+
+            if self.consume_str("||") {
+                let right = self.parse_logical_and()?;
+                left = Expr::BinOpNode {
+                    op: BinOpType::Or,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(left)
+    }
+
+    fn parse_logical_and(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_equality()?;
+
+        loop {
+            self.skip_whitespace();
+
+            if self.consume_str("&&") {
+                let right = self.parse_equality()?;
+                left = Expr::BinOpNode {
+                    op: BinOpType::And,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(left)
+    }
+
+    fn parse_equality(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_relational()?;
+
+        loop {
+            self.skip_whitespace();
+
+            if self.consume_str("==") {
+                let right = self.parse_relational()?;
+                left = Expr::BinOpNode {
+                    op: BinOpType::Equal,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                };
+            } else if self.consume_str("!=") {
+                let right = self.parse_relational()?;
+                left = Expr::BinOpNode {
+                    op: BinOpType::NotEqual,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(left)
+    }
+
+    fn parse_relational(&mut self) -> Result<Expr, String> {
+        let mut left = self.parse_additive()?;
+
+        loop {
+            self.skip_whitespace();
+
+            let op = if self.consume_str(">=") {
+                Some(BinOpType::GreaterEq)
+            } else if self.consume_str("<=") {
+                Some(BinOpType::LessEq)
+            } else if self.consume_str(">") {
+                Some(BinOpType::Greater)
+            } else if self.consume_str("<") {
+                Some(BinOpType::Less)
+            } else {
+                None
+            };
+
+            if let Some(op) = op {
+                let right = self.parse_additive()?;
+                left = Expr::BinOpNode {
+                    op,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(left)
     }
 
     fn parse_additive(&mut self) -> Result<Expr, String> {
@@ -256,7 +398,10 @@ impl Parser {
         }
 
         // Number
-        if self.peek_char().map_or(false, |c| c.is_ascii_digit() || c == '.') {
+        if self
+            .peek_char()
+            .map_or(false, |c| c.is_ascii_digit() || c == '.')
+        {
             return self.parse_number();
         }
 
@@ -274,7 +419,10 @@ impl Parser {
 
         self.skip_whitespace();
         if !self.consume_char('(') {
-            return Err(format!("Expected '(' after function name at position {}", self.pos));
+            return Err(format!(
+                "Expected '(' after function name at position {}",
+                self.pos
+            ));
         }
 
         let args = self.parse_args()?;
@@ -334,7 +482,8 @@ impl Parser {
         }
 
         let num_str: String = self.input[start..self.pos].iter().collect();
-        num_str.parse::<f64>()
+        num_str
+            .parse::<f64>()
             .map(Expr::NumNode)
             .map_err(|_| format!("Invalid number: {}", num_str))
     }
@@ -383,7 +532,10 @@ impl Parser {
         // Special handling for When - it's a ternary operator
         if name == "When" {
             if args.len() != 3 {
-                return Err(format!("When expects 3 arguments (condition, true_value, false_value), got {}", args.len()));
+                return Err(format!(
+                    "When expects 3 arguments (condition, true_value, false_value), got {}",
+                    args.len()
+                ));
             }
             let mut iter = args.into_iter();
             return Ok(Expr::TernaryNode {
@@ -396,7 +548,10 @@ impl Parser {
         // Special handling for Clip - bounds value within min/max range
         if name == "Clip" {
             if args.len() != 3 {
-                return Err(format!("Clip expects 3 arguments (value, min, max), got {}", args.len()));
+                return Err(format!(
+                    "Clip expects 3 arguments (value, min, max), got {}",
+                    args.len()
+                ));
             }
             let mut iter = args.into_iter();
             return Ok(Expr::ClipNode {
@@ -426,7 +581,11 @@ impl Parser {
         // Check if it's a pair rolling operator
         if let Ok(op) = self.parse_pair_rolling_op(op_name) {
             if args.len() != 3 {
-                return Err(format!("TS_{} expects 3 arguments, got {}", op_name, args.len()));
+                return Err(format!(
+                    "TS_{} expects 3 arguments, got {}",
+                    op_name,
+                    args.len()
+                ));
             }
 
             let mut iter = args.into_iter();
@@ -452,7 +611,10 @@ impl Parser {
             // Special handling for Quantile - expects 3 arguments (expr, window, phi)
             if op == RollingOpType::Quantile {
                 if args.len() != 3 {
-                    return Err(format!("TS_Quantile expects 3 arguments (expr, window, phi), got {}", args.len()));
+                    return Err(format!(
+                        "TS_Quantile expects 3 arguments (expr, window, phi), got {}",
+                        args.len()
+                    ));
                 }
 
                 let mut iter = args.into_iter();
@@ -483,7 +645,11 @@ impl Parser {
 
             // Standard rolling operators - 2 arguments
             if args.len() != 2 {
-                return Err(format!("TS_{} expects 2 arguments, got {}", op_name, args.len()));
+                return Err(format!(
+                    "TS_{} expects 2 arguments, got {}",
+                    op_name,
+                    args.len()
+                ));
             }
 
             let mut iter = args.into_iter();
@@ -606,6 +772,25 @@ impl Parser {
             false
         }
     }
+
+    fn consume_str(&mut self, expected: &str) -> bool {
+        if expected.is_empty() {
+            return true;
+        }
+
+        if self.pos + expected.len() > self.input.len() {
+            return false;
+        }
+
+        for (i, ch) in expected.chars().enumerate() {
+            if self.input[self.pos + i] != ch {
+                return false;
+            }
+        }
+
+        self.pos += expected.len();
+        true
+    }
 }
 
 /// Convert parser's Expr (with XXXNode variants) to expression's ExprNode format.
@@ -665,7 +850,12 @@ pub fn convert_to_expr_node(expr: Expr) -> ExprNode {
             }
         }
 
-        Expr::RollingNode { op, arg, window, params: extra_params } => {
+        Expr::RollingNode {
+            op,
+            arg,
+            window,
+            params: extra_params,
+        } => {
             let op_name = match op {
                 RollingOpType::Mean => "TS_Mean",
                 RollingOpType::Sum => "TS_Sum",
@@ -705,7 +895,12 @@ pub fn convert_to_expr_node(expr: Expr) -> ExprNode {
             }
         }
 
-        Expr::PairRollingNode { op, left, right, window } => {
+        Expr::PairRollingNode {
+            op,
+            left,
+            right,
+            window,
+        } => {
             let op_name = match op {
                 PairRollingOpType::Corr => "TS_Corr",
                 PairRollingOpType::Cov => "TS_Cov",
@@ -724,7 +919,11 @@ pub fn convert_to_expr_node(expr: Expr) -> ExprNode {
                 params,
             }
         }
-        Expr::TernaryNode { condition, true_value, false_value } => {
+        Expr::TernaryNode {
+            condition,
+            true_value,
+            false_value,
+        } => {
             // When operator needs 3 arguments: condition, true_value, false_value
             ExprNode::Operator {
                 name: "When".to_string(),
@@ -777,7 +976,11 @@ mod tests {
         let expr = parser.parse().unwrap();
 
         match expr {
-            Expr::BinOpNode { op: BinOpType::Add, left, right } => {
+            Expr::BinOpNode {
+                op: BinOpType::Add,
+                left,
+                right,
+            } => {
                 if let Expr::VarNode(name) = left.as_ref() {
                     assert_eq!(name, "close");
                 } else {
@@ -795,7 +998,12 @@ mod tests {
         let expr = parser.parse().unwrap();
 
         match expr {
-            Expr::RollingNode { op: RollingOpType::Mean, arg, window: 20, params: _ } => {
+            Expr::RollingNode {
+                op: RollingOpType::Mean,
+                arg,
+                window: 20,
+                params: _,
+            } => {
                 if let Expr::VarNode(name) = arg.as_ref() {
                     assert_eq!(name, "close");
                 } else {
@@ -811,7 +1019,13 @@ mod tests {
         let mut parser = Parser::new("TS_Mean($close, 20) / TS_Std($close, 20)");
         let expr = parser.parse().unwrap();
 
-        assert!(matches!(expr, Expr::BinOpNode { op: BinOpType::Div, .. }));
+        assert!(matches!(
+            expr,
+            Expr::BinOpNode {
+                op: BinOpType::Div,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -820,7 +1034,12 @@ mod tests {
         let expr = parser.parse().unwrap();
 
         match expr {
-            Expr::RollingNode { op: RollingOpType::Quantile, arg, window: 100, params } => {
+            Expr::RollingNode {
+                op: RollingOpType::Quantile,
+                arg,
+                window: 100,
+                params,
+            } => {
                 if let Expr::VarNode(name) = arg.as_ref() {
                     assert_eq!(name, "close");
                 } else {
@@ -839,7 +1058,12 @@ mod tests {
         let expr = parser.parse().unwrap();
 
         match expr {
-            Expr::PairRollingNode { op: PairRollingOpType::Corr, left, right, window: 30 } => {
+            Expr::PairRollingNode {
+                op: PairRollingOpType::Corr,
+                left,
+                right,
+                window: 30,
+            } => {
                 if let Expr::VarNode(name) = left.as_ref() {
                     assert_eq!(name, "close");
                 } else {
@@ -860,7 +1084,13 @@ mod tests {
         let mut parser = Parser::new("($close + $open) / 2");
         let expr = parser.parse().unwrap();
 
-        assert!(matches!(expr, Expr::BinOpNode { op: BinOpType::Div, .. }));
+        assert!(matches!(
+            expr,
+            Expr::BinOpNode {
+                op: BinOpType::Div,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -868,7 +1098,13 @@ mod tests {
         let mut parser = Parser::new("Abs($close - 100)");
         let expr = parser.parse().unwrap();
 
-        assert!(matches!(expr, Expr::UnOpNode { op: UnOpType::Abs, .. }));
+        assert!(matches!(
+            expr,
+            Expr::UnOpNode {
+                op: UnOpType::Abs,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -893,9 +1129,19 @@ mod tests {
         let expr = parser.parse().unwrap();
 
         match expr {
-            Expr::TernaryNode { condition, true_value, false_value } => {
+            Expr::TernaryNode {
+                condition,
+                true_value,
+                false_value,
+            } => {
                 // Check condition is a Greater comparison
-                assert!(matches!(condition.as_ref(), Expr::BinOpNode { op: BinOpType::Greater, .. }));
+                assert!(matches!(
+                    condition.as_ref(),
+                    Expr::BinOpNode {
+                        op: BinOpType::Greater,
+                        ..
+                    }
+                ));
                 // Check true_value is $high
                 assert!(matches!(true_value.as_ref(), Expr::VarNode(name) if name == "high"));
                 // Check false_value is $low
@@ -931,7 +1177,13 @@ mod tests {
         match expr {
             Expr::ClipNode { value, min, max } => {
                 // Check value is multiplication
-                assert!(matches!(value.as_ref(), Expr::BinOpNode { op: BinOpType::Mul, .. }));
+                assert!(matches!(
+                    value.as_ref(),
+                    Expr::BinOpNode {
+                        op: BinOpType::Mul,
+                        ..
+                    }
+                ));
                 // Check min is $low
                 assert!(matches!(min.as_ref(), Expr::VarNode(name) if name == "low"));
                 // Check max is $high

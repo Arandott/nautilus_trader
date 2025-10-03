@@ -627,7 +627,7 @@ pub fn decode_ohlcv_msg(
         (ts_event_raw, ts_event_raw)
     };
 
-    let bar = Bar::new(
+    let bar = nautilus_model::bar_new_with_defaults!(
         bar_type,
         Price::from_raw(decode_raw_price_i64(msg.open), price_precision),
         Price::from_raw(decode_raw_price_i64(msg.high), price_precision),

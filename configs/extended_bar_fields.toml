@@ -1,0 +1,6 @@
+[[field]]
+ident = "amt"
+type = "quantity"
+doc = "Total traded notional"
+default = "0"
+precision = "size"

@@ -1,0 +1,281 @@
+"""
+Configuration loader for factor-based trading strategies.
+
+This module loads and validates factor configurations from YAML files,
+providing standardized factor expressions for backtesting.
+"""
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Any
+import yaml
+
+
+@dataclass
+class FactorConfig:
+    """Configuration for a single factor."""
+
+    name: str
+    expression: str
+    description: str
+    weight: float
+    requires_extended: bool = False
+
+    def __post_init__(self):
+        """Validate factor configuration."""
+        if not 0 <= self.weight <= 1.0:
+            raise ValueError(f"Factor weight must be between 0 and 1, got {self.weight}")
+
+        # Check if expression contains required Clip(Zscore(...)) pattern
+        if not self._is_valid_expression(self.expression):
+            raise ValueError(
+                f"Factor expression must use Clip(Zscore(...)) pattern, got {self.expression}"
+            )
+
+    @staticmethod
+    def _is_valid_expression(expression: str) -> bool:
+        """Check if expression follows the standard pattern."""
+        return "Clip" in expression and "Zscore" in expression
+
+
+@dataclass
+class StrategyConfig:
+    """Configuration for a trading strategy."""
+
+    name: str
+    factors: List[str]
+    rebalance_interval: int
+    requires_extended: bool = False
+
+
+@dataclass
+class RiskConfig:
+    """Risk management configuration."""
+
+    max_position_size: float
+    stop_loss: float
+    position_limit_per_factor: float
+    correlation_threshold: float
+
+
+@dataclass
+class ExecutionConfig:
+    """Execution configuration."""
+
+    slippage_bps: int
+    commission_bps: int
+    min_order_size: float
+    max_order_size: float
+
+
+class FactorConfigLoader:
+    """Loads and manages factor configurations."""
+
+    def __init__(self, config_path: Path):
+        """
+        Initialize the config loader.
+
+        Parameters
+        ----------
+        config_path : Path
+            Path to the YAML configuration file.
+        """
+        self.config_path = config_path
+        self.config_data: Dict[str, Any] = {}
+        self.factors: Dict[str, FactorConfig] = {}
+        self.strategies: Dict[str, StrategyConfig] = {}
+        self.risk_config: Optional[RiskConfig] = None
+        self.execution_config: Optional[ExecutionConfig] = None
+
+        self._load_config()
+        self._parse_factors()
+        self._parse_strategies()
+        self._parse_risk_config()
+        self._parse_execution_config()
+
+    def _load_config(self):
+        """Load configuration from YAML file."""
+        if not self.config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {self.config_path}")
+
+        with open(self.config_path, 'r') as f:
+            self.config_data = yaml.safe_load(f)
+
+    def _parse_factors(self):
+        """Parse factor configurations."""
+        factors_data = self.config_data.get('factors', {})
+
+        for factor_id, factor_data in factors_data.items():
+            self.factors[factor_id] = FactorConfig(
+                name=factor_data['name'],
+                expression=factor_data['expression'],
+                description=factor_data['description'],
+                weight=factor_data['weight'],
+                requires_extended=factor_data.get('requires_extended', False)
+            )
+
+    def _parse_strategies(self):
+        """Parse strategy configurations."""
+        strategies_data = self.config_data.get('strategies', {})
+
+        for strategy_id, strategy_data in strategies_data.items():
+            # Validate that all referenced factors exist
+            for factor_id in strategy_data['factors']:
+                if factor_id not in self.factors:
+                    raise ValueError(
+                        f"Strategy '{strategy_id}' references unknown factor '{factor_id}'"
+                    )
+
+            self.strategies[strategy_id] = StrategyConfig(
+                name=strategy_data['name'],
+                factors=strategy_data['factors'],
+                rebalance_interval=strategy_data['rebalance_interval'],
+                requires_extended=strategy_data.get('requires_extended', False)
+            )
+
+    def _parse_risk_config(self):
+        """Parse risk management configuration."""
+        risk_data = self.config_data.get('risk_management', {})
+
+        if risk_data:
+            self.risk_config = RiskConfig(
+                max_position_size=risk_data['max_position_size'],
+                stop_loss=risk_data['stop_loss'],
+                position_limit_per_factor=risk_data['position_limit_per_factor'],
+                correlation_threshold=risk_data['correlation_threshold']
+            )
+
+    def _parse_execution_config(self):
+        """Parse execution configuration."""
+        exec_data = self.config_data.get('execution', {})
+
+        if exec_data:
+            self.execution_config = ExecutionConfig(
+                slippage_bps=exec_data['slippage_bps'],
+                commission_bps=exec_data['commission_bps'],
+                min_order_size=exec_data['min_order_size'],
+                max_order_size=exec_data['max_order_size']
+            )
+
+    def get_factor(self, factor_id: str) -> FactorConfig:
+        """
+        Get a factor configuration by ID.
+
+        Parameters
+        ----------
+        factor_id : str
+            The factor identifier.
+
+        Returns
+        -------
+        FactorConfig
+            The factor configuration.
+        """
+        if factor_id not in self.factors:
+            raise KeyError(f"Factor '{factor_id}' not found")
+        return self.factors[factor_id]
+
+    def get_strategy(self, strategy_id: str) -> StrategyConfig:
+        """
+        Get a strategy configuration by ID.
+
+        Parameters
+        ----------
+        strategy_id : str
+            The strategy identifier.
+
+        Returns
+        -------
+        StrategyConfig
+            The strategy configuration.
+        """
+        if strategy_id not in self.strategies:
+            raise KeyError(f"Strategy '{strategy_id}' not found")
+        return self.strategies[strategy_id]
+
+    def get_strategy_factors(self, strategy_id: str) -> Dict[str, FactorConfig]:
+        """
+        Get all factors for a strategy.
+
+        Parameters
+        ----------
+        strategy_id : str
+            The strategy identifier.
+
+        Returns
+        -------
+        Dict[str, FactorConfig]
+            Dictionary of factor configurations.
+        """
+        strategy = self.get_strategy(strategy_id)
+        return {
+            factor_id: self.factors[factor_id]
+            for factor_id in strategy.factors
+        }
+
+    def get_defaults(self) -> Dict[str, Any]:
+        """
+        Get default configuration values.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Default configuration values.
+        """
+        return self.config_data.get('defaults', {})
+
+    def list_factors(self) -> List[str]:
+        """
+        List all available factor IDs.
+
+        Returns
+        -------
+        List[str]
+            List of factor identifiers.
+        """
+        return list(self.factors.keys())
+
+    def list_strategies(self) -> List[str]:
+        """
+        List all available strategy IDs.
+
+        Returns
+        -------
+        List[str]
+            List of strategy identifiers.
+        """
+        return list(self.strategies.keys())
+
+    def validate_extended_support(self, has_extended: bool) -> List[str]:
+        """
+        Validate which strategies can be run based on extended bar support.
+
+        Parameters
+        ----------
+        has_extended : bool
+            Whether extended bar support is available.
+
+        Returns
+        -------
+        List[str]
+            List of available strategy IDs.
+        """
+        available = []
+
+        for strategy_id, strategy in self.strategies.items():
+            # Check if strategy requires extended features
+            if strategy.requires_extended and not has_extended:
+                continue
+
+            # Check if any required factor needs extended features
+            factors_ok = True
+            for factor_id in strategy.factors:
+                factor = self.factors[factor_id]
+                if factor.requires_extended and not has_extended:
+                    factors_ok = False
+                    break
+
+            if factors_ok:
+                available.append(strategy_id)
+
+        return available

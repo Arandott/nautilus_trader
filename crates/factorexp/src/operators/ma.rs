@@ -33,7 +33,7 @@ impl Ema {
     #[must_use]
     pub fn new(window_size: usize) -> Self {
         let alpha = 2.0 / (window_size as f64 + 1.0);
-        
+
         Self {
             name: "TS_EMA".to_string(),
             window_size,
@@ -68,7 +68,7 @@ impl RollingOperator for Ema {
 
     fn update(&mut self, value: f64) {
         self.count += 1;
-        
+
         if !self.initialized {
             self.value = value;
             self.initialized = true;
@@ -103,7 +103,7 @@ impl Wma {
         // Create linear weights: [1, 2, 3, ..., n]
         let weights: Vec<f64> = (1..=window_size).map(|i| i as f64).collect();
         let weight_sum: f64 = weights.iter().sum();
-        
+
         Self {
             name: "TS_WMA".to_string(),
             window_size,
@@ -139,12 +139,12 @@ impl RollingOperator for Wma {
 
     fn update(&mut self, value: f64) {
         self.count += 1;
-        
+
         if self.buffer.len() == self.window_size {
             self.buffer.remove(0);
         }
         self.buffer.push(value);
-        
+
         if self.buffer.len() == self.window_size {
             // Compute weighted average
             let mut sum = 0.0;
@@ -169,34 +169,34 @@ mod tests {
     #[test]
     fn test_ema_operator() {
         let mut ema = Ema::new(5);
-        
+
         assert!(!ema.is_ready());
-        
+
         // First value initializes EMA
         ema.update(10.0);
         assert!(ema.is_ready());
         assert_eq!(ema.value(), 10.0);
-        
+
         // Subsequent values update using alpha
         ema.update(20.0);
-        let expected = 10.0 * (2.0/3.0) + 20.0 * (1.0/3.0);
+        let expected = 10.0 * (2.0 / 3.0) + 20.0 * (1.0 / 3.0);
         assert!((ema.value() - expected).abs() < 1e-10);
     }
 
     #[test]
     fn test_wma_operator() {
         let mut wma = Wma::new(3);
-        
+
         assert!(!wma.is_ready());
-        
+
         wma.update(1.0);
         wma.update(2.0);
         wma.update(3.0);
-        
+
         assert!(wma.is_ready());
         // WMA = (1*1 + 2*2 + 3*3) / (1+2+3) = 14/6 = 2.333...
         assert!((wma.value() - 2.333333).abs() < 1e-5);
-        
+
         wma.update(4.0);
         // WMA = (2*1 + 3*2 + 4*3) / 6 = 20/6 = 3.333...
         assert!((wma.value() - 3.333333).abs() < 1e-5);

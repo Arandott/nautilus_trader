@@ -23,6 +23,7 @@ thiserror = "2"
 # Nautilus dependencies
 nautilus-core = { workspace = true }
 nautilus-model = { workspace = true, features = ["python"] }
+extended_bar_macros = { workspace = true, optional = true }
 
 # Python bindings
 pyo3 = { workspace = true, optional = true }
@@ -35,6 +36,7 @@ rstest = { workspace = true }
 
 [features]
 default = []
+extended_bar = ["nautilus-model/extended_bar", "dep:extended_bar_macros"]
 extension-module = ["pyo3/extension-module"]
 python = ["dep:pyo3", "dep:pyo3-async-runtimes"]
 parallel = ["dep:rayon"]

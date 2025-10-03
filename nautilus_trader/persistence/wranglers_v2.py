@@ -14,15 +14,145 @@
 # -------------------------------------------------------------------------------------------------
 
 import abc
+import math
+from decimal import Decimal
 from typing import Any, ClassVar
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 
 from nautilus_trader.core import nautilus_pyo3
+from nautilus_trader.model.data import EXTENDED_BAR_FIELD_SPECS
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import FIXED_PRECISION_BYTES
 from nautilus_trader.model.objects import FIXED_SCALAR
+from nautilus_trader.model.objects import Price, Quantity
+
+
+def _is_missing_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float):
+        return math.isnan(value)
+    if isinstance(value, (Decimal, int)):
+        return False
+    try:
+        return pd.isna(value)
+    except Exception:  # pragma: no cover - defensive fallback
+        return False
+
+
+def _resolve_extended_precision(spec: dict[str, Any], price_precision: int, size_precision: int) -> int | None:
+    field_type = spec.get("type")
+    hint = spec.get("precision")
+
+    if field_type == "quantity":
+        if hint == "price":
+            return price_precision
+        if isinstance(hint, str) and hint.isdigit():
+            return int(hint)
+        return size_precision
+    if field_type == "price":
+        if hint == "size":
+            return size_precision
+        if isinstance(hint, str) and hint.isdigit():
+            return int(hint)
+        return price_precision
+    return None
+
+
+def _coerce_quantity_bytes(value: Any, precision: int) -> bytes | None:
+    if _is_missing_value(value):
+        return None
+    if isinstance(value, Quantity):
+        if value.precision != precision:
+            value = Quantity(float(value), precision)
+        raw = value.raw
+    elif isinstance(value, Price):
+        raw = Quantity(float(value), precision).raw
+    else:
+        raw = Quantity(float(value), precision).raw
+    return int(raw).to_bytes(FIXED_PRECISION_BYTES, byteorder="little", signed=False)
+
+
+def _coerce_price_bytes(value: Any, precision: int) -> bytes | None:
+    if _is_missing_value(value):
+        return None
+    if isinstance(value, Price):
+        if value.precision != precision:
+            value = Price(float(value), precision)
+        raw = value.raw
+    elif isinstance(value, Quantity):
+        raw = Price(float(value), precision).raw
+    else:
+        raw = Price(float(value), precision).raw
+    return int(raw).to_bytes(FIXED_PRECISION_BYTES, byteorder="little", signed=True)
+
+
+def _coerce_u64_value(value: Any) -> int | None:
+    if _is_missing_value(value):
+        return None
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        if math.isnan(float(value)):
+            return None
+        return int(value)
+    if isinstance(value, str):
+        return int(float(value))
+    return int(value)
+
+
+def _coerce_bool_value(value: Any) -> bool | None:
+    if _is_missing_value(value):
+        return None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "y", "t"}:
+            return True
+        if lowered in {"false", "0", "no", "n", "f"}:
+            return False
+    return bool(value)
+
+
+def _build_extended_bar_columns(
+    df: pd.DataFrame,
+    price_precision: int,
+    size_precision: int,
+) -> tuple[list[pa.Field], list[pa.Array]]:
+    if not EXTENDED_BAR_FIELD_SPECS:
+        return [], []
+
+    fields: list[pa.Field] = []
+    arrays: list[pa.Array] = []
+    row_count = len(df)
+
+    for spec in EXTENDED_BAR_FIELD_SPECS:
+        name = spec["name"]
+        field_type = spec["type"]
+        precision = _resolve_extended_precision(spec, price_precision, size_precision)
+        column = df[name] if name in df.columns else [None] * row_count
+
+        if field_type in {"quantity", "price"}:
+            if precision is None:
+                raise ValueError(f"Missing precision for extended bar field '{name}'")
+            converter = _coerce_quantity_bytes if field_type == "quantity" else _coerce_price_bytes
+            values = [converter(value, precision) for value in column]
+            arrays.append(pa.array(values, type=pa.binary(FIXED_PRECISION_BYTES)))
+            fields.append(pa.field(name, pa.binary(FIXED_PRECISION_BYTES), nullable=True))
+        elif field_type == "u64":
+            values = [_coerce_u64_value(value) for value in column]
+            arrays.append(pa.array(values, type=pa.uint64()))
+            fields.append(pa.field(name, pa.uint64(), nullable=True))
+        elif field_type == "bool":
+            values = [_coerce_bool_value(value) for value in column]
+            arrays.append(pa.array(values, type=pa.bool_()))
+            fields.append(pa.field(name, pa.bool_(), nullable=True))
+        else:  # pragma: no cover - defensive guard for future types
+            raise ValueError(f"Unsupported extended bar field type '{field_type}'")
+
+    return fields, arrays
 
 
 class WranglerBase(abc.ABC):
@@ -506,6 +636,8 @@ class BarDataWranglerV2(WranglerBase):
         size_precision: int,
     ) -> None:
         self.bar_type = bar_type
+        self.price_precision = price_precision
+        self.size_precision = size_precision
         self._inner = nautilus_pyo3.BarDataWrangler(
             bar_type=bar_type,
             price_precision=price_precision,
@@ -622,6 +754,14 @@ class BarDataWranglerV2(WranglerBase):
             pa.array(ts_event, type=pa.uint64()),
             pa.array(ts_init, type=pa.uint64()),
         ]
+
+        ext_fields, ext_arrays = _build_extended_bar_columns(
+            df,
+            self.price_precision,
+            self.size_precision,
+        )
+        fields.extend(ext_fields)
+        arrays.extend(ext_arrays)
 
         table = pa.Table.from_arrays(arrays, schema=pa.schema(fields))
         return self.from_arrow(table)

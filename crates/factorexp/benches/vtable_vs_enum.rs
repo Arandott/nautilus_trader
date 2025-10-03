@@ -1,7 +1,7 @@
 // Benchmark: Virtual dispatch vs Enum dispatch vs Static dispatch
 // 让数据说话，而不是猜测
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use nautilus_factorexp::operators::{RollingOperator, rolling::Mean};
 use std::time::Duration;
 

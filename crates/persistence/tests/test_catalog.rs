@@ -271,7 +271,7 @@ fn create_bar(ts_init: u64) -> Bar {
         AggregationSource::External,
     );
 
-    Bar::new(
+    nautilus_model::bar_new_with_defaults!(
         bar_type,
         Price::new(1.00001, 5),
         Price::new(1.1, 1),

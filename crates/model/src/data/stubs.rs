@@ -65,16 +65,16 @@ impl Default for TradeTick {
 impl Default for Bar {
     /// Creates a new default [`Bar`] instance for testing.
     fn default() -> Self {
-        Self {
-            bar_type: BarType::from("AUDUSD.SIM-1-MINUTE-LAST-INTERNAL"),
-            open: Price::from("1.00010"),
-            high: Price::from("1.00020"),
-            low: Price::from("1.00000"),
-            close: Price::from("1.00010"),
-            volume: Quantity::from(100_000),
-            ts_event: UnixNanos::default(),
-            ts_init: UnixNanos::default(),
-        }
+        crate::bar_new_with_defaults!(
+            BarType::from("AUDUSD.SIM-1-MINUTE-LAST-INTERNAL"),
+            Price::from("1.00010"),
+            Price::from("1.00020"),
+            Price::from("1.00000"),
+            Price::from("1.00010"),
+            Quantity::from(100_000),
+            UnixNanos::default(),
+            UnixNanos::default(),
+        )
     }
 }
 
@@ -332,16 +332,16 @@ pub fn stub_bar() -> Bar {
         spec: bar_spec,
         aggregation_source: AggregationSource::External,
     };
-    Bar {
+    crate::bar_new_with_defaults!(
         bar_type,
-        open: Price::from("1.00002"),
-        high: Price::from("1.00004"),
-        low: Price::from("1.00001"),
-        close: Price::from("1.00003"),
-        volume: Quantity::from("100000"),
-        ts_event: UnixNanos::default(),
-        ts_init: UnixNanos::from(1),
-    }
+        Price::from("1.00002"),
+        Price::from("1.00004"),
+        Price::from("1.00001"),
+        Price::from("1.00003"),
+        Quantity::from("100000"),
+        UnixNanos::default(),
+        UnixNanos::from(1),
+    )
 }
 
 #[fixture]

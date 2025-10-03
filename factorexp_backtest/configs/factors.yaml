@@ -1,0 +1,76 @@
+# Factor configurations for backtesting
+# Each factor uses Clip(Zscore(expression, period), min, max) format
+# The output directly maps to position sizing under 2x leverage
+# IMPORTANT: Each backtest runs ONLY ONE factor at a time
+
+# Default parameters
+defaults:
+  zscore_period: 5760  # 60 days of 15-minute bars (60 * 24 * 4)
+  clip_min: -2.0       # Min position: -2x (short)
+  clip_max: 2.0        # Max position: +2x (long)
+  warmup_period: 5760  # Warmup period for indicators
+  rebalance_interval: 30  # Default rebalance every 30 bars
+
+# Factor definitions (each runs independently)
+factors:
+  # Momentum factors
+  amt_momentum:
+    name: "AMT Momentum"
+    expression: "Clip(Zscore($amt / TS_Mean($amt, 96), 5760), -2, 2)"
+    description: "Turnover amount momentum relative to short-term average"
+
+  price_momentum:
+    name: "Price Momentum"
+    expression: "Clip(Zscore($close / Ref($close, 20) - 1, 5760), -2, 2)"
+    description: "20-bar price momentum"
+
+  volume_momentum:
+    name: "Volume Momentum"
+    expression: "Clip(Zscore($volume / TS_Mean($volume, 48), 5760), -2, 2)"
+    description: "Volume relative to 48-bar average"
+
+  # Flow factors
+  amt_flow:
+    name: "AMT Flow"
+    expression: "Clip(Zscore(($close - Ref($close, 1)) * $amt / TS_Mean($amt, 48), 5760), -2, 2)"
+    description: "Price-weighted turnover flow"
+
+  # Mean reversion factors
+  price_deviation:
+    name: "Price Deviation"
+    expression: "Clip(Zscore(-($close - TS_Mean($close, 96)) / TS_Std($close, 96), 5760), -2, 2)"
+    description: "Mean reversion from 96-bar average (negative for reversal)"
+
+  # Volatility factors
+  range_factor:
+    name: "Range Factor"
+    expression: "Clip(Zscore(($high - $low) / $close, 5760), -2, 2)"
+    description: "Normalized daily range"
+
+  # Microstructure factors (requires extended_bar)
+  volume_imbalance:
+    name: "Volume Imbalance"
+    expression: "Clip(Zscore(($bid_volume - $ask_volume) / ($bid_volume + $ask_volume + 0.0001), 5760), -2, 2)"
+    description: "Order flow imbalance"
+    requires_extended: true
+
+  # Liquidity factors
+  amt_relative:
+    name: "AMT Relative Strength"
+    expression: "Clip(Zscore($amt / TS_Mean($amt, 288), 5760), -2, 2)"
+    description: "AMT relative to 3-day average (288 = 3 * 24 * 4)"
+    requires_extended: true
+
+# Risk management
+risk_management:
+  max_position_size: 2.0      # Maximum position size (2x leverage)
+  stop_loss: 0.05              # 5% stop loss
+  min_rebalance_interval: 5   # Minimum bars between rebalances
+  max_rebalance_interval: 480  # Maximum bars between rebalances (5 days)
+
+# Execution settings
+execution:
+  slippage_bps: 10            # 10 basis points slippage
+  commission_bps: 5           # 5 basis points commission
+  min_order_size: 0.001       # Minimum order size
+  max_order_size: 100.0       # Maximum order size

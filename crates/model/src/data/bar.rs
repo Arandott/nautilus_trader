@@ -41,6 +41,11 @@ use crate::{
     types::{Price, Quantity, fixed::FIXED_SIZE_BINARY},
 };
 
+#[cfg(feature = "extended_bar")]
+use crate::data::extended_bar;
+#[cfg(feature = "extended_bar")]
+use extended_bar_macros::{extended_bar_new, extended_bar_new_checked, extended_bar_struct};
+
 pub const BAR_SPEC_1_SECOND_LAST: BarSpecification = BarSpecification {
     step: NonZero::new(1).unwrap(),
     aggregation: BarAggregation::Second,
@@ -759,6 +764,7 @@ impl<'de> Deserialize<'de> for BarType {
 }
 
 /// Represents an aggregated bar.
+#[cfg_attr(feature = "extended_bar", extended_bar_struct)]
 #[repr(C)]
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -799,6 +805,7 @@ impl Bar {
     ///
     /// PyO3 requires a `Result` type for proper error handling and stacktrace printing in Python.
     #[allow(clippy::too_many_arguments)]
+    #[cfg_attr(feature = "extended_bar", extended_bar_new_checked)]
     pub fn new_checked(
         bar_type: BarType,
         open: Price,
@@ -836,6 +843,7 @@ impl Bar {
     /// - `high` is not >= `close`.
     /// - `low` is not <= `close.
     #[allow(clippy::too_many_arguments)]
+    #[cfg_attr(feature = "extended_bar", extended_bar_new)]
     pub fn new(
         bar_type: BarType,
         open: Price,
@@ -881,6 +889,17 @@ impl Bar {
         metadata.insert("volume".to_string(), FIXED_SIZE_BINARY.to_string());
         metadata.insert("ts_event".to_string(), "UInt64".to_string());
         metadata.insert("ts_init".to_string(), "UInt64".to_string());
+        #[cfg(feature = "extended_bar")]
+        for spec in extended_bar::field_specs() {
+            let dtype = match spec.field_type {
+                extended_bar::FieldType::Quantity | extended_bar::FieldType::Price => {
+                    FIXED_SIZE_BINARY.to_string()
+                }
+                extended_bar::FieldType::U64 => "UInt64".to_string(),
+                extended_bar::FieldType::Bool => "Boolean".to_string(),
+            };
+            metadata.insert(spec.ident.to_string(), dtype);
+        }
         metadata
     }
 }
@@ -1339,7 +1358,9 @@ mod tests {
         let ts_event = UnixNanos::from(1_000_000);
         let ts_init = UnixNanos::from(2_000_000);
 
-        let bar = Bar::new(bar_type, open, high, low, close, volume, ts_event, ts_init);
+        let bar = crate::bar_new_with_defaults!(
+            bar_type, open, high, low, close, volume, ts_event, ts_init,
+        );
 
         assert_eq!(bar.bar_type, bar_type);
         assert_eq!(bar.open, open);
@@ -1373,7 +1394,9 @@ mod tests {
         let ts_event = UnixNanos::from(1_000_000);
         let ts_init = UnixNanos::from(2_000_000);
 
-        let result = Bar::new_checked(bar_type, open, high, low, close, volume, ts_event, ts_init);
+        let result = crate::bar_new_checked_with_defaults!(
+            bar_type, open, high, low, close, volume, ts_event, ts_init,
+        );
 
         assert!(result.is_err());
     }
@@ -1390,34 +1413,43 @@ mod tests {
             spec: bar_spec,
             aggregation_source: AggregationSource::External,
         };
-        let bar1 = Bar {
+        let bar1 = crate::bar_new_with_defaults!(
             bar_type,
-            open: Price::from("1.00001"),
-            high: Price::from("1.00004"),
-            low: Price::from("1.00002"),
-            close: Price::from("1.00003"),
-            volume: Quantity::from("100000"),
-            ts_event: UnixNanos::default(),
-            ts_init: UnixNanos::from(1),
-        };
+            Price::from("1.00001"),
+            Price::from("1.00004"),
+            Price::from("1.00002"),
+            Price::from("1.00003"),
+            Quantity::from("100000"),
+            UnixNanos::default(),
+            UnixNanos::from(1),
+        );
 
-        let bar2 = Bar {
+        let bar2 = crate::bar_new_with_defaults!(
             bar_type,
-            open: Price::from("1.00000"),
-            high: Price::from("1.00004"),
-            low: Price::from("1.00002"),
-            close: Price::from("1.00003"),
-            volume: Quantity::from("100000"),
-            ts_event: UnixNanos::default(),
-            ts_init: UnixNanos::from(1),
-        };
+            Price::from("1.00000"),
+            Price::from("1.00004"),
+            Price::from("1.00002"),
+            Price::from("1.00003"),
+            Quantity::from("100000"),
+            UnixNanos::default(),
+            UnixNanos::from(1),
+        );
         assert_eq!(bar1, bar1);
         assert_ne!(bar1, bar2);
     }
 
     #[rstest]
     fn test_json_serialization() {
-        let bar = Bar::default();
+        let bar = crate::bar_new_with_defaults!(
+            BarType::from("AUDUSD.SIM-1-MINUTE-LAST-EXTERNAL"),
+            Price::from("1.0000"),
+            Price::from("1.0001"),
+            Price::from("0.9999"),
+            Price::from("1.0000"),
+            Quantity::from("1000"),
+            UnixNanos::default(),
+            UnixNanos::default(),
+        );
         let serialized = bar.to_json_bytes().unwrap();
         let deserialized = Bar::from_json_bytes(serialized.as_ref()).unwrap();
         assert_eq!(deserialized, bar);

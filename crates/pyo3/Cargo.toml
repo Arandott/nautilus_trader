@@ -20,6 +20,15 @@ crate-type = ["cdylib"]
 
 [features]
 default = []
+extended_bar = [
+  "nautilus-model/extended_bar",
+  "nautilus-factorexp/extended_bar",
+  "nautilus-common/extended_bar",
+  "nautilus-infrastructure/extended_bar",
+  "nautilus-coinbase-intx/extended_bar",
+  "nautilus-databento/extended_bar",
+  "nautilus-tardis/extended_bar",
+]
 extension-module = [
   "pyo3/extension-module",
   "nautilus-common/extension-module",

@@ -290,7 +290,7 @@ impl BarBuilder {
         }
 
         // SAFETY: The open was checked, so we can assume all prices are Some
-        let bar = Bar::new(
+        let bar = nautilus_model::bar_new_with_defaults!(
             self.bar_type,
             self.open.unwrap(),
             self.high.unwrap(),
@@ -1311,7 +1311,7 @@ mod tests {
             instrument.size_precision(),
         );
 
-        let partial_bar = Bar::new(
+        let partial_bar = nautilus_model::bar_new_with_defaults!(
             bar_type,
             Price::from("101.00"),
             Price::from("102.00"),
@@ -1406,7 +1406,7 @@ mod tests {
             instrument.size_precision(),
         );
 
-        let partial_bar = Bar::new(
+        let partial_bar = nautilus_model::bar_new_with_defaults!(
             bar_type,
             Price::from("1.00001"),
             Price::from("1.00010"),
@@ -1443,7 +1443,7 @@ mod tests {
             instrument.size_precision(),
         );
 
-        let partial_bar1 = Bar::new(
+        let partial_bar1 = nautilus_model::bar_new_with_defaults!(
             bar_type,
             Price::from("1.00001"),
             Price::from("1.00010"),
@@ -1454,7 +1454,7 @@ mod tests {
             UnixNanos::from(1_000_000_000),
         );
 
-        let partial_bar2 = Bar::new(
+        let partial_bar2 = nautilus_model::bar_new_with_defaults!(
             bar_type,
             Price::from("2.00001"),
             Price::from("2.00010"),

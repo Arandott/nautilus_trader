@@ -1408,7 +1408,7 @@ mod tests {
 
         let bar_type =
             BarType::from_str(&format!("{}-1-MINUTE-LAST-INTERNAL", audusd_sim.id)).unwrap();
-        let bar = Bar::new(
+        let bar = nautilus_model::bar_new_with_defaults!(
             bar_type,
             Price::from("1.0000"),
             Price::from("1.0001"),

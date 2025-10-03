@@ -34,6 +34,11 @@ python = [
 ]
 redis = ["dep:redis"]
 postgres = ["dep:sqlx"]
+extended_bar = [
+  "nautilus-model/extended_bar",
+  "nautilus-common/extended_bar",
+  "dep:extended_bar_macros",
+]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -44,6 +49,7 @@ nautilus-common = { workspace = true }
 nautilus-core = { workspace = true }
 nautilus-cryptography = { workspace = true }
 nautilus-model = { workspace = true, features = ["stubs"] }
+extended_bar_macros = { workspace = true, optional = true }
 
 anyhow = { workspace = true }
 async-stream = { workspace = true }

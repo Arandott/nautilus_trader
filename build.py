@@ -19,6 +19,17 @@ from Cython.Compiler.Version import version as cython_compiler_version
 from setuptools import Distribution
 from setuptools import Extension
 
+try:  # Python ≥3.11
+    import tomllib  # type: ignore[attr-defined]
+except ModuleNotFoundError:  # pragma: no cover - fallback for older interpreters
+    try:
+        import tomli as tomllib  # type: ignore[import-not-found]
+    except ModuleNotFoundError as exc:  # pragma: no cover - guidance for users
+        raise RuntimeError(
+            "Python `tomllib` module is required to parse extended bar configuration. "
+            "Install Python 3.11+ or add the `tomli` dependency."
+        ) from exc
+
 
 # Platform constants
 IS_LINUX = platform.system() == "Linux"
@@ -121,9 +132,1611 @@ RUST_LIB_PATHS: list[Path] = [
 ]
 RUST_LIBS: list[str] = [str(path) for path in RUST_LIB_PATHS]
 
+EXTENDED_BAR_CONFIG_PATH = Path("configs/extended_bar_fields.toml")
+GENERATED_CYTHON_DIR = Path("nautilus_trader/model/_generated")
+
+
+def _load_extended_bar_fields() -> list[dict[str, object]]:
+    if not EXTENDED_BAR_CONFIG_PATH.exists():
+        return []
+
+    with EXTENDED_BAR_CONFIG_PATH.open("rb") as config_file:
+        data = tomllib.load(config_file)
+
+    fields = data.get("field", [])
+    if not isinstance(fields, list):
+        raise ValueError(
+            "`field` array missing from configs/extended_bar_fields.toml",
+        )
+
+    normalized: list[dict[str, object]] = []
+    for entry in fields:
+        if not isinstance(entry, dict):
+            raise ValueError("Each [field] entry must be a table in extended_bar_fields.toml")
+        normalized.append(entry)
+
+    return normalized
+
+
+def _format_bool_default(value: str | None) -> str:
+    if value is None:
+        return "False"
+    lowered = value.lower()
+    if lowered in {"true", "1", "yes"}:
+        return "True"
+    if lowered in {"false", "0", "no"}:
+        return "False"
+    raise ValueError(f"Unsupported boolean default '{value}' in extended bar configuration")
+
+
+def _generate_extended_bar_cython_files() -> None:
+    fields = _load_extended_bar_fields()
+
+    GENERATED_CYTHON_DIR.mkdir(parents=True, exist_ok=True)
+
+    obsolete = [
+        "_extended_bar__init__params.pxi",
+        "_extended_bar__init__body.pxi",
+        "_extended_bar__init__bar_new_args.pxi",
+    ]
+    for filename in obsolete:
+        try:
+            (GENERATED_CYTHON_DIR / filename).unlink()
+        except FileNotFoundError:
+            pass
+
+    def write_fragment(name: str, content: str) -> None:
+        (GENERATED_CYTHON_DIR / name).write_text(content, encoding="utf-8")
+
+    write_fragment("extended_bar_field_specs.pxd", "# @generated\ncdef object EXTENDED_BAR_FIELD_SPECS\n")
+
+    if not fields:
+        write_fragment("extended_bar_config.pxi", "DEF HAS_EXTENDED_BAR_FIELDS = 0\n")
+        write_fragment("_extended_bar__init__.pxi", "")
+        write_fragment("_extended_bar__properties.pxi", "")
+        write_fragment("extended_bar_field_specs.pxi", "EXTENDED_BAR_FIELD_SPECS = ()\n")
+        write_fragment("_extended_bar__getstate.pxi", "")
+        write_fragment("_extended_bar__setstate.pxi", "")
+        write_fragment("_extended_bar__from_raw_c.pxi", "")
+        write_fragment("_extended_bar__from_raw_arrays_to_list_c.pxi", "")
+        # Ensure full-class includes are present (empty stubs so module-level guards still work)
+        write_fragment("_extended_bar__bar.pxi", "# @generated (empty - no extended fields)\n")
+        # Standard variant will be (re)generated below from the source file
+        _generate_full_bar_variants()
+        return
+
+    write_fragment("extended_bar_config.pxi", "DEF HAS_EXTENDED_BAR_FIELDS = 1\n")
+
+    property_blocks: list[str] = []
+    field_specs_entries: list[str] = []
+    processed_fields: list[dict[str, object]] = []
+
+    signature_lines = [
+        "    def __init__(",
+        "        self,",
+        "        BarType bar_type not None,",
+        "        Price open not None,",
+        "        Price high not None,",
+        "        Price low not None,",
+        "        Price close not None,",
+        "        Quantity volume not None,",
+        "        uint64_t ts_event,",
+        "        uint64_t ts_init,",
+        "        bint is_revision = False,",
+        "        *,",
+    ]
+
+    init_body_lines = [
+        "        Condition.is_true(high._mem.raw >= open._mem.raw, \"high was < open\")",
+        "        Condition.is_true(high._mem.raw >= low._mem.raw, \"high was < low\")",
+        "        Condition.is_true(high._mem.raw >= close._mem.raw, \"high was < close\")",
+        "        Condition.is_true(low._mem.raw <= close._mem.raw, \"low was > close\")",
+        "        Condition.is_true(low._mem.raw <= open._mem.raw, \"low was > open\")",
+    ]
+
+    bar_new_lines = [
+        "        self._mem = bar_new(",
+        "            bar_type._mem,",
+        "            open._mem,",
+        "            high._mem,",
+        "            low._mem,",
+        "            close._mem,",
+        "            volume._mem,",
+        "            ts_event,",
+        "            ts_init,",
+    ]
+
+    for field in fields:
+        ident = str(field.get("ident"))
+        field_type = str(field.get("type"))
+        default_literal = field.get("default")
+        precision = field.get("precision")
+        doc = field.get("doc", "")
+
+        string_default = default_literal if isinstance(default_literal, str) else None
+
+        if field_type == "quantity":
+            signature_lines.append(f"        Quantity {ident}=None,")
+            default_expr = f"Quantity.from_str({repr(string_default or '0')})"
+            init_body_lines.append(f"        if {ident} is None:")
+            init_body_lines.append(f"            {ident} = {default_expr}")
+            init_body_lines.append(f"        cdef Quantity_t _ext_{ident} = {ident}._mem")
+            bar_new_lines.append(f"            _ext_{ident},")
+            property_blocks.append(
+                f"    @property\n"
+                f"    def {ident}(self) -> Quantity:\n"
+                f"        return Quantity.from_raw_c(self._mem.{ident}.raw, self._mem.{ident}.precision)\n\n"
+                f"    @{ident}.setter\n"
+                f"    def {ident}(self, Quantity value not None) -> None:\n"
+                f"        self._mem.{ident} = value._mem\n"
+            )
+            processed_fields.append(
+                {
+                    "ident": ident,
+                    "type": field_type,
+                    "default_str": string_default or "0",
+                    "precision": precision,
+                }
+            )
+        elif field_type == "price":
+            signature_lines.append(f"        Price {ident}=None,")
+            default_expr = f"Price.from_str({repr(string_default or '0')})"
+            init_body_lines.append(f"        if {ident} is None:")
+            init_body_lines.append(f"            {ident} = {default_expr}")
+            init_body_lines.append(f"        cdef Price_t _ext_{ident} = {ident}._mem")
+            bar_new_lines.append(f"            _ext_{ident},")
+            property_blocks.append(
+                f"    @property\n"
+                f"    def {ident}(self) -> Price:\n"
+                f"        return Price.from_raw_c(self._mem.{ident}.raw, self._mem.{ident}.precision)\n\n"
+                f"    @{ident}.setter\n"
+                f"    def {ident}(self, Price value not None) -> None:\n"
+                f"        self._mem.{ident} = value._mem\n"
+            )
+            processed_fields.append(
+                {
+                    "ident": ident,
+                    "type": field_type,
+                    "default_str": string_default or "0",
+                    "precision": precision,
+                }
+            )
+        elif field_type == "u64":
+            sanitized = (string_default or "0").replace("_", "").strip()
+            default_int = int(sanitized or "0", 10)
+            signature_lines.append(f"        uint64_t {ident}={default_int},")
+            init_body_lines.append(f"        cdef uint64_t _ext_{ident} = {ident}")
+            bar_new_lines.append(f"            _ext_{ident},")
+            property_blocks.append(
+                f"    @property\n"
+                f"    def {ident}(self) -> int:\n"
+                f"        return self._mem.{ident}\n\n"
+                f"    @{ident}.setter\n"
+                f"    def {ident}(self, uint64_t value) -> None:\n"
+                f"        self._mem.{ident} = value\n"
+            )
+            processed_fields.append(
+                {
+                    "ident": ident,
+                    "type": field_type,
+                    "default_int": default_int,
+                    "precision": precision,
+                }
+            )
+        elif field_type == "bool":
+            default_bool = _format_bool_default(string_default)
+            signature_lines.append(f"        bint {ident}={default_bool},")
+            init_body_lines.append(f"        cdef bint _ext_{ident} = {ident}")
+            bar_new_lines.append(f"            _ext_{ident},")
+            property_blocks.append(
+                f"    @property\n"
+                f"    def {ident}(self) -> bool:\n"
+                f"        return bool(self._mem.{ident})\n\n"
+                f"    @{ident}.setter\n"
+                f"    def {ident}(self, bint value) -> None:\n"
+                f"        self._mem.{ident} = value\n"
+            )
+            processed_fields.append(
+                {
+                    "ident": ident,
+                    "type": field_type,
+                    "default_bool": default_bool,
+                    "precision": precision,
+                }
+            )
+        else:
+            raise ValueError(f"Unsupported extended bar field type '{field_type}'")
+
+        field_specs_entries.append(
+            "    {" + ", ".join(
+                [
+                    f"\"name\": {repr(ident)}",
+                    f"\"type\": {repr(field_type)}",
+                    f"\"default\": {repr(string_default or '')}",
+                    f"\"precision\": {repr(precision) if precision is not None else 'None'}",
+                    f"\"doc\": {repr(doc if isinstance(doc, str) else '')}",
+                ]
+            ) + "},"
+        )
+
+    signature_lines.append("    ) -> None:")
+
+    init_body_lines.extend(bar_new_lines)
+    init_body_lines.append("        )")
+    init_body_lines.append("        self.is_revision = is_revision")
+
+    init_content = "\n".join(signature_lines + init_body_lines) + "\n"
+    properties_content = "\n".join(property_blocks) + ("\n" if property_blocks else "")
+
+    specs_content = "EXTENDED_BAR_FIELD_SPECS = (\n" + "\n".join(field_specs_entries) + "\n)\n"
+
+    write_fragment("_extended_bar__init__.pxi", init_content)
+    write_fragment("_extended_bar__properties.pxi", properties_content)
+    write_fragment("extended_bar_field_specs.pxi", specs_content)
+
+    extra_slots = 0
+    for spec in processed_fields:
+        if spec["type"] in ("quantity", "price"):
+            extra_slots += 2
+        else:
+            extra_slots += 1
+
+    expected_standard_len = 14 + extra_slots
+    expected_composite_len = 17 + extra_slots
+
+    def _precision_adjustment_lines(var_name: str, precision: object, indent: str) -> list[str]:
+        lines: list[str] = []
+        if precision == "size":
+            lines.append(f"{indent}{var_name}.precision = size_prec")
+        elif precision == "price":
+            lines.append(f"{indent}{var_name}.precision = price_prec")
+        return lines
+
+    base_state_lines = [
+        "            self._mem.open.raw,",
+        "            self._mem.high.raw,",
+        "            self._mem.low.raw,",
+        "            self._mem.close.raw,",
+        "            self._mem.close.precision,",
+        "            self._mem.volume.raw,",
+        "            self._mem.volume.precision,",
+        "            self.ts_event,",
+        "            self.ts_init,",
+    ]
+
+    extra_state_lines: list[str] = []
+    bar_new_extra_args: list[str] = []
+    for spec in processed_fields:
+        ident = spec["ident"]
+        field_type = spec["type"]
+        var_name = f"_ext_{ident}"
+        bar_new_extra_args.append(f"                {var_name},")
+        if field_type in ("quantity", "price"):
+            extra_state_lines.append(f"            self._mem.{ident}.raw,")
+            extra_state_lines.append(f"            self._mem.{ident}.precision,")
+        elif field_type == "u64":
+            extra_state_lines.append(f"            self._mem.{ident},")
+        elif field_type == "bool":
+            extra_state_lines.append(f"            bool(self._mem.{ident}),")
+
+    getstate_lines = [
+        "    def __getstate__(self):",
+        "        bar_type = BarType.from_mem_c(self._mem.bar_type)",
+        "        bart_type_state = bar_type.__getstate__()",
+        "",
+        "        cdef tuple base = (",
+        *base_state_lines,
+        "        )",
+        "",
+        "        cdef tuple extra = (",
+        *extra_state_lines,
+        "        )",
+        "",
+        "        return bart_type_state + base + extra",
+    ]
+
+    def _build_setstate_field_lines(length_var: str, start_index: int) -> list[str]:
+        lines: list[str] = []
+        if processed_fields:
+            lines.append(f"            cdef Py_ssize_t idx = {start_index}")
+        for spec in processed_fields:
+            ident = spec["ident"]
+            field_type = spec["type"]
+            precision = spec.get("precision")
+            default_str = spec.get("default_str", "0")
+            default_bool = spec.get("default_bool", "False")
+            default_int = spec.get("default_int", 0)
+            var_name = f"_ext_{ident}"
+            if field_type == "quantity":
+                lines.append(f"            cdef Quantity_t {var_name}")
+                lines.append(f"            if len(state) == {length_var}:")
+                lines.append(f"                {var_name} = quantity_new(state[idx], state[idx + 1])")
+                lines.append(f"                idx += 2")
+                lines.append("            else:")
+                lines.append(f"                cdef Quantity _default_{ident} = Quantity.from_str_c({repr(default_str)})")
+                lines.append(f"                {var_name} = _default_{ident}._mem")
+                for adjustment in _precision_adjustment_lines(var_name, precision, "                "):
+                    lines.append(adjustment)
+            elif field_type == "price":
+                lines.append(f"            cdef Price_t {var_name}")
+                lines.append(f"            if len(state) == {length_var}:")
+                lines.append(f"                {var_name} = price_new(state[idx], state[idx + 1])")
+                lines.append(f"                idx += 2")
+                lines.append("            else:")
+                lines.append(f"                cdef Price _default_{ident} = Price.from_str_c({repr(default_str)})")
+                lines.append(f"                {var_name} = _default_{ident}._mem")
+                for adjustment in _precision_adjustment_lines(var_name, precision, "                "):
+                    lines.append(adjustment)
+            elif field_type == "u64":
+                lines.append(f"            cdef uint64_t {var_name}")
+                lines.append(f"            if len(state) == {length_var}:")
+                lines.append(f"                {var_name} = <uint64_t> state[idx]")
+                lines.append(f"                idx += 1")
+                lines.append("            else:")
+                lines.append(f"                {var_name} = {default_int}")
+            elif field_type == "bool":
+                lines.append(f"            cdef bint {var_name}")
+                lines.append(f"            if len(state) == {length_var}:")
+                lines.append(f"                {var_name} = <bint> state[idx]")
+                lines.append(f"                idx += 1")
+                lines.append("            else:")
+                lines.append(f"                {var_name} = {default_bool}")
+        return lines
+
+    standard_field_lines = _build_setstate_field_lines("expected_standard_len", 14)
+    composite_field_lines = _build_setstate_field_lines("expected_composite_len", 17)
+
+    standard_bar_new_lines = [
+        "            self._mem = bar_new(",
+        "                bar_type_new(",
+        "                    instrument_id._mem,",
+        "                    bar_specification_new(",
+        "                        state[1],",
+        "                        state[2],",
+        "                        state[3],",
+        "                    ),",
+        "                    state[4],",
+        "                ),",
+        "                price_new(state[5], price_prec),",
+        "                price_new(state[6], price_prec),",
+        "                price_new(state[7], price_prec),",
+        "                price_new(state[8], price_prec),",
+        "                quantity_new(state[10], size_prec),",
+        "                state[12],",
+        "                state[13],",
+    ]
+
+    composite_bar_new_lines = [
+        "            self._mem = bar_new(",
+        "                bar_type_new_composite(",
+        "                    instrument_id._mem,",
+        "                    bar_specification_new(",
+        "                        state[1],",
+        "                        state[2],",
+        "                        state[3]",
+        "                    ),",
+        "                    state[4],",
+        "",
+        "                    state[5],",
+        "                    state[6],",
+        "                    state[7]",
+        "                ),",
+        "                price_new(state[8], price_prec),",
+        "                price_new(state[9], price_prec),",
+        "                price_new(state[10], price_prec),",
+        "                price_new(state[11], price_prec),",
+        "                quantity_new(state[13], size_prec),",
+        "                state[15],",
+        "                state[16],",
+    ]
+
+    standard_bar_new_lines.extend(bar_new_extra_args)
+    standard_bar_new_lines.append("            )")
+    composite_bar_new_lines.extend(bar_new_extra_args)
+    composite_bar_new_lines.append("            )")
+
+    setstate_lines = [
+        "    def __setstate__(self, state):",
+        "        cdef InstrumentId instrument_id",
+        "        cdef uint8_t price_prec",
+        "        cdef uint8_t size_prec",
+        f"        cdef Py_ssize_t expected_standard_len = {expected_standard_len}",
+        f"        cdef Py_ssize_t expected_composite_len = {expected_composite_len}",
+        "",
+        "        if len(state) == 14 or len(state) == expected_standard_len:",
+        "            instrument_id = InstrumentId.from_str_c(state[0])",
+        "            price_prec = state[9]",
+        "            size_prec = state[11]",
+        *standard_field_lines,
+        *standard_bar_new_lines,
+        "        elif len(state) == 17 or len(state) == expected_composite_len:",
+        "            instrument_id = InstrumentId.from_str_c(state[0])",
+        "            price_prec = state[12]",
+        "            size_prec = state[14]",
+        *composite_field_lines,
+        *composite_bar_new_lines,
+        "        else:",
+        "            raise ValueError(\"Invalid state length for Bar\")",
+    ]
+
+    from_raw_c_lines = [
+        "    @staticmethod",
+        "    cdef Bar from_raw_c(",
+        "        BarType bar_type,",
+        "        PriceRaw open,",
+        "        PriceRaw high,",
+        "        PriceRaw low,",
+        "        PriceRaw close,",
+        "        uint8_t price_prec,",
+        "        QuantityRaw volume,",
+        "        uint8_t size_prec,",
+        "        uint64_t ts_event,",
+        "        uint64_t ts_init,",
+        "    ):",
+        "        cdef Price_t open_price = price_new(open, price_prec)",
+        "        cdef Price_t high_price = price_new(high, price_prec)",
+        "        cdef Price_t low_price = price_new(low, price_prec)",
+        "        cdef Price_t close_price = price_new(close, price_prec)",
+        "        cdef Quantity_t volume_qty = quantity_new(volume, size_prec)",
+        "        cdef Bar bar = Bar.__new__(Bar)",
+    ]
+
+    for spec in processed_fields:
+        ident = spec["ident"]
+        field_type = spec["type"]
+        precision = spec.get("precision")
+        default_str = spec.get("default_str", "0")
+        default_bool = spec.get("default_bool", "False")
+        default_int = spec.get("default_int", 0)
+        var_name = f"_ext_{ident}"
+        if field_type == "quantity":
+            from_raw_c_lines.append(f"        cdef Quantity {var_name}_obj = Quantity.from_str_c({repr(default_str)})")
+            from_raw_c_lines.append(f"        cdef Quantity_t {var_name} = {var_name}_obj._mem")
+            from_raw_c_lines.extend(_precision_adjustment_lines(var_name, precision, "        "))
+        elif field_type == "price":
+            from_raw_c_lines.append(f"        cdef Price {var_name}_obj = Price.from_str_c({repr(default_str)})")
+            from_raw_c_lines.append(f"        cdef Price_t {var_name} = {var_name}_obj._mem")
+            from_raw_c_lines.extend(_precision_adjustment_lines(var_name, precision, "        "))
+        elif field_type == "u64":
+            from_raw_c_lines.append(f"        cdef uint64_t {var_name} = {default_int}")
+        elif field_type == "bool":
+            from_raw_c_lines.append(f"        cdef bint {var_name} = {default_bool}")
+
+    from_raw_c_lines.extend(
+        [
+            "        bar._mem = bar_new(",
+            "            bar_type._mem,",
+            "            open_price,",
+            "            high_price,",
+            "            low_price,",
+            "            close_price,",
+            "            volume_qty,",
+            "            ts_event,",
+            "            ts_init,",
+        ]
+    )
+    from_raw_c_lines.extend(bar_new_extra_args)
+    from_raw_c_lines.append("        )")
+    from_raw_c_lines.append("")
+    from_raw_c_lines.append("        return bar")
+
+    from_raw_arrays_lines = [
+        "    @staticmethod",
+        "    cdef list[Bar] from_raw_arrays_to_list_c(",
+        "        BarType bar_type,",
+        "        uint8_t price_prec,",
+        "        uint8_t size_prec,",
+        "        double[:] opens,",
+        "        double[:] highs,",
+        "        double[:] lows,",
+        "        double[:] closes,",
+        "        double[:] volumes,",
+        "        uint64_t[:] ts_events,",
+        "        uint64_t[:] ts_inits,",
+        "    ):",
+        "        Condition.is_true(",
+        "            len(opens) == len(highs) == len(lows) == len(lows) ==",
+        "            len(closes) == len(volumes) == len(ts_events) == len(ts_inits)",
+    ]
+
+    # Add extended field array length checks to assertion
+    if fields:
+        extended_array_names = [f"len({field.get('ident')}s)" for field in fields]
+        from_raw_arrays_lines[-1] += " =="
+        from_raw_arrays_lines.append("            " + " == ".join(extended_array_names) + ",")
+    else:
+        from_raw_arrays_lines[-1] += ","
+
+    from_raw_arrays_lines.extend([
+        "            \"Array lengths must be equal\",",
+        "        )",
+        "",
+        "        cdef int count = ts_events.shape[0]",
+        "        cdef list[Bar] bars = []",
+        "",
+        "        cdef:",
+        "            int i",
+        "            Price open_price",
+        "            Price high_price",
+        "            Price low_price",
+        "            Price close_price",
+        "            Quantity volume_qty",
+        "            Bar bar",
+    ])
+
+    for spec in processed_fields:
+        ident = spec["ident"]
+        field_type = spec["type"]
+        if field_type in ("quantity", "price"):
+            from_raw_arrays_lines.append(f"            {spec['type'].capitalize()}_t _ext_{ident}_default")
+        elif field_type == "u64":
+            from_raw_arrays_lines.append(f"            uint64_t _ext_{ident}_default")
+        elif field_type == "bool":
+            from_raw_arrays_lines.append(f"            bint _ext_{ident}_default")
+
+    from_raw_arrays_lines.append("")
+
+    for spec in processed_fields:
+        ident = spec["ident"]
+        field_type = spec["type"]
+        precision = spec.get("precision")
+        default_str = spec.get("default_str", "0")
+        default_bool = spec.get("default_bool", "False")
+        default_int = spec.get("default_int", 0)
+        var_name = f"_ext_{ident}_default"
+        if field_type == "quantity":
+            from_raw_arrays_lines.append(f"        {var_name} = Quantity.from_str_c({repr(default_str)})._mem")
+            from_raw_arrays_lines.extend(_precision_adjustment_lines(var_name, precision, "        "))
+        elif field_type == "price":
+            from_raw_arrays_lines.append(f"        {var_name} = Price.from_str_c({repr(default_str)})._mem")
+            from_raw_arrays_lines.extend(_precision_adjustment_lines(var_name, precision, "        "))
+        elif field_type == "u64":
+            from_raw_arrays_lines.append(f"        {var_name} = {default_int}")
+        elif field_type == "bool":
+            from_raw_arrays_lines.append(f"        {var_name} = {default_bool}")
+
+    from_raw_arrays_lines.extend(
+        [
+            "",
+            "        for i in range(count):",
+            "            open_price = Price(opens[i], price_prec)",
+            "            high_price = Price(highs[i], price_prec)",
+            "            low_price = Price(lows[i], price_prec)",
+            "            close_price = Price(closes[i], price_prec)",
+            "            volume_qty = Quantity(volumes[i], size_prec)",
+            "            bar = Bar.__new__(Bar)",
+            "            bar._mem = bar_new(",
+            "                bar_type._mem,",
+            "                open_price._mem,",
+            "                high_price._mem,",
+            "                low_price._mem,",
+            "                close_price._mem,",
+            "                volume_qty._mem,",
+            "                ts_events[i],",
+            "                ts_inits[i],",
+        ]
+    )
+    for spec in processed_fields:
+        ident = spec["ident"]
+        from_raw_arrays_lines.append(f"                _ext_{ident}_default,")
+    from_raw_arrays_lines.extend(
+        [
+            "            )",
+            "            bars.append(bar)",
+            "",
+            "        return bars",
+        ]
+    )
+
+    write_fragment("_extended_bar__getstate.pxi", "\n".join(getstate_lines) + "\n")
+    write_fragment("_extended_bar__setstate.pxi", "\n".join(setstate_lines) + "\n")
+    write_fragment("_extended_bar__from_raw_c.pxi", "\n".join(from_raw_c_lines) + "\n")
+    write_fragment(
+        "_extended_bar__from_raw_arrays_to_list_c.pxi",
+        "\n".join(from_raw_arrays_lines) + "\n",
+    )
+
+    # With all partials emitted, synthesize complete class variants
+    _generate_full_bar_variants()
+
+    # Generate extended Bar class signature for data.pxd
+    _generate_extended_bar_signature(fields)
+
+
+def _generate_extended_bar_signature(fields: list[dict[str, object]]) -> None:
+    """
+    Generate _extended_bar_sig.pxi containing Bar class signature with extended fields.
+
+    This file is included by data.pxd in the IF HAS_EXTENDED_BAR_FIELDS branch.
+    """
+    out = []
+    out.append("# Auto-generated extended Bar class signature")
+    out.append("# DO NOT EDIT MANUALLY")
+    out.append("")
+    out.append("cdef class Bar(Data):")
+    out.append("    cdef Bar_t _mem")
+    out.append("")
+    out.append("    cdef readonly bint is_revision")
+    out.append('    """If this bar is a revision for a previous bar with the same `ts_event`.\\n\\n:returns: `bool`"""')
+    out.append("")
+    out.append("    cdef str to_str(self)")
+    out.append("")
+
+    # Generate from_raw_c with extended parameters
+    out.append("    @staticmethod")
+    out.append("    cdef Bar from_raw_c(")
+    out.append("        BarType bar_type,")
+    out.append("        PriceRaw open,")
+    out.append("        PriceRaw high,")
+    out.append("        PriceRaw low,")
+    out.append("        PriceRaw close,")
+    out.append("        uint8_t price_prec,")
+    out.append("        QuantityRaw volume,")
+    out.append("        uint8_t size_prec,")
+    out.append("        uint64_t ts_event,")
+    out.append("        uint64_t ts_init,")
+
+    # Add extended field parameters
+    for field in fields:
+        ident = field.get("ident")
+        field_type = field.get("type")
+        if field_type == "quantity":
+            out.append(f"        QuantityRaw {ident}_raw,")
+            out.append(f"        uint8_t {ident}_prec,")
+        elif field_type == "price":
+            out.append(f"        PriceRaw {ident}_raw,")
+            out.append(f"        uint8_t {ident}_prec,")
+        elif field_type == "u64":
+            out.append(f"        uint64_t {ident},")
+        elif field_type == "bool":
+            out.append(f"        bint {ident},")
+
+    # Remove trailing comma from last parameter
+    if out[-1].endswith(","):
+        out[-1] = out[-1][:-1]
+    out.append("    )")
+    out.append("")
+
+    # Generate from_raw_arrays_to_list_c with extended parameters
+    out.append("    @staticmethod")
+    out.append("    cdef list[Bar] from_raw_arrays_to_list_c(")
+    out.append("        BarType bar_type,")
+    out.append("        uint8_t price_prec,")
+    out.append("        uint8_t size_prec,")
+    out.append("        double[:] opens,")
+    out.append("        double[:] highs,")
+    out.append("        double[:] lows,")
+    out.append("        double[:] closes,")
+    out.append("        double[:] volumes,")
+    out.append("        uint64_t[:] ts_events,")
+    out.append("        uint64_t[:] ts_inits,")
+
+    # Add extended field array parameters
+    for field in fields:
+        ident = field.get("ident")
+        field_type = field.get("type")
+        if field_type in ("quantity", "price"):
+            out.append(f"        double[:] {ident}s,")
+        elif field_type == "u64":
+            out.append(f"        uint64_t[:] {ident}s,")
+        elif field_type == "bool":
+            out.append(f"        object[:] {ident}s,")
+
+    # Remove trailing comma from last parameter
+    if out[-1].endswith(","):
+        out[-1] = out[-1][:-1]
+    out.append("    )")
+    out.append("")
+
+    # Add remaining method signatures (no changes needed)
+    out.append("    @staticmethod")
+    out.append("    cdef Bar from_mem_c(Bar_t mem)")
+    out.append("")
+    out.append("    @staticmethod")
+    out.append("    cdef Bar from_pyo3_c(pyo3_bar)")
+    out.append("")
+    out.append("    @staticmethod")
+    out.append("    cdef Bar from_dict_c(dict values)")
+    out.append("")
+    out.append("    @staticmethod")
+    out.append("    cdef dict to_dict_c(Bar obj)")
+    out.append("")
+    out.append("    cpdef bint is_single_price(self)")
+
+    # Write to file
+    output_file = GENERATED_CYTHON_DIR / "_extended_bar_sig.pxi"
+    output_file.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+def _generate_full_bar_variants() -> None:
+    """
+    Generate full Bar class include files for both extended and standard variants.
+
+    - `_generated/_extended_bar__bar.pxi` contains a complete Bar class with
+      extended fields inlined (no `include` statements inside class).
+    - `_generated/_standard_bar__bar.pxi` contains a complete Bar class using
+      the standard path only (no extended blocks or includes inside class).
+    """
+    src = Path("nautilus_trader/model/data.pyx")
+    if not src.exists():
+        return  # development fallback
+
+    lines = src.read_text(encoding="utf-8").splitlines()
+
+    # Locate Bar class block boundaries
+    start = None
+    end = None
+    for i, ln in enumerate(lines):
+        if start is None and ln.strip().startswith("cdef class Bar("):
+            start = i
+        if start is not None and ln.strip().startswith("cdef class DataType:"):
+            end = i
+            break
+    if start is None or end is None or end <= start:
+        return
+
+    block = lines[start:end]
+
+    gen_dir = GENERATED_CYTHON_DIR
+
+    def indent_width(s: str) -> int:
+        return len(s) - len(s.lstrip(" "))
+
+    def inline_include(line: str) -> list[str]:
+        # Extract path between quotes
+        try:
+            path = line.split("\"")[1]
+        except Exception:
+            return [line]
+        p = gen_dir / Path(path).name
+        if not p.exists():
+            return [line]
+        content = p.read_text(encoding="utf-8").splitlines()
+        return content
+
+    # Transform helper: keep only the standard (ELSE) branch
+    def transform_standard(block_lines: list[str]) -> list[str]:
+        out: list[str] = []
+        i = 0
+        while i < len(block_lines):
+            line = block_lines[i]
+            stripped = line.strip()
+            if stripped.startswith("IF HAS_EXTENDED_BAR_FIELDS:"):
+                base = indent_width(line)
+                # skip extended branch
+                i += 1
+                while i < len(block_lines):
+                    if indent_width(block_lines[i]) == base and block_lines[i].strip().startswith("ELSE:"):
+                        i += 1
+                        break
+                    i += 1
+                # copy else branch (removing the extra indentation from being inside ELSE)
+                while i < len(block_lines) and indent_width(block_lines[i]) > base:
+                    line_to_copy = block_lines[i]
+                    # Remove the extra 4 spaces of indentation from being inside ELSE block
+                    if line_to_copy.startswith("    "):
+                        line_to_copy = line_to_copy[4:]  # Remove 4 spaces
+                    out.append(line_to_copy)
+                    i += 1
+                continue
+            else:
+                out.append(line)
+                i += 1
+
+        # Normalize indentation - remove any common leading spaces from all lines
+        if out:
+            # Find minimum indentation (excluding empty lines)
+            min_indent = float('inf')
+            for line in out:
+                if line.strip():  # Non-empty line
+                    min_indent = min(min_indent, indent_width(line))
+
+            # Remove the common indentation from all lines
+            if min_indent > 0 and min_indent != float('inf'):
+                normalized = []
+                for line in out:
+                    if line.strip():  # Non-empty line
+                        # Preserve relative indentation by subtracting minimum
+                        current_indent = indent_width(line)
+                        relative_indent = current_indent - min_indent
+                        normalized.append(" " * relative_indent + line.lstrip())
+                    else:  # Empty line
+                        normalized.append("")
+                return normalized
+
+        return out
+
+    # Generate extended Bar class with proper field support
+    def generate_extended_bar_class(block_lines: list[str]) -> list[str]:
+        # Load extended field configuration
+        fields = _load_extended_bar_fields()
+        if not fields:
+            # No extended fields, use standard Bar
+            return transform_standard(block_lines)
+
+        # Start with the standard Bar class as base
+        standard = transform_standard(block_lines)
+        out: list[str] = []
+
+        i = 0
+        while i < len(standard):
+            line = standard[i]
+
+            # Process __init__ method
+            if "def __init__" in line:
+                out.append(line)
+                i += 1
+                # Copy parameters until we hit the closing parenthesis
+                while i < len(standard) and ") -> None:" not in standard[i]:
+                    # Before the closing, add extended field params
+                    if "bint is_revision" in standard[i]:
+                        out.append(standard[i])
+                        # Add extended field parameters after is_revision
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            default = field.get("default", "0")
+                            if field_type == "quantity":
+                                out.append(f"        Quantity {ident}=None,")
+                            elif field_type == "price":
+                                out.append(f"        Price {ident}=None,")
+                            elif field_type == "u64":
+                                default_val = default.replace("_", "")
+                                out.append(f"        uint64_t {ident}={default_val},")
+                            elif field_type == "bool":
+                                default_bool = _format_bool_default(default)
+                                out.append(f"        bint {ident}={default_bool},")
+                    else:
+                        out.append(standard[i])
+                    i += 1
+
+                # Add the closing parenthesis
+                if i < len(standard):
+                    out.append(standard[i])
+                    i += 1
+
+                # Process the body of __init__ until we find self.is_revision (end of __init__)
+                init_done = False
+                while i < len(standard) and not init_done:
+                    if "self._mem = bar_new(" in standard[i]:
+                        # Add extended field processing before bar_new
+                        # This code is generated from config, not hardcoded
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            default = field.get("default", "0")
+
+                            if field_type == "quantity":
+                                out.append(f"        if {ident} is None:")
+                                out.append(f"            {ident} = Quantity.from_str('{default}')")
+                                out.append(f"        cdef Quantity_t _ext_{ident} = {ident}._mem")
+                            elif field_type == "price":
+                                out.append(f"        if {ident} is None:")
+                                out.append(f"            {ident} = Price.from_str('{default}')")
+                                out.append(f"        cdef Price_t _ext_{ident} = {ident}._mem")
+                            elif field_type == "u64":
+                                out.append(f"        cdef uint64_t _ext_{ident} = {ident}")
+                            elif field_type == "bool":
+                                out.append(f"        cdef bint _ext_{ident} = {ident}")
+
+                        out.append("")  # Add blank line for readability
+
+                        # Add the bar_new call
+                        out.append(standard[i])
+                        i += 1
+                        # Copy arguments until closing
+                        while i < len(standard) and not standard[i].strip() == ")":
+                            out.append(standard[i])
+                            i += 1
+                        # Add extended field arguments before closing
+                        for field in fields:
+                            ident = field.get("ident")
+                            out.append(f"            _ext_{ident},")
+                        # Add the closing parenthesis
+                        out.append(standard[i])
+                        i += 1
+                    elif "self.is_revision = is_revision" in standard[i]:
+                        out.append(standard[i])
+                        i += 1
+                        init_done = True
+                    elif "def __getstate__" in standard[i]:
+                        # We've gone too far, stop
+                        init_done = True
+                        continue  # Don't increment i, let the main loop handle this line
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
+            # Process __getstate__ method - add extended fields to state
+            elif "def __getstate__" in line:
+                out.append(line)
+                i += 1
+                # Copy the method until return statement
+                while i < len(standard):
+                    if "return bart_type_state + (" in standard[i]:
+                        out.append(standard[i])
+                        i += 1
+                        # Copy standard fields
+                        while i < len(standard) and not standard[i].strip() == ")":
+                            out.append(standard[i])
+                            i += 1
+                        # Add extended fields to the tuple
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"            self._mem.{ident}.raw,")
+                                out.append(f"            self._mem.{ident}.precision,")
+                            elif field_type == "price":
+                                out.append(f"            self._mem.{ident}.raw,")
+                                out.append(f"            self._mem.{ident}.precision,")
+                            elif field_type == "u64":
+                                out.append(f"            self._mem.{ident},")
+                        out.append(standard[i])  # closing parenthesis
+                        i += 1
+                        break
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
+            # Process __setstate__ method - restore extended fields
+            elif "def __setstate__" in line:
+                out.append(line)
+                i += 1
+
+                # Add cdef declarations at the beginning of the method
+                # First, copy any existing cdef declarations
+                while i < len(standard) and standard[i].strip().startswith("cdef "):
+                    out.append(standard[i])
+                    i += 1
+
+                # Add extended field declarations at the beginning (before any if statements)
+                for field in fields:
+                    ident = field.get("ident")
+                    field_type = field.get("type")
+                    if field_type == "quantity":
+                        out.append(f"        cdef Quantity_t _ext_{ident}")
+                    elif field_type == "price":
+                        out.append(f"        cdef Price_t _ext_{ident}")
+                    elif field_type == "u64":
+                        out.append(f"        cdef uint64_t _ext_{ident}")
+                    elif field_type == "bool":
+                        out.append(f"        cdef bint _ext_{ident}")
+
+                # Calculate expected state lengths for extended fields
+                if fields:
+                    # Calculate how many state elements the extended fields add
+                    extended_state_count = 0
+                    for field in fields:
+                        field_type = field.get("type")
+                        if field_type in ("quantity", "price"):
+                            extended_state_count += 2  # raw + prec
+                        else:  # u64 or bool
+                            extended_state_count += 1
+
+                    # Declare expected length variables and index variable
+                    out.append(f"        cdef Py_ssize_t expected_standard_len = {14 + extended_state_count}")
+                    out.append(f"        cdef Py_ssize_t expected_composite_len = {17 + extended_state_count}")
+                    out.append("        cdef int idx  # Index for iterating through extended fields")
+
+                # Process the method body to handle extended fields in bar_new calls
+                while i < len(standard):
+                    # Fix indentation for if statement blocks
+                    if "if len(state) ==" in standard[i]:
+                        # Determine if this is standard or composite branch
+                        is_standard_branch = "== 14" in standard[i]
+                        expected_len_var = "expected_standard_len" if is_standard_branch else "expected_composite_len"
+                        start_idx = 14 if is_standard_branch else 17
+
+                        # Modify the if statement to support both old and new state lengths
+                        if fields and is_standard_branch:
+                            # For extended bars, accept both legacy 14-element and new extended-length states
+                            out.append("        if len(state) == 14 or len(state) == expected_standard_len:")
+                        else:
+                            # Keep original condition for composite or no-fields case
+                            out.append(standard[i])
+                        i += 1
+
+                        # Calculate base indent for this branch (should be 12 spaces for if block content)
+                        branch_base_indent = 12
+
+                        # Copy the block contents preserving relative indentation
+                        while i < len(standard) and not "self._mem = bar_new(" in standard[i] and not standard[i].strip().startswith("else:"):
+                            line_content = standard[i]
+                            if line_content.strip():
+                                # Preserve relative indentation from original
+                                original_indent = indent_width(line_content)
+                                # In standard Bar, if block starts at 12, so calculate relative
+                                relative_indent = original_indent - 12 if original_indent >= 12 else 0
+                                final_indent = branch_base_indent + relative_indent
+                                out.append(" " * final_indent + line_content.lstrip())
+                                # After reading size_prec, add extended field restoration logic
+                                if "size_prec = state[" in line_content:
+                                    # Add logic to restore extended fields from state or use defaults
+                                    out.append("            # Restore extended fields from state or use defaults")
+                                    if fields:
+                                        # Check if state has extended fields (new format) or legacy format
+                                        out.append(f"            if len(state) == {expected_len_var}:")
+                                        out.append(f"                # Extended state format - restore fields")
+                                        out.append(f"                idx = {start_idx}")
+
+                                        # Restore each extended field from state
+                                        for field in fields:
+                                            ident = field.get("ident")
+                                            field_type = field.get("type")
+                                            if field_type == "quantity":
+                                                out.append(f"                _ext_{ident} = quantity_new(state[idx], state[idx + 1])")
+                                                out.append(f"                idx += 2")
+                                            elif field_type == "price":
+                                                out.append(f"                _ext_{ident} = price_new(state[idx], state[idx + 1])")
+                                                out.append(f"                idx += 2")
+                                            elif field_type == "u64":
+                                                out.append(f"                _ext_{ident} = <uint64_t>state[idx]")
+                                                out.append(f"                idx += 1")
+                                            elif field_type == "bool":
+                                                out.append(f"                _ext_{ident} = <bint>state[idx]")
+                                                out.append(f"                idx += 1")
+
+                                        # Else branch for legacy state without extended fields
+                                        out.append(f"            else:")
+                                        out.append(f"                # Legacy state format - use defaults")
+                                        for field in fields:
+                                            ident = field.get("ident")
+                                            field_type = field.get("type")
+                                            default = field.get("default", "0")
+                                            if field_type == "quantity":
+                                                out.append(f"                _ext_{ident} = Quantity.from_str_c('{default}')._mem")
+                                            elif field_type == "price":
+                                                out.append(f"                _ext_{ident} = Price.from_str_c('{default}')._mem")
+                                            elif field_type == "u64":
+                                                out.append(f"                _ext_{ident} = {default}")
+                                            elif field_type == "bool":
+                                                default_bool = _format_bool_default(default)
+                                                out.append(f"                _ext_{ident} = {default_bool}")
+                            else:
+                                out.append(standard[i])
+                            i += 1
+                        # Now continue with normal processing for the bar_new call
+                        continue
+                    # Fix indentation for else blocks
+                    elif standard[i].strip() == "else:" and i > 0:
+                        # else block handles composite branch
+                        expected_len_var = "expected_composite_len"
+                        start_idx = 17
+
+                        out.append(standard[i])
+                        i += 1
+
+                        # Calculate base indent for else branch
+                        branch_base_indent = 12
+
+                        # Copy else block preserving relative indentation
+                        while i < len(standard) and standard[i].strip() and not "self._mem = bar_new(" in standard[i] and not "def " in standard[i]:
+                            line_content = standard[i]
+                            if line_content.strip():
+                                # Preserve relative indentation from original
+                                original_indent = indent_width(line_content)
+                                # In standard Bar, else block starts at 12, calculate relative
+                                relative_indent = original_indent - 12 if original_indent >= 12 else 0
+                                final_indent = branch_base_indent + relative_indent
+                                out.append(" " * final_indent + line_content.lstrip())
+                                # After reading size_prec, add extended field restoration logic
+                                if "size_prec = state[" in line_content:
+                                    # Add logic to restore extended fields from state or use defaults
+                                    out.append("            # Restore extended fields from state or use defaults")
+                                    if fields:
+                                        # Check if state has extended fields (new format) or legacy format
+                                        out.append(f"            if len(state) == {expected_len_var}:")
+                                        out.append(f"                # Extended state format - restore fields")
+                                        out.append(f"                idx = {start_idx}")
+
+                                        # Restore each extended field from state
+                                        for field in fields:
+                                            ident = field.get("ident")
+                                            field_type = field.get("type")
+                                            if field_type == "quantity":
+                                                out.append(f"                _ext_{ident} = quantity_new(state[idx], state[idx + 1])")
+                                                out.append(f"                idx += 2")
+                                            elif field_type == "price":
+                                                out.append(f"                _ext_{ident} = price_new(state[idx], state[idx + 1])")
+                                                out.append(f"                idx += 2")
+                                            elif field_type == "u64":
+                                                out.append(f"                _ext_{ident} = <uint64_t>state[idx]")
+                                                out.append(f"                idx += 1")
+                                            elif field_type == "bool":
+                                                out.append(f"                _ext_{ident} = <bint>state[idx]")
+                                                out.append(f"                idx += 1")
+
+                                        # Else branch for legacy state without extended fields
+                                        out.append(f"            else:")
+                                        out.append(f"                # Legacy state format - use defaults")
+                                        for field in fields:
+                                            ident = field.get("ident")
+                                            field_type = field.get("type")
+                                            default = field.get("default", "0")
+                                            if field_type == "quantity":
+                                                out.append(f"                _ext_{ident} = Quantity.from_str_c('{default}')._mem")
+                                            elif field_type == "price":
+                                                out.append(f"                _ext_{ident} = Price.from_str_c('{default}')._mem")
+                                            elif field_type == "u64":
+                                                out.append(f"                _ext_{ident} = {default}")
+                                            elif field_type == "bool":
+                                                default_bool = _format_bool_default(default)
+                                                out.append(f"                _ext_{ident} = {default_bool}")
+                            else:
+                                out.append(standard[i])
+                            i += 1
+                        continue
+                    # Check for bar_new calls in both branches (state length 14 and other)
+                    elif "self._mem = bar_new(" in standard[i]:
+                        # Check if we're inside an if or else block by looking at recent lines
+                        in_if_block = False
+                        in_else_block = False
+                        for j in range(min(15, len(out))):
+                            if j < len(out):
+                                recent_line = out[-(j+1)]
+                                if "else:" in recent_line:
+                                    in_else_block = True
+                                    break
+                                elif "if len(state) ==" in recent_line:
+                                    in_if_block = True
+                                    break
+
+                        # Determine base indentation based on context
+                        base_indent = 12 if (in_if_block or in_else_block) else 8
+
+                        # Extended field values should be restored from state at the branch level
+                        # They are declared as cdef at the method start and set in each branch
+                        # No default assignment needed here - values set per branch based on state length
+
+                        # Add the bar_new call preserving relative indentation
+                        bar_new_original_indent = indent_width(standard[i])
+                        bar_new_relative = bar_new_original_indent - (12 if (in_if_block or in_else_block) else 8)
+                        bar_new_final_indent = base_indent + bar_new_relative
+                        out.append(" " * bar_new_final_indent + standard[i].lstrip())
+                        i += 1
+
+                        # Copy arguments until closing parenthesis, preserving relative indentation
+                        while i < len(standard) and not standard[i].strip() == ")":
+                            line_content = standard[i]
+                            if line_content.strip():
+                                # Calculate relative indent from bar_new's first argument
+                                original_indent = indent_width(line_content)
+                                # Arguments should be relative to bar_new call
+                                relative_indent = original_indent - bar_new_original_indent
+                                final_indent = bar_new_final_indent + relative_indent
+                                out.append(" " * final_indent + line_content.lstrip())
+                            else:
+                                out.append(line_content)  # Empty line
+                            i += 1
+
+                        # Add extended field arguments with same indent as other bar_new args
+                        # Find the indent level of bar_new's first argument
+                        arg_indent_spaces = bar_new_final_indent + 4  # Standard arg indent is +4 from bar_new
+                        for field in fields:
+                            ident = field.get("ident")
+                            if field["type"] in ["quantity", "price", "u64", "bool"]:
+                                out.append(" " * arg_indent_spaces + f"_ext_{ident},")
+
+                        # Add closing parenthesis with proper indentation
+                        out.append(" " * bar_new_final_indent + ")")
+                        i += 1
+                    elif "def __eq__" in standard[i] or "def __hash__" in standard[i]:
+                        # We've reached the next method, stop processing __setstate__
+                        break
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
+            # Process from_raw_c static method
+            elif "cdef Bar from_raw_c(" in line:
+                out.append(line)
+                i += 1
+                # Copy parameters until closing
+                while i < len(standard) and not standard[i].strip().endswith("):"):
+                    if "uint64_t ts_init," in standard[i]:
+                        out.append(standard[i])
+                        # Add extended field parameters with same indent as other params (8 spaces)
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"        QuantityRaw {ident}_raw,")
+                                out.append(f"        uint8_t {ident}_prec,")
+                            elif field_type == "price":
+                                out.append(f"        PriceRaw {ident}_raw,")
+                                out.append(f"        uint8_t {ident}_prec,")
+                            elif field_type == "u64":
+                                out.append(f"        uint64_t {ident},")
+                            elif field_type == "bool":
+                                out.append(f"        bint {ident},")
+                    else:
+                        out.append(standard[i])
+                    i += 1
+                # Process the closing and body
+                if i < len(standard):
+                    out.append(standard[i])  # ):
+                    i += 1
+                # Process the body
+                while i < len(standard):
+                    if "bar._mem = bar_new(" in standard[i]:
+                        # Add extended field conversions before bar_new
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"        cdef Quantity_t {ident}_qty = quantity_new({ident}_raw, {ident}_prec)")
+                            elif field_type == "price":
+                                out.append(f"        cdef Price_t {ident}_price = price_new({ident}_raw, {ident}_prec)")
+
+                        out.append(standard[i])
+                        i += 1
+                        # Copy arguments until closing
+                        while i < len(standard) and not standard[i].strip() == ")":
+                            out.append(standard[i])
+                            i += 1
+                        # Add extended field arguments
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"            {ident}_qty,")
+                            elif field_type == "price":
+                                out.append(f"            {ident}_price,")
+                            elif field_type == "u64":
+                                out.append(f"            {ident},")
+                            elif field_type == "bool":
+                                out.append(f"            {ident},")
+                        out.append(standard[i])  # closing
+                        i += 1
+                        break
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
+            # Process from_dict_c - add extended fields
+            elif "cdef Bar from_dict_c(dict values):" in line:
+                out.append(line)
+                i += 1
+                # Copy until return Bar(
+                while i < len(standard):
+                    if "return Bar(" in standard[i]:
+                        out.append(standard[i])
+                        i += 1
+                        # Copy standard arguments
+                        while i < len(standard) and not standard[i].strip() == ")":
+                            out.append(standard[i])
+                            i += 1
+                        # Add extended field arguments from dict
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f'                {ident}=Quantity.from_str_c(values.get("{ident}", "0")) if "{ident}" in values else None,')
+                            elif field_type == "price":
+                                out.append(f'                {ident}=Price.from_str_c(values.get("{ident}", "0")) if "{ident}" in values else None,')
+                            elif field_type == "u64":
+                                out.append(f'                {ident}=values.get("{ident}", 0),')
+                            elif field_type == "bool":
+                                default_bool = _format_bool_default(field.get("default"))
+                                out.append(f'                {ident}=values.get("{ident}", {default_bool}),')
+                        out.append(standard[i])  # closing
+                        i += 1
+                        break
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
+            # Process to_dict_c - add extended fields to output
+            elif "cdef dict to_dict_c(Bar obj):" in line:
+                out.append(line)
+                i += 1
+                # Copy until return {
+                while i < len(standard):
+                    if "return {" in standard[i]:
+                        out.append(standard[i])
+                        i += 1
+                        # Copy standard fields
+                        while i < len(standard) and not standard[i].strip() == "}":
+                            out.append(standard[i])
+                            i += 1
+                        # Add extended fields to dict
+                        for field in fields:
+                            ident = field.get("ident")
+                            out.append(f'                "{ident}": str(obj.{ident}),')
+                        out.append(standard[i])  # closing }
+                        i += 1
+                        break
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
+            # Process from_raw_arrays_to_list_c - needs extended array parameters
+            elif "cdef list[Bar] from_raw_arrays_to_list_c(" in line:
+                out.append(line)
+                i += 1
+                # Copy parameters until closing
+                while i < len(standard) and not standard[i].strip().endswith("):"):
+                    if "uint64_t[:] ts_inits," in standard[i]:
+                        out.append(standard[i])
+                        # Add extended field array parameters (8 spaces to match other params)
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"        double[:] {ident}s,")
+                            elif field_type == "price":
+                                out.append(f"        double[:] {ident}s,")
+                            elif field_type == "u64":
+                                out.append(f"        uint64_t[:] {ident}s,")
+                            elif field_type == "bool":
+                                out.append(f"        object[:] {ident}s,")
+                    else:
+                        out.append(standard[i])
+                    i += 1
+                # Process closing and body
+                if i < len(standard):
+                    out.append(standard[i])  # ):
+                    i += 1
+
+                # Process assertion to add extended field array length checks
+                while i < len(standard):
+                    if "Condition.is_true(" in standard[i]:
+                        out.append(standard[i])
+                        i += 1
+                        # Copy assertion lines until we find the line with ts_inits
+                        while i < len(standard) and "ts_inits)" not in standard[i]:
+                            out.append(standard[i])
+                            i += 1
+                        # Found the line with ts_inits) - modify it to add extended arrays
+                        if i < len(standard):
+                            line_content = standard[i]
+                            if fields:
+                                # Remove the closing comma and parenthesis, add ==
+                                modified_line = line_content.replace("ts_inits),", "ts_inits) ==")
+                                out.append(modified_line)
+                                # Add extended field array checks
+                                extended_checks = [f"len({field.get('ident')}s)" for field in fields]
+                                out.append("            " + " == ".join(extended_checks) + ",")
+                            else:
+                                out.append(line_content)
+                            i += 1
+                        break
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
+                # Look for the cdef block to add extended field declarations
+                while i < len(standard):
+                    if "Bar bar" in standard[i]:
+                        # Add this line (Bar bar)
+                        out.append(standard[i])
+                        # Add extended field declarations right after Bar bar
+                        # Use 12 spaces to align with other cdef variables in the block
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"            Quantity {ident}_qty")
+                            elif field_type == "price":
+                                out.append(f"            Price {ident}_price")
+                        i += 1
+                        break
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
+                # Process the rest of the body to handle extended arrays in bar creation loop
+                while i < len(standard):
+                    # Look for the bar_new call inside the loop
+                    if "bar._mem = bar_new(" in standard[i]:
+                        # Add extended field conversions before bar_new for each iteration
+                        # Use 12 spaces to match other assignments in the loop
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            # Note: these need to use the array index [i]
+                            if field_type == "quantity":
+                                out.append(f"            {ident}_qty = Quantity({ident}s[i], size_prec)")
+                            elif field_type == "price":
+                                out.append(f"            {ident}_price = Price({ident}s[i], price_prec)")
+                            # u64 and bool don't need conversion
+
+                        out.append(standard[i])
+                        i += 1
+                        # Copy arguments until closing
+                        while i < len(standard) and not standard[i].strip() == ")":
+                            out.append(standard[i])
+                            i += 1
+                        # Add extended field arguments
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"                {ident}_qty._mem,")
+                            elif field_type == "price":
+                                out.append(f"                {ident}_price._mem,")
+                            elif field_type == "u64":
+                                out.append(f"                {ident}s[i],")
+                            elif field_type == "bool":
+                                out.append(f"                <bint>{ident}s[i],")
+                        out.append(standard[i])  # closing
+                        i += 1
+                    elif "return bars" in standard[i]:
+                        # return should be AFTER the loop, not inside it (8 spaces, not 12)
+                        # Preserve original indentation from standard Bar
+                        out.append(standard[i])
+                        i += 1
+                        break
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
+            # Process from_raw wrapper method - add extended parameters
+            elif "def from_raw(" in line:
+                out.append(line)
+                i += 1
+                # Copy parameters until closing
+                while i < len(standard) and not ") -> Bar:" in standard[i]:
+                    if "uint64_t ts_init," in standard[i]:
+                        out.append(standard[i])
+                        # Add extended field parameters matching from_raw_c (8 spaces)
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"        QuantityRaw {ident}_raw,")
+                                out.append(f"        uint8_t {ident}_prec,")
+                            elif field_type == "price":
+                                out.append(f"        PriceRaw {ident}_raw,")
+                                out.append(f"        uint8_t {ident}_prec,")
+                            elif field_type == "u64":
+                                out.append(f"        uint64_t {ident},")
+                            elif field_type == "bool":
+                                out.append(f"        bint {ident},")
+                    else:
+                        out.append(standard[i])
+                    i += 1
+                # Process closing and body
+                if i < len(standard):
+                    out.append(standard[i])  # ) -> Bar:
+                    i += 1
+                # Process the body - should be return Bar.from_raw_c(...)
+                while i < len(standard):
+                    if "return Bar.from_raw_c(" in standard[i]:
+                        out.append(standard[i])
+                        i += 1
+                        # Copy arguments until closing
+                        while i < len(standard) and not standard[i].strip() == ")":
+                            out.append(standard[i])
+                            i += 1
+                        # Add extended field arguments
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"            {ident}_raw,")
+                                out.append(f"            {ident}_prec,")
+                            elif field_type == "price":
+                                out.append(f"            {ident}_raw,")
+                                out.append(f"            {ident}_prec,")
+                            elif field_type == "u64":
+                                out.append(f"            {ident},")
+                            elif field_type == "bool":
+                                out.append(f"            {ident},")
+                        out.append(standard[i])  # closing
+                        i += 1
+                        break
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
+            # Process from_raw_arrays_to_list wrapper method - add extended parameters
+            elif "def from_raw_arrays_to_list(" in line:
+                out.append(line)
+                i += 1
+                # Copy parameters until closing
+                while i < len(standard) and not ") -> list[Bar]:" in standard[i]:
+                    if "uint64_t[:] ts_inits," in standard[i]:
+                        out.append(standard[i])
+                        # Add extended field array parameters (8 spaces to match other params)
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"        double[:] {ident}s,")
+                            elif field_type == "price":
+                                out.append(f"        double[:] {ident}s,")
+                            elif field_type == "u64":
+                                out.append(f"        uint64_t[:] {ident}s,")
+                            elif field_type == "bool":
+                                out.append(f"        object[:] {ident}s,")
+                    else:
+                        out.append(standard[i])
+                    i += 1
+                # Process closing and body
+                if i < len(standard):
+                    out.append(standard[i])  # ) -> list[Bar]:
+                    i += 1
+                # Process the body - should be return Bar.from_raw_arrays_to_list_c(...)
+                while i < len(standard):
+                    if "return Bar.from_raw_arrays_to_list_c(" in standard[i]:
+                        out.append(standard[i])
+                        i += 1
+                        # Copy arguments until closing
+                        while i < len(standard) and not standard[i].strip() == ")":
+                            out.append(standard[i])
+                            i += 1
+                        # Add extended field array arguments
+                        for field in fields:
+                            ident = field.get("ident")
+                            out.append(f"            {ident}s,")
+                        out.append(standard[i])  # closing
+                        i += 1
+                        break
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
+            else:
+                # Check for the specific indentation issue with return bar_from_mem_c
+                if "return bar_from_mem_c(ptr.bar)" in line and line.startswith("            "):
+                    # This line has 12 spaces but should have 8
+                    out.append("        return bar_from_mem_c(ptr.bar)")
+                else:
+                    out.append(line)
+                i += 1
+
+        # Add extended field properties at the end of class
+        # Use 4 spaces for class-level decorators and method definitions
+        for field in fields:
+            ident = field.get("ident")
+            field_type = field.get("type")
+            doc = field.get("doc", "")
+
+            out.append("")  # Empty line separator (truly empty)
+            out.append(f"    @property")
+            out.append(f"    def {ident}(self):")
+            if doc:
+                out.append(f'        """')
+                out.append(f'        {doc}')
+                out.append(f'        """')
+
+            if field_type == "quantity":
+                out.append(f"        return Quantity.from_raw_c(self._mem.{ident}.raw, self._mem.{ident}.precision)")
+            elif field_type == "price":
+                out.append(f"        return Price.from_raw_c(self._mem.{ident}.raw, self._mem.{ident}.precision)")
+            elif field_type == "u64":
+                out.append(f"        return self._mem.{ident}")
+            elif field_type == "bool":
+                out.append(f"        return self._mem.{ident}")
+
+            out.append("")  # Empty line separator (truly empty)
+            out.append(f"    @{ident}.setter")
+            out.append(f"    def {ident}(self, value) -> None:")
+
+            if field_type == "quantity":
+                out.append(f"        self._mem.{ident} = (<Quantity>value)._mem")
+            elif field_type == "price":
+                out.append(f"        self._mem.{ident} = (<Price>value)._mem")
+            elif field_type == "u64":
+                out.append(f"        self._mem.{ident} = <uint64_t>value")
+            elif field_type == "bool":
+                out.append(f"        self._mem.{ident} = value")
+
+        return out
+
+    # Generate the extended bar class with proper field support
+    extended_full = generate_extended_bar_class(block)
+    standard_full = transform_standard(block)
+
+    # Write outputs (ensure trailing newline)
+    (gen_dir / "_extended_bar__bar.pxi").write_text("\n".join(extended_full) + "\n", encoding="utf-8")
+    (gen_dir / "_standard_bar__bar.pxi").write_text("\n".join(standard_full) + "\n", encoding="utf-8")
+
 
 def _set_feature_flags() -> list[str]:
-    features = "ffi,python,extension-module,postgres"
+    features = "ffi,python,extension-module,postgres,extended_bar"
     flags = ["--no-default-features", "--features"]
 
     if HIGH_PRECISION:
@@ -482,6 +2095,7 @@ def build() -> None:
     Construct the extensions and distribution.
     """
     _ensure_windows_python_import_lib()
+    _generate_extended_bar_cython_files()
     _build_rust_libs()
     _copy_rust_dylibs_to_project()
 

@@ -1026,7 +1026,7 @@ mod tests {
         exchange.borrow_mut().add_instrument(instrument).unwrap();
 
         // process bar
-        let bar = Bar::new(
+        let bar = nautilus_model::bar_new_with_defaults!(
             BarType::from("ETHUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL"),
             Price::from("1500.00"),
             Price::from("1505.00"),
@@ -1064,7 +1064,7 @@ mod tests {
 
         // create both bid and ask based bars
         // add +1 on ask to make sure it is different from bid
-        let bar_bid = Bar::new(
+        let bar_bid = nautilus_model::bar_new_with_defaults!(
             BarType::from("ETHUSDT-PERP.BINANCE-1-MINUTE-BID-EXTERNAL"),
             Price::from("1500.00"),
             Price::from("1505.00"),
@@ -1074,7 +1074,7 @@ mod tests {
             UnixNanos::from(1),
             UnixNanos::from(1),
         );
-        let bar_ask = Bar::new(
+        let bar_ask = nautilus_model::bar_new_with_defaults!(
             BarType::from("ETHUSDT-PERP.BINANCE-1-MINUTE-ASK-EXTERNAL"),
             Price::from("1501.00"),
             Price::from("1506.00"),

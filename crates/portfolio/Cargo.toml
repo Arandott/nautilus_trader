@@ -33,6 +33,11 @@ python = [
   "nautilus-core/python",
   "nautilus-model/python",
 ]
+extended_bar = [
+  "nautilus-model/extended_bar",
+  "nautilus-common/extended_bar",
+  "dep:extended_bar_macros",
+]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -43,6 +48,7 @@ nautilus-analysis = { workspace = true }
 nautilus-common = { workspace = true }
 nautilus-core = { workspace = true }
 nautilus-model = { workspace = true, features = ["stubs"] }
+extended_bar_macros = { workspace = true, optional = true }
 
 log = { workspace = true }
 pyo3 = { workspace = true, optional = true }

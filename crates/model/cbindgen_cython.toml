@@ -8,6 +8,7 @@ after_includes = "\n#ifdef __SIZEOF_INT128__\n    typedef __uint128_t uint128_t;
 
 [defines]
 "feature = high-precision" = "HIGH_PRECISION"
+"feature = extended_bar" = "EXTENDED_BAR"
 
 [cython]
 header = '"../includes/model.h"'

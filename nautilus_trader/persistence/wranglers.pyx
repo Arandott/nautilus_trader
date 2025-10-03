@@ -37,6 +37,7 @@ from nautilus_trader.core.rust.model cimport QuantityRaw
 from nautilus_trader.core.rust.model cimport RecordFlag
 from nautilus_trader.model.data cimport Bar
 from nautilus_trader.model.data cimport BarType
+from nautilus_trader.model.data import EXTENDED_BAR_FIELD_SPECS
 from nautilus_trader.model.data cimport BookOrder
 from nautilus_trader.model.data cimport OrderBookDelta
 from nautilus_trader.model.data cimport QuoteTick
@@ -49,6 +50,77 @@ from nautilus_trader.model.objects cimport Quantity
 
 BAR_PRICES = ("open", "high", "low", "close")
 BAR_COLUMNS = (*BAR_PRICES, "volume")
+
+
+def _is_missing(value):
+    if value is None:
+        return True
+    if isinstance(value, float):
+        return np.isnan(value)
+    try:
+        return pd.isna(value)
+    except Exception:
+        return False
+
+
+def _resolve_extended_precision(spec, instrument):
+    field_type = spec.get("type")
+    hint = spec.get("precision")
+    if field_type == "quantity":
+        if hint == "price":
+            return instrument.price_precision
+        if isinstance(hint, str) and hint.isdigit():
+            return int(hint)
+        return instrument.size_precision
+    if field_type == "price":
+        if hint == "size":
+            return instrument.size_precision
+        if isinstance(hint, str) and hint.isdigit():
+            return int(hint)
+        return instrument.price_precision
+    return None
+
+
+def _coerce_quantity_object(value, precision):
+    if _is_missing(value):
+        return None
+    if isinstance(value, Quantity):
+        if value.precision == precision:
+            return value
+        return Quantity(float(value), precision)
+    if isinstance(value, Price):
+        return Quantity(float(value), precision)
+    return Quantity(float(value), precision)
+
+
+def _coerce_price_object(value, precision):
+    if _is_missing(value):
+        return None
+    if isinstance(value, Price):
+        if value.precision == precision:
+            return value
+        return Price(float(value), precision)
+    if isinstance(value, Quantity):
+        return Price(float(value), precision)
+    return Price(float(value), precision)
+
+
+def _coerce_u64_value(value):
+    if _is_missing(value):
+        return None
+    return int(value)
+
+
+def _coerce_bool_value(value):
+    if _is_missing(value):
+        return None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "y", "t"}:
+            return True
+        if lowered in {"false", "0", "no", "n", "f"}:
+            return False
+    return bool(value)
 
 
 def preprocess_bar_data(data: pd.DataFrame, is_raw: bool):
@@ -768,12 +840,41 @@ cdef class BarDataWrangler:
 
         ts_events, ts_inits = prepare_event_and_init_timestamps(data.index, ts_init_delta)
 
-        return list(map(
+        bars = list(map(
             self._build_bar,
             data.values,
             ts_events,
             ts_inits
         ))
+
+        if EXTENDED_BAR_FIELD_SPECS:
+            field_specs = []
+            for spec in EXTENDED_BAR_FIELD_SPECS:
+                field_type = spec.get("type")
+                precision = _resolve_extended_precision(spec, self.instrument)
+                field_specs.append((spec.get("name"), field_type, precision))
+
+            for idx, bar in enumerate(bars):
+                row = data.iloc[idx]
+                for name, field_type, precision in field_specs:
+                    if name not in row:
+                        continue
+                    value = row[name]
+                    if field_type == "quantity":
+                        coerced = _coerce_quantity_object(value, precision)
+                    elif field_type == "price":
+                        coerced = _coerce_price_object(value, precision)
+                    elif field_type == "u64":
+                        coerced = _coerce_u64_value(value)
+                    elif field_type == "bool":
+                        coerced = _coerce_bool_value(value)
+                    else:
+                        coerced = None
+
+                    if coerced is not None:
+                        setattr(bar, name, coerced)
+
+        return bars
 
     # cpdef method for Python wrap() (called with map)
     cpdef Bar _build_bar(self, double[:] values, uint64_t ts_event, uint64_t ts_init):

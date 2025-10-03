@@ -89,16 +89,16 @@ pub fn bar_ethusdt_binance_minute_bid(#[default("1522")] close_price: &str) -> B
         spec: bar_spec,
         aggregation_source: AggregationSource::External,
     };
-    Bar {
+    nautilus_model::bar_new_with_defaults!(
         bar_type,
-        open: Price::from("1500.0"),
-        high: Price::from("1550.0"),
-        low: Price::from("1495.0"),
-        close: Price::from(close_price),
-        volume: Quantity::from("100000"),
-        ts_event: 0.into(),
-        ts_init: 1.into(),
-    }
+        Price::from("1500.0"),
+        Price::from("1550.0"),
+        Price::from("1495.0"),
+        Price::from(close_price),
+        Quantity::from("100000"),
+        0.into(),
+        1.into(),
+    )
 }
 
 ////////////////////////////////////////////////////////////////////////////////

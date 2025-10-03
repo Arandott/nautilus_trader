@@ -366,7 +366,9 @@ pub fn parse_bar_msg(
     let ts_event = UnixNanos::from(msg.timestamp);
     let ts_init = UnixNanos::from(msg.local_timestamp);
 
-    Bar::new(bar_type, open, high, low, close, volume, ts_event, ts_init)
+    nautilus_model::bar_new_with_defaults!(
+        bar_type, open, high, low, close, volume, ts_event, ts_init,
+    )
 }
 
 ////////////////////////////////////////////////////////////////////////////////

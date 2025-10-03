@@ -44,6 +44,11 @@ use crate::{
     },
 };
 
+#[cfg(feature = "extended_bar")]
+use crate::data::extended_bar;
+#[cfg(feature = "extended_bar")]
+use extended_bar_macros::{extended_bar_pymethods_impl, quantity_set_by_name};
+
 #[pymethods]
 impl BarSpecification {
     #[new]
@@ -204,7 +209,7 @@ impl Bar {
         let ts_event: u64 = obj.getattr("ts_event")?.extract()?;
         let ts_init: u64 = obj.getattr("ts_init")?.extract()?;
 
-        Ok(Self::new(
+        let mut bar = crate::bar_new_with_defaults!(
             bar_type,
             open,
             high,
@@ -213,10 +218,29 @@ impl Bar {
             volume,
             ts_event.into(),
             ts_init.into(),
-        ))
+        );
+
+        #[cfg(feature = "extended_bar")]
+        {
+            for spec in extended_bar::field_specs() {
+                if spec.field_type != extended_bar::FieldType::Quantity {
+                    continue;
+                }
+
+                if let Ok(value_obj) = obj.getattr(spec.ident) {
+                    let quantity: Option<Quantity> = value_obj.extract()?;
+                    if let Some(quantity) = quantity {
+                        let _ = quantity_set_by_name!(bar, spec.ident, quantity);
+                    }
+                }
+            }
+        }
+
+        Ok(bar)
     }
 }
 
+#[cfg_attr(feature = "extended_bar", extended_bar_pymethods_impl)]
 #[pymethods]
 #[allow(clippy::too_many_arguments)]
 impl Bar {
@@ -442,7 +466,9 @@ mod tests {
         let ts_event = 0;
         let ts_init = 1;
 
-        let result = Bar::py_new(bar_type, open, high, low, close, volume, ts_event, ts_init);
+        let result = crate::bar_py_new_with_defaults!(
+            bar_type, open, high, low, close, volume, ts_event, ts_init,
+        );
         assert!(result.is_err());
     }
 
@@ -459,7 +485,9 @@ mod tests {
         let ts_event = 0;
         let ts_init = 1;
 
-        let result = Bar::py_new(bar_type, open, high, low, close, volume, ts_event, ts_init);
+        let result = crate::bar_py_new_with_defaults!(
+            bar_type, open, high, low, close, volume, ts_event, ts_init,
+        );
         assert!(result.is_ok());
     }
 

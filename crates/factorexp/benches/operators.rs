@@ -13,33 +13,31 @@
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use nautilus_factorexp::{
-    operators::{
-        RollingOperator,
-        rolling::{Mean, Std, Min, Max},
-        ma::{Ema, Wma},
-        stats::{Skew, Kurtosis},
-    },
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use nautilus_factorexp::operators::{
+    RollingOperator,
+    ma::{Ema, Wma},
+    rolling::{Max, Mean, Min, Std},
+    stats::{Kurtosis, Skew},
 };
 
 fn generate_test_data(size: usize) -> Vec<f64> {
     // Generate synthetic price data
     let mut data = vec![100.0];
     let mut price = 100.0;
-    
+
     for _ in 1..size {
         let return_pct = 0.0001 + 0.02 * rand::random::<f64>();
         price *= 1.0 + return_pct;
         data.push(price);
     }
-    
+
     data
 }
 
 fn benchmark_mean(c: &mut Criterion) {
     let data = generate_test_data(10_000);
-    
+
     c.bench_function("TS_Mean window=20", |b| {
         b.iter(|| {
             let mut op = Mean::new(20);
@@ -53,7 +51,7 @@ fn benchmark_mean(c: &mut Criterion) {
 
 fn benchmark_std(c: &mut Criterion) {
     let data = generate_test_data(10_000);
-    
+
     c.bench_function("TS_Std window=20", |b| {
         b.iter(|| {
             let mut op = Std::new(20, 1);
@@ -67,7 +65,7 @@ fn benchmark_std(c: &mut Criterion) {
 
 fn benchmark_ema(c: &mut Criterion) {
     let data = generate_test_data(10_000);
-    
+
     c.bench_function("TS_EMA window=20", |b| {
         b.iter(|| {
             let mut op = Ema::new(20);
@@ -81,7 +79,7 @@ fn benchmark_ema(c: &mut Criterion) {
 
 fn benchmark_min_max(c: &mut Criterion) {
     let data = generate_test_data(10_000);
-    
+
     c.bench_function("TS_Min/Max window=20", |b| {
         b.iter(|| {
             let mut min_op = Min::new(20);
@@ -97,7 +95,7 @@ fn benchmark_min_max(c: &mut Criterion) {
 
 fn benchmark_skew_kurt(c: &mut Criterion) {
     let data = generate_test_data(10_000);
-    
+
     c.bench_function("TS_Skew/Kurt window=20", |b| {
         b.iter(|| {
             let mut skew = Skew::new(20);
@@ -114,7 +112,7 @@ fn benchmark_skew_kurt(c: &mut Criterion) {
 fn benchmark_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("operator_comparison");
     let data = generate_test_data(100_000);
-    
+
     // Compare different window sizes
     for window in [10, 20, 50, 100] {
         group.bench_function(format!("Mean_w{}", window), |b| {
@@ -127,7 +125,7 @@ fn benchmark_comparison(c: &mut Criterion) {
             });
         });
     }
-    
+
     group.finish();
 }
 

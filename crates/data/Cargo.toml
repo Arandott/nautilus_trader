@@ -39,6 +39,12 @@ python = [
   "nautilus-model/python",
   "nautilus-persistence/python",
 ]
+extended_bar = [
+  "nautilus-model/extended_bar",
+  "nautilus-common/extended_bar",
+  "nautilus-persistence/extended_bar",
+  "dep:extended_bar_macros",
+]
 high-precision = ["nautilus-model/high-precision"]
 defi = [
   "nautilus-common/defi",
@@ -55,6 +61,7 @@ nautilus-common = { workspace = true }
 nautilus-core = { workspace = true }
 nautilus-model = { workspace = true, features = ["stubs"] }
 nautilus-persistence = { workspace = true }
+extended_bar_macros = { workspace = true, optional = true }
 
 ahash = { workspace = true }
 alloy-primitives = { workspace = true, optional = true }

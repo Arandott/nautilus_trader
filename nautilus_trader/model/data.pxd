@@ -50,6 +50,8 @@ from nautilus_trader.model.identifiers cimport Venue
 from nautilus_trader.model.objects cimport Price
 from nautilus_trader.model.objects cimport Quantity
 
+# Import the configuration that defines HAS_EXTENDED_BAR_FIELDS
+include "_generated/extended_bar_config.pxi"
 
 cpdef list capsule_to_list(capsule)
 cpdef Data capsule_to_data(capsule)
@@ -153,55 +155,59 @@ cdef class BarType:
     cpdef BarType composite(self)
 
 
-cdef class Bar(Data):
-    cdef Bar_t _mem
+IF HAS_EXTENDED_BAR_FIELDS:
+    # Use the generated extended Bar class with additional fields
+    include "_generated/_extended_bar_sig.pxi"
+ELSE:
+    cdef class Bar(Data):
+        cdef Bar_t _mem
 
-    cdef readonly bint is_revision
-    """If this bar is a revision for a previous bar with the same `ts_event`.\n\n:returns: `bool`"""
+        cdef readonly bint is_revision
+        """If this bar is a revision for a previous bar with the same `ts_event`.\n\n:returns: `bool`"""
 
-    cdef str to_str(self)
+        cdef str to_str(self)
 
-    @staticmethod
-    cdef Bar from_raw_c(
-        BarType bar_type,
-        PriceRaw open,
-        PriceRaw high,
-        PriceRaw low,
-        PriceRaw close,
-        uint8_t price_prec,
-        QuantityRaw volume,
-        uint8_t size_prec,
-        uint64_t ts_event,
-        uint64_t ts_init,
-    )
+        @staticmethod
+        cdef Bar from_raw_c(
+            BarType bar_type,
+            PriceRaw open,
+            PriceRaw high,
+            PriceRaw low,
+            PriceRaw close,
+            uint8_t price_prec,
+            QuantityRaw volume,
+            uint8_t size_prec,
+            uint64_t ts_event,
+            uint64_t ts_init,
+        )
 
-    @staticmethod
-    cdef list[Bar] from_raw_arrays_to_list_c(
-        BarType bar_type,
-        uint8_t price_prec,
-        uint8_t size_prec,
-        double[:] opens,
-        double[:] highs,
-        double[:] lows,
-        double[:] closes,
-        double[:] volumes,
-        uint64_t[:] ts_events,
-        uint64_t[:] ts_inits,
-    )
+        @staticmethod
+        cdef list[Bar] from_raw_arrays_to_list_c(
+            BarType bar_type,
+            uint8_t price_prec,
+            uint8_t size_prec,
+            double[:] opens,
+            double[:] highs,
+            double[:] lows,
+            double[:] closes,
+            double[:] volumes,
+            uint64_t[:] ts_events,
+            uint64_t[:] ts_inits,
+        )
 
-    @staticmethod
-    cdef Bar from_mem_c(Bar_t mem)
+        @staticmethod
+        cdef Bar from_mem_c(Bar_t mem)
 
-    @staticmethod
-    cdef Bar from_pyo3_c(pyo3_bar)
+        @staticmethod
+        cdef Bar from_pyo3_c(pyo3_bar)
 
-    @staticmethod
-    cdef Bar from_dict_c(dict values)
+        @staticmethod
+        cdef Bar from_dict_c(dict values)
 
-    @staticmethod
-    cdef dict to_dict_c(Bar obj)
+        @staticmethod
+        cdef dict to_dict_c(Bar obj)
 
-    cpdef bint is_single_price(self)
+        cpdef bint is_single_price(self)
 
 
 cdef class BookOrder:

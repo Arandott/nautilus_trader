@@ -15,18 +15,18 @@
 
 //! Expression data structures for FactorExp.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 /// Represents a node in the compiled expression tree.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ExprNode {
     /// A constant value.
     Constant(f64),
-    
+
     /// A feature reference (e.g., $close, $volume).
     Feature(String),
-    
+
     /// An operator with arguments and parameters.
     Operator {
         /// The operator name (e.g., "TS_Mean", "Add").
@@ -70,26 +70,26 @@ impl CompiledExpression {
         expr.update_metadata();
         expr
     }
-    
+
     /// Updates the metadata based on the expression tree.
     fn update_metadata(&mut self) {
         self.metadata = self.extract_metadata(&self.node);
     }
-    
+
     /// Extracts metadata from an expression node.
     fn extract_metadata(&self, node: &ExprNode) -> ExpressionMetadata {
         let mut metadata = ExpressionMetadata::default();
         self.collect_metadata(node, &mut metadata);
         metadata
     }
-    
+
     /// Recursively collects metadata from the expression tree.
     fn collect_metadata(&self, node: &ExprNode, metadata: &mut ExpressionMetadata) {
         match node {
             ExprNode::Constant(_) => {
                 metadata.complexity += 0.1;
             }
-            
+
             ExprNode::Feature(name) => {
                 let feature_name = name.trim_start_matches('$');
                 if !metadata.features.contains(&feature_name.to_string()) {
@@ -97,13 +97,13 @@ impl CompiledExpression {
                 }
                 metadata.complexity += 0.2;
             }
-            
+
             ExprNode::Operator { name, args, params } => {
                 // Add operator to list
                 if !metadata.operators.contains(name) {
                     metadata.operators.push(name.clone());
                 }
-                
+
                 // Update complexity based on operator type
                 metadata.complexity += match name.as_str() {
                     "Add" | "Sub" | "Mul" | "Div" => 0.3,
@@ -115,14 +115,14 @@ impl CompiledExpression {
                     "ZScore" | "Demean" => 2.0,
                     _ => 1.5,
                 };
-                
+
                 // Extract window size for rolling operators
                 if name.starts_with("TS_") || name == "ZScore" || name == "Demean" {
                     if let Some(window) = params.get("window") {
                         metadata.max_window = metadata.max_window.max(*window as usize);
                     }
                 }
-                
+
                 // Recursively process arguments
                 for arg in args {
                     self.collect_metadata(&arg.node, metadata);
@@ -164,52 +164,48 @@ impl std::error::Error for ExpressionError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_expression_metadata() {
         // Create a simple expression: TS_Mean($close, 20)
-        let expr = CompiledExpression::new(
-            ExprNode::Operator {
-                name: "TS_Mean".to_string(),
-                args: vec![
-                    CompiledExpression::new(ExprNode::Feature("$close".to_string())),
-                ],
-                params: HashMap::from([("window".to_string(), 20.0)]),
-            }
-        );
-        
+        let expr = CompiledExpression::new(ExprNode::Operator {
+            name: "TS_Mean".to_string(),
+            args: vec![CompiledExpression::new(ExprNode::Feature(
+                "$close".to_string(),
+            ))],
+            params: HashMap::from([("window".to_string(), 20.0)]),
+        });
+
         assert_eq!(expr.metadata.features, vec!["close"]);
         assert_eq!(expr.metadata.max_window, 20);
         // Cross-sectional check removed - not applicable to single instrument context
         assert_eq!(expr.metadata.operators, vec!["TS_Mean"]);
     }
-    
+
     #[test]
     fn test_complex_expression_metadata() {
         // Create expression: TS_Mean($close, 20) / TS_Mean($close, 50)
-        let expr = CompiledExpression::new(
-            ExprNode::Operator {
-                name: "Div".to_string(),
-                args: vec![
-                    CompiledExpression::new(ExprNode::Operator {
-                        name: "TS_Mean".to_string(),
-                        args: vec![
-                            CompiledExpression::new(ExprNode::Feature("$close".to_string())),
-                        ],
-                        params: HashMap::from([("window".to_string(), 20.0)]),
-                    }),
-                    CompiledExpression::new(ExprNode::Operator {
-                        name: "TS_Mean".to_string(),
-                        args: vec![
-                            CompiledExpression::new(ExprNode::Feature("$close".to_string())),
-                        ],
-                        params: HashMap::from([("window".to_string(), 50.0)]),
-                    }),
-                ],
-                params: HashMap::new(),
-            }
-        );
-        
+        let expr = CompiledExpression::new(ExprNode::Operator {
+            name: "Div".to_string(),
+            args: vec![
+                CompiledExpression::new(ExprNode::Operator {
+                    name: "TS_Mean".to_string(),
+                    args: vec![CompiledExpression::new(ExprNode::Feature(
+                        "$close".to_string(),
+                    ))],
+                    params: HashMap::from([("window".to_string(), 20.0)]),
+                }),
+                CompiledExpression::new(ExprNode::Operator {
+                    name: "TS_Mean".to_string(),
+                    args: vec![CompiledExpression::new(ExprNode::Feature(
+                        "$close".to_string(),
+                    ))],
+                    params: HashMap::from([("window".to_string(), 50.0)]),
+                }),
+            ],
+            params: HashMap::new(),
+        });
+
         assert_eq!(expr.metadata.features, vec!["close"]);
         assert_eq!(expr.metadata.max_window, 50);
         assert!(expr.metadata.operators.contains(&"Div".to_string()));

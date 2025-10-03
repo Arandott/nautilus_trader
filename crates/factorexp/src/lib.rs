@@ -24,24 +24,23 @@
 #![allow(clippy::module_name_repetitions)]
 
 pub mod buffer;
+pub mod engine;
+pub mod expression;
+pub mod indicator;
 pub mod operators;
 pub mod parser;
-pub mod expression;
-pub mod engine;
-pub mod indicator;
 
 #[cfg(feature = "python")]
 pub mod python;
 
 // Re-export commonly used types
-pub use buffer::{RollingBuffer, BufferStats};
-pub use operators::{
-    RollingOperator,
-    rolling::{Mean, Sum, Std, Var, Min, Max, Median},
-    ma::{Ema, Wma},
-    stats::{Skew, Kurtosis, Mad},
-    get_rolling_operator,
-};
-pub use expression::{CompiledExpression, ExprNode, ExpressionMetadata, ExpressionError};
+pub use buffer::{BufferStats, RollingBuffer};
 pub use engine::ComputationEngine;
+pub use expression::{CompiledExpression, ExprNode, ExpressionError, ExpressionMetadata};
 pub use indicator::{FactorExpIndicator, FactorIndicator};
+pub use operators::{
+    RollingOperator, get_rolling_operator,
+    ma::{Ema, Wma},
+    rolling::{Max, Mean, Median, Min, Std, Sum, Var},
+    stats::{Kurtosis, Mad, Skew},
+};

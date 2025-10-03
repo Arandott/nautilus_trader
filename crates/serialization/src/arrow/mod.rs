@@ -329,10 +329,7 @@ pub fn bars_to_arrow_record_batch_bytes(data: Vec<Bar>) -> Result<RecordBatch, E
         return Err(EncodingError::EmptyData);
     }
 
-    // Take first element and extract metadata
-    // SAFETY: Unwrap safe as already checked that `data` not empty
-    let first = data.first().unwrap();
-    let metadata = first.metadata();
+    let metadata = Bar::chunk_metadata(&data);
     Bar::encode_batch(&metadata, &data).map_err(EncodingError::ArrowError)
 }
 

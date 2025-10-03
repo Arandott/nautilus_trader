@@ -42,20 +42,20 @@ impl Skew {
     /// Updates the operator with a new value and recalculates the skewness.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
-        
+
         if self.base.buffer().len() >= 3 {
             let window = self.base.buffer().window();
             let n = window.len() as f64;
             let mean = self.base.buffer().mean();
             let std = self.base.buffer().std(0);
-            
+
             if std > 0.0 {
                 let mut sum_cubed = 0.0;
                 for &val in &window {
                     let diff = val - mean;
                     sum_cubed += diff * diff * diff;
                 }
-                
+
                 let skewness = (sum_cubed / n) / (std * std * std);
                 self.base.set_value(skewness);
             } else {
@@ -87,20 +87,20 @@ impl Kurtosis {
     /// Updates the operator with a new value and recalculates the kurtosis.
     pub fn update_internal(&mut self, value: f64) {
         self.base.buffer_mut().update(value);
-        
+
         if self.base.buffer().len() >= 4 {
             let window = self.base.buffer().window();
             let n = window.len() as f64;
             let mean = self.base.buffer().mean();
             let std = self.base.buffer().std(0);
-            
+
             if std > 0.0 {
                 let mut sum_fourth = 0.0;
                 for &val in &window {
                     let diff = val - mean;
                     sum_fourth += diff * diff * diff * diff;
                 }
-                
+
                 let kurtosis = (sum_fourth / n) / (std * std * std * std) - 3.0;
                 self.base.set_value(kurtosis);
             } else {
@@ -135,21 +135,21 @@ impl Mad {
         if value.is_nan() {
             return;
         }
-        
+
         // Valid value: push to buffer and increment valid count
         self.base.buffer_mut().update(value);
         self.base.increment_valid_count();
-        
+
         // Only compute if we have enough valid samples
         if self.base.valid_count() >= self.base.buffer().window_size() {
             let window = self.base.buffer().window();
             let mean = self.base.buffer().mean();
-            
+
             let mut sum_abs_dev = 0.0;
             for val in &window {
                 sum_abs_dev += (val - mean).abs();
             }
-            
+
             let mad = sum_abs_dev / window.len() as f64;
             self.base.set_value(mad);
         }
@@ -181,11 +181,11 @@ impl Product {
         if value.is_nan() {
             return;
         }
-        
+
         // Valid value: push to buffer and increment valid count
         self.base.buffer_mut().update(value);
         self.base.increment_valid_count();
-        
+
         // Only compute if we have enough valid samples
         if self.base.valid_count() >= self.base.buffer().window_size() {
             let product = self.base.buffer().window().iter().product();
@@ -194,7 +194,6 @@ impl Product {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,14 +201,14 @@ mod tests {
     #[test]
     fn test_mad_operator() {
         let mut mad = Mad::new(5);
-        
+
         // Data: [1, 2, 3, 4, 5]
         // Mean: 3
         // MAD: (|1-3| + |2-3| + |3-3| + |4-3| + |5-3|) / 5 = 6/5 = 1.2
         for i in 1..=5 {
             mad.update(i as f64);
         }
-        
+
         assert!(mad.is_ready());
         assert!((mad.value() - 1.2).abs() < 1e-10);
     }
@@ -217,16 +216,15 @@ mod tests {
     #[test]
     fn test_product_operator() {
         let mut prod = Product::new(3);
-        
+
         prod.update(2.0);
         prod.update(3.0);
         prod.update(4.0);
-        
+
         assert!(prod.is_ready());
         assert_eq!(prod.value(), 24.0); // 2 * 3 * 4
-        
+
         prod.update(5.0);
         assert_eq!(prod.value(), 60.0); // 3 * 4 * 5
     }
-
 }

@@ -113,7 +113,9 @@ impl<'r> FromRow<'r, PgRow> for BarModel {
         let volume = row.try_get::<&str, _>("volume").map(Quantity::from)?;
         let ts_event = row.try_get::<&str, _>("ts_event").map(UnixNanos::from)?;
         let ts_init = row.try_get::<&str, _>("ts_init").map(UnixNanos::from)?;
-        let bar = Bar::new(bar_type, open, high, low, close, volume, ts_event, ts_init);
+        let bar = nautilus_model::bar_new_with_defaults!(
+            bar_type, open, high, low, close, volume, ts_event, ts_init,
+        );
         Ok(Self(bar))
     }
 }

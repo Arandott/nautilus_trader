@@ -18,6 +18,8 @@ use std::{collections::HashMap, io::Cursor, str::FromStr};
 use datafusion::arrow::ipc::reader::StreamReader;
 use nautilus_core::python::to_pyvalue_err;
 use nautilus_model::data::bar::{Bar, BarType};
+#[cfg(feature = "extended_bar")]
+use nautilus_model::data::extended_bar;
 use nautilus_serialization::arrow::DecodeFromRecordBatch;
 use pyo3::prelude::*;
 
@@ -34,7 +36,11 @@ impl BarDataWrangler {
     #[new]
     fn py_new(bar_type: &str, price_precision: u8, size_precision: u8) -> PyResult<Self> {
         let bar_type = BarType::from_str(bar_type).map_err(to_pyvalue_err)?;
-        let metadata = Bar::get_metadata(&bar_type, price_precision, size_precision);
+        #[allow(unused_mut)]
+        let mut metadata = Bar::get_metadata(&bar_type, price_precision, size_precision);
+
+        #[cfg(feature = "extended_bar")]
+        append_extended_bar_metadata(&mut metadata, price_precision, size_precision);
 
         Ok(Self {
             bar_type,
@@ -82,5 +88,75 @@ impl BarDataWrangler {
         }
 
         Ok(bars)
+    }
+}
+
+#[cfg(feature = "extended_bar")]
+const KEY_EXT_FIELDS: &str = "ext_fields";
+#[cfg(feature = "extended_bar")]
+const KEY_EXT_FIELD_PREFIX: &str = "ext_field.";
+#[cfg(feature = "extended_bar")]
+const KEY_EXT_FIELD_TYPE_SUFFIX: &str = ".type";
+#[cfg(feature = "extended_bar")]
+const KEY_EXT_FIELD_PRECISION_SUFFIX: &str = ".precision";
+
+#[cfg(feature = "extended_bar")]
+fn append_extended_bar_metadata(
+    metadata: &mut HashMap<String, String>,
+    price_precision: u8,
+    size_precision: u8,
+) {
+    use nautilus_model::data::extended_bar::FieldType;
+
+    let specs = extended_bar::field_specs();
+    if specs.is_empty() {
+        metadata.remove(KEY_EXT_FIELDS);
+        return;
+    }
+
+    let mut order = Vec::new();
+    for spec in specs {
+        order.push(spec.ident);
+
+        let type_key = format!(
+            "{KEY_EXT_FIELD_PREFIX}{}{KEY_EXT_FIELD_TYPE_SUFFIX}",
+            spec.ident
+        );
+        metadata.insert(type_key, spec.field_type.label().to_string());
+
+        if matches!(spec.field_type, FieldType::Quantity | FieldType::Price) {
+            if let Some(precision) = resolve_precision(spec, price_precision, size_precision) {
+                let precision_key = format!(
+                    "{KEY_EXT_FIELD_PREFIX}{}{KEY_EXT_FIELD_PRECISION_SUFFIX}",
+                    spec.ident
+                );
+                metadata.insert(precision_key, precision.to_string());
+            }
+        }
+    }
+
+    metadata.insert(KEY_EXT_FIELDS.to_string(), order.join(","));
+}
+
+#[cfg(feature = "extended_bar")]
+fn resolve_precision(
+    spec: &extended_bar::FieldSpec,
+    price_precision: u8,
+    size_precision: u8,
+) -> Option<u8> {
+    use nautilus_model::data::extended_bar::FieldType;
+
+    match spec.field_type {
+        FieldType::Quantity => match spec.precision {
+            Some("size") | None => Some(size_precision),
+            Some("price") => Some(price_precision),
+            Some(other) => other.parse::<u8>().ok(),
+        },
+        FieldType::Price => match spec.precision {
+            Some("price") | None => Some(price_precision),
+            Some("size") => Some(size_precision),
+            Some(other) => other.parse::<u8>().ok(),
+        },
+        FieldType::U64 | FieldType::Bool => None,
     }
 }

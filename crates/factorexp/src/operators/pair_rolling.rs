@@ -18,10 +18,7 @@
 //! This module implements rolling operators that work on two input series,
 //! such as correlation, covariance, and beta coefficient.
 
-use crate::{
-    buffer::RollingBuffer,
-    operators::BaseOperator,
-};
+use crate::{buffer::RollingBuffer, operators::BaseOperator};
 use std::fmt::Debug;
 
 /// Trait for pair rolling operators that process two input series.
@@ -168,7 +165,7 @@ impl PairBaseOperator {
         // Add new values to buffers
         self.buffer_x.update(x);
         self.buffer_y.update(y);
-        
+
         // Only increment valid count until we reach window size
         if self.base.valid_count() < self.buffer_x.window_size() {
             self.increment_valid_count();
@@ -275,14 +272,14 @@ impl Correlation {
         // Only compute if we have enough valid samples
         if self.base.base().valid_count() >= self.base.buffer_x().window_size() {
             let n = self.base.buffer_x().window_size() as f64;
-            
+
             // Correlation formula: (n*ΣXY - ΣX*ΣY) / sqrt((n*ΣX² - (ΣX)²)(n*ΣY² - (ΣY)²))
             let numerator = n * self.base.sum_xy() - self.base.sum_x() * self.base.sum_y();
             let denominator_x = n * self.base.sum_xx() - self.base.sum_x() * self.base.sum_x();
             let denominator_y = n * self.base.sum_yy() - self.base.sum_y() * self.base.sum_y();
-            
+
             let denominator = (denominator_x * denominator_y).sqrt();
-            
+
             if denominator > f64::EPSILON {
                 let correlation = numerator / denominator;
                 self.base.set_value(correlation.clamp(-1.0, 1.0)); // Clamp to valid correlation range
@@ -322,14 +319,14 @@ impl Covariance {
         // Only compute if we have enough valid samples
         if self.base.base().valid_count() >= self.base.buffer_x().window_size() {
             let n = self.base.buffer_x().window_size() as f64;
-            
+
             // Sample covariance: (ΣXY - ΣX*ΣY/n) / (n-ddof)
             let mean_x = self.base.sum_x() / n;
             let mean_y = self.base.sum_y() / n;
             let mean_xy = self.base.sum_xy() / n;
-            
+
             let covariance = (mean_xy - mean_x * mean_y) * n / (n - self.ddof as f64);
-            
+
             self.base.set_value(covariance);
         }
     }
@@ -364,19 +361,19 @@ impl Beta {
         // Only compute if we have enough valid samples
         if self.base.base().valid_count() >= self.base.buffer_x().window_size() {
             let n = self.base.buffer_x().window_size() as f64;
-            
+
             // Calculate covariance and variance of Y
             let mean_x = self.base.sum_x() / n;
             let mean_y = self.base.sum_y() / n;
             let mean_xy = self.base.sum_xy() / n;
             let mean_yy = self.base.sum_yy() / n;
-            
+
             // Covariance(X,Y)
             let covariance = (mean_xy - mean_x * mean_y) * n / (n - self.ddof as f64);
-            
+
             // Variance(Y)
             let variance_y = (mean_yy - mean_y * mean_y) * n / (n - self.ddof as f64);
-            
+
             if variance_y > f64::EPSILON {
                 let beta = covariance / variance_y;
                 self.base.set_value(beta);
@@ -395,18 +392,18 @@ mod tests {
     #[test]
     fn test_correlation_operator() {
         let mut op = Correlation::new(3);
-        
+
         assert!(!op.is_ready());
         assert!(op.value().is_nan());
-        
+
         // Perfect positive correlation
         op.update(1.0, 1.0);
         op.update(2.0, 2.0);
         op.update(3.0, 3.0);
-        
+
         assert!(op.is_ready());
         assert!((op.value() - 1.0).abs() < f64::EPSILON);
-        
+
         // Add another point maintaining perfect correlation
         op.update(4.0, 4.0);
         assert!((op.value() - 1.0).abs() < f64::EPSILON);
@@ -415,14 +412,14 @@ mod tests {
     #[test]
     fn test_covariance_operator() {
         let mut op = Covariance::new(3, 1);
-        
+
         assert!(!op.is_ready());
         assert!(op.value().is_nan());
-        
+
         op.update(1.0, 1.0);
         op.update(2.0, 2.0);
         op.update(3.0, 3.0);
-        
+
         assert!(op.is_ready());
         assert!(op.value() > 0.0); // Positive covariance
     }
@@ -430,15 +427,15 @@ mod tests {
     #[test]
     fn test_beta_operator() {
         let mut op = Beta::new(3, 1);
-        
+
         assert!(!op.is_ready());
         assert!(op.value().is_nan());
-        
+
         // Beta = 1 case (X = Y)
         op.update(1.0, 1.0);
         op.update(2.0, 2.0);
         op.update(3.0, 3.0);
-        
+
         assert!(op.is_ready());
         assert!((op.value() - 1.0).abs() < 0.1); // Should be close to 1.0
     }
@@ -446,14 +443,14 @@ mod tests {
     #[test]
     fn test_nan_handling() {
         let mut op = Correlation::new(3);
-        
+
         // NaN inputs should be skipped
         op.update(1.0, f64::NAN);
         op.update(f64::NAN, 2.0);
         op.update(2.0, 2.0);
         op.update(3.0, 3.0);
         op.update(4.0, 4.0);
-        
+
         assert!(op.is_ready());
         assert!((op.value() - 1.0).abs() < f64::EPSILON);
     }

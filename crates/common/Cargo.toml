@@ -37,6 +37,11 @@ python = [
   "pyo3",
   "pyo3-async-runtimes",
 ]
+extended_bar = [
+  "nautilus-model/extended_bar",
+  "nautilus-indicators/extended_bar",
+  "dep:extended_bar_macros",
+]
 defi = [
   "nautilus-model/defi",
   "alloy-primitives",
@@ -50,6 +55,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 nautilus-core = { workspace = true }
 nautilus-indicators = { workspace = true, optional = true }
 nautilus-model = { workspace = true, features = ["stubs"] }
+extended_bar_macros = { workspace = true, optional = true }
 
 ahash = { workspace = true }
 alloy-primitives = { workspace = true, optional = true }

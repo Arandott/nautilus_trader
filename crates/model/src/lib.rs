@@ -49,6 +49,51 @@
 #![deny(clippy::missing_panics_doc)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+extern crate self as nautilus_model;
+
+#[macro_export]
+macro_rules! bar_new_with_defaults {
+    ($($arg:expr),* $(,)?) => {{
+        #[cfg(feature = "extended_bar")]
+        {
+            ::extended_bar_macros::bar_new_with_defaults!($($arg),*)
+        }
+        #[cfg(not(feature = "extended_bar"))]
+        {
+            $crate::data::bar::Bar::new($($arg),*)
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! bar_new_checked_with_defaults {
+    ($($arg:expr),* $(,)?) => {{
+        #[cfg(feature = "extended_bar")]
+        {
+            ::extended_bar_macros::bar_new_checked_with_defaults!($($arg),*)
+        }
+        #[cfg(not(feature = "extended_bar"))]
+        {
+            $crate::data::bar::Bar::new_checked($($arg),*)
+        }
+    }};
+}
+
+#[cfg(feature = "python")]
+#[macro_export]
+macro_rules! bar_py_new_with_defaults {
+    ($($arg:expr),* $(,)?) => {{
+        #[cfg(feature = "extended_bar")]
+        {
+            ::extended_bar_macros::bar_py_new_with_defaults!($($arg),*)
+        }
+        #[cfg(not(feature = "extended_bar"))]
+        {
+            $crate::python::data::bar::Bar::py_new($($arg),*)
+        }
+    }};
+}
+
 pub mod accounts;
 pub mod currencies;
 pub mod data;

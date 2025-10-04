@@ -7,7 +7,8 @@ providing standardized factor expressions for backtesting.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any
+
 import yaml
 
 
@@ -67,10 +68,10 @@ class FactorConfigLoader:
             Path to the YAML configuration file.
         """
         self.config_path = config_path
-        self.config_data: Dict[str, Any] = {}
-        self.factors: Dict[str, FactorConfig] = {}
-        self.risk_config: Optional[RiskConfig] = None
-        self.execution_config: Optional[ExecutionConfig] = None
+        self.config_data: dict[str, Any] = {}
+        self.factors: dict[str, FactorConfig] = {}
+        self.risk_config: RiskConfig | None = None
+        self.execution_config: ExecutionConfig | None = None
 
         self._load_config()
         self._parse_factors()
@@ -82,43 +83,43 @@ class FactorConfigLoader:
         if not self.config_path.exists():
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
 
-        with open(self.config_path, 'r') as f:
+        with open(self.config_path) as f:
             self.config_data = yaml.safe_load(f)
 
     def _parse_factors(self):
         """Parse factor configurations."""
-        factors_data = self.config_data.get('factors', {})
+        factors_data = self.config_data.get("factors", {})
 
         for factor_id, factor_data in factors_data.items():
             self.factors[factor_id] = FactorConfig(
-                name=factor_data['name'],
-                expression=factor_data['expression'],
-                description=factor_data['description'],
-                requires_extended=factor_data.get('requires_extended', False)
+                name=factor_data["name"],
+                expression=factor_data["expression"],
+                description=factor_data["description"],
+                requires_extended=factor_data.get("requires_extended", False)
             )
 
     def _parse_risk_config(self):
         """Parse risk management configuration."""
-        risk_data = self.config_data.get('risk_management', {})
+        risk_data = self.config_data.get("risk_management", {})
 
         if risk_data:
             self.risk_config = RiskConfig(
-                max_position_size=risk_data['max_position_size'],
-                stop_loss=risk_data['stop_loss'],
-                min_rebalance_interval=risk_data['min_rebalance_interval'],
-                max_rebalance_interval=risk_data['max_rebalance_interval']
+                max_position_size=risk_data["max_position_size"],
+                stop_loss=risk_data["stop_loss"],
+                min_rebalance_interval=risk_data["min_rebalance_interval"],
+                max_rebalance_interval=risk_data["max_rebalance_interval"]
             )
 
     def _parse_execution_config(self):
         """Parse execution configuration."""
-        exec_data = self.config_data.get('execution', {})
+        exec_data = self.config_data.get("execution", {})
 
         if exec_data:
             self.execution_config = ExecutionConfig(
-                slippage_bps=exec_data['slippage_bps'],
-                commission_bps=exec_data['commission_bps'],
-                min_order_size=exec_data['min_order_size'],
-                max_order_size=exec_data['max_order_size']
+                slippage_bps=exec_data["slippage_bps"],
+                commission_bps=exec_data["commission_bps"],
+                min_order_size=exec_data["min_order_size"],
+                max_order_size=exec_data["max_order_size"]
             )
 
     def get_factor(self, factor_id: str) -> FactorConfig:
@@ -139,7 +140,7 @@ class FactorConfigLoader:
             raise KeyError(f"Factor '{factor_id}' not found")
         return self.factors[factor_id]
 
-    def list_factors(self) -> List[str]:
+    def list_factors(self) -> list[str]:
         """
         Get list of available factor IDs.
 
@@ -150,7 +151,7 @@ class FactorConfigLoader:
         """
         return list(self.factors.keys())
 
-    def validate_extended_support(self, has_extended: bool) -> List[str]:
+    def validate_extended_support(self, has_extended: bool) -> list[str]:
         """
         Get factors that can run with current extended bar support.
 
@@ -171,7 +172,7 @@ class FactorConfigLoader:
             return [fid for fid, factor in self.factors.items()
                     if not factor.requires_extended]
 
-    def get_defaults(self) -> Dict[str, Any]:
+    def get_defaults(self) -> dict[str, Any]:
         """
         Get default configuration values.
 
@@ -180,4 +181,4 @@ class FactorConfigLoader:
         Dict[str, Any]
             Default configuration values.
         """
-        return self.config_data.get('defaults', {})
+        return self.config_data.get("defaults", {})

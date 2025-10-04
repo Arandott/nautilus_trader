@@ -5,12 +5,19 @@ Tests the When, And, and Or operators functionality through actual data processi
 """
 
 import time
-from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
-from nautilus_trader.model.data import Bar, BarType, BarSpecification
-from nautilus_trader.model.objects import Price, Quantity
-from nautilus_trader.model.enums import BarAggregation, AggregationSource
+
 from nautilus_trader.core.nautilus_pyo3 import PriceType
-from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
+from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
+from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import BarSpecification
+from nautilus_trader.model.data import BarType
+from nautilus_trader.model.enums import AggregationSource
+from nautilus_trader.model.enums import BarAggregation
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.model.objects import Price
+from nautilus_trader.model.objects import Quantity
 
 
 class TestConditionalOperators:
@@ -177,7 +184,6 @@ def example_conditional_expressions():
     These examples show how to use When, And, and Or operators
     in FactorExp expressions for creating trading signals.
     """
-
     # Example 1: Volume filter - only calculate when volume is significant
     volume_filter = "When(Greater($volume, 10000), $close, 0)"
 

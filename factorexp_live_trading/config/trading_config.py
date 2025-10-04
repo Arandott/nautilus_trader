@@ -4,53 +4,54 @@ Configures Nautilus Trader with Binance integration and portfolio monitoring.
 """
 
 import os
-from typing import Dict, Optional, List
-from decimal import Decimal
-from nautilus_trader.config import TradingNodeConfig, LoggingConfig, LiveExecEngineConfig, CacheConfig
-from nautilus_trader.live.config import LiveRiskEngineConfig
-from nautilus_trader.persistence.config import StreamingConfig
-from nautilus_trader.adapters.binance import (
-    BinanceDataClientConfig, 
-    BinanceExecClientConfig,
-    BinanceAccountType,
-    BINANCE
-)
+
+from nautilus_trader.adapters.binance import BINANCE
+from nautilus_trader.adapters.binance import BinanceAccountType
+from nautilus_trader.adapters.binance import BinanceDataClientConfig
+from nautilus_trader.adapters.binance import BinanceExecClientConfig
+from nautilus_trader.config import CacheConfig
 from nautilus_trader.config import InstrumentProviderConfig
-from nautilus_trader.model.identifiers import TraderId, InstrumentId
+from nautilus_trader.config import LiveExecEngineConfig
+from nautilus_trader.config import LoggingConfig
+from nautilus_trader.config import TradingNodeConfig
+from nautilus_trader.live.config import LiveRiskEngineConfig
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import TraderId
+from nautilus_trader.persistence.config import StreamingConfig
 
 
 class TradingConfig:
     """Trading configuration container with dynamic account size support."""
-    
+
     def __init__(self):
-        self.trading_mode = os.getenv('TRADING_MODE', 'testnet')
-        self.is_testnet = self.trading_mode == 'testnet'
-        
+        self.trading_mode = os.getenv("TRADING_MODE", "testnet")
+        self.is_testnet = self.trading_mode == "testnet"
+
         # Account size detection for dynamic configuration
         self.account_size_usd = self._detect_account_size()
         self.is_small_account = self.account_size_usd <= 500 if self.account_size_usd else False
-        
+
         # Portfolio monitoring settings
-        self.portfolio_update_interval = int(os.getenv('PORTFOLIO_UPDATE_INTERVAL_SEC', 5))
-        self.enable_portfolio_alerts = os.getenv('ENABLE_PORTFOLIO_ALERTS', 'true').lower() == 'true'
-        self.alert_threshold_pnl_pct = float(os.getenv('ALERT_THRESHOLD_PNL_PCT', 0.02))
-        
+        self.portfolio_update_interval = int(os.getenv("PORTFOLIO_UPDATE_INTERVAL_SEC", 5))
+        self.enable_portfolio_alerts = os.getenv("ENABLE_PORTFOLIO_ALERTS", "true").lower() == "true"
+        self.alert_threshold_pnl_pct = float(os.getenv("ALERT_THRESHOLD_PNL_PCT", 0.02))
+
         # Logging settings
-        self.log_level = os.getenv('LOG_LEVEL', 'DEBUG')  # Reduced from DEBUG to avoid excessive logging
-        self.log_level_file = os.getenv('LOG_LEVEL_FILE', 'DEBUG')
-        self.enable_structured_logging = os.getenv('ENABLE_STRUCTURED_LOGGING', 'true').lower() == 'true'
-    
-    def _detect_account_size(self) -> Optional[float]:
+        self.log_level = os.getenv("LOG_LEVEL", "DEBUG")  # Reduced from DEBUG to avoid excessive logging
+        self.log_level_file = os.getenv("LOG_LEVEL_FILE", "DEBUG")
+        self.enable_structured_logging = os.getenv("ENABLE_STRUCTURED_LOGGING", "true").lower() == "true"
+
+    def _detect_account_size(self) -> float | None:
         """Detect account size from environment variable."""
-        account_size_env = os.getenv('ACCOUNT_SIZE_USD', '')
+        account_size_env = os.getenv("ACCOUNT_SIZE_USD", "")
         try:
-            if account_size_env and account_size_env.lower() not in ['', 'standard']:
+            if account_size_env and account_size_env.lower() not in ["", "standard"]:
                 return float(account_size_env)
         except ValueError:
             pass
         return None
-    
-    def get_dynamic_notional_limits(self) -> Dict[str, float]:
+
+    def get_dynamic_notional_limits(self) -> dict[str, float]:
         """Calculate dynamic notional limits based on account size."""
         if self.account_size_usd and self.account_size_usd <= 500:
             # Small account limits - much more conservative
@@ -74,7 +75,7 @@ class TradingConfig:
             }
 
 
-def create_trading_node_config(api_credentials: Dict[str, Optional[str]], instruments: List[str] = None) -> TradingNodeConfig:
+def create_trading_node_config(api_credentials: dict[str, str | None], instruments: list[str] = None) -> TradingNodeConfig:
     """
     Create trading node configuration with dynamic risk management and precision instrument loading.
     
@@ -99,7 +100,7 @@ def create_trading_node_config(api_credentials: Dict[str, Optional[str]], instru
         Configured trading node with precision instrument loading
     """
     config = TradingConfig()
-    
+
     # Extract InstrumentIds from the instruments list for precision loading
     if instruments:
         instrument_ids = frozenset(InstrumentId.from_str(inst) for inst in instruments)
@@ -109,10 +110,10 @@ def create_trading_node_config(api_credentials: Dict[str, Optional[str]], instru
         default_instruments = ["BTCUSDT-PERP.BINANCE", "ETHUSDT-PERP.BINANCE"]
         instrument_ids = frozenset(InstrumentId.from_str(inst) for inst in default_instruments)
         print(f"📊 Using default instruments for data subscription: {default_instruments}")
-    
+
     return TradingNodeConfig(
         trader_id=TraderId("FACTOREXP-LIVE-001"),
-        
+
         # Logging configuration with portfolio monitoring
         logging=LoggingConfig(
             log_level=config.log_level,
@@ -129,7 +130,7 @@ def create_trading_node_config(api_credentials: Dict[str, Optional[str]], instru
                 "ExecEngine": "DEBUG",         # Execution engine logging
             }
         ),
-        
+
         # Execution engine with enhanced reconciliation
         exec_engine=LiveExecEngineConfig(
             reconciliation=True,
@@ -139,7 +140,7 @@ def create_trading_node_config(api_credentials: Dict[str, Optional[str]], instru
             snapshot_positions=True,
             snapshot_positions_interval_secs=float(config.portfolio_update_interval),
         ),
-        
+
         # Dynamic Risk Engine with account-size-appropriate limits
         risk_engine=LiveRiskEngineConfig(
             bypass=False,  # Enable all risk checks for live trading
@@ -148,27 +149,27 @@ def create_trading_node_config(api_credentials: Dict[str, Optional[str]], instru
             max_notional_per_order=config.get_dynamic_notional_limits(),  # Dynamic limits based on account size
             debug=True,  # Enable detailed risk logging
         ),
-        
+
         # Cache configuration for portfolio tracking
         cache=CacheConfig(
             timestamps_as_iso8601=True,
             flush_on_start=False,
         ),
-        
+
         # Streaming configuration - lightweight to avoid API rate limits
         streaming=StreamingConfig(
             catalog_path="./data",           # Save data files to ./data directory
             flush_interval_ms=30000,         # Write data every 30 seconds (less frequent)
             replace_existing=True,           # Overwrite to avoid accumulation
         ),
-        
+
         # Binance data client configuration
         data_clients={
             BINANCE: BinanceDataClientConfig(
-                api_key=api_credentials['api_key'],
-                api_secret=api_credentials['api_secret'],
+                api_key=api_credentials["api_key"],
+                api_secret=api_credentials["api_secret"],
                 account_type=BinanceAccountType.USDT_FUTURE,
-                testnet=api_credentials.get('testnet', True),
+                testnet=api_credentials.get("testnet", True),
                 update_instruments_interval_mins=60,
                 use_agg_trade_ticks=False,  # Use raw trade data for accuracy
                 instrument_provider=InstrumentProviderConfig(
@@ -177,14 +178,14 @@ def create_trading_node_config(api_credentials: Dict[str, Optional[str]], instru
                 ),
             ),
         },
-        
-        # Binance execution client configuration  
+
+        # Binance execution client configuration
         exec_clients={
             BINANCE: BinanceExecClientConfig(
-                api_key=api_credentials['api_key'],
-                api_secret=api_credentials['api_secret'],
+                api_key=api_credentials["api_key"],
+                api_secret=api_credentials["api_secret"],
                 account_type=BinanceAccountType.USDT_FUTURE,
-                testnet=api_credentials.get('testnet', True),
+                testnet=api_credentials.get("testnet", True),
                 max_retries=3,
                 retry_delay_initial_ms=1_000,
                 retry_delay_max_ms=10_000,
@@ -196,7 +197,7 @@ def create_trading_node_config(api_credentials: Dict[str, Optional[str]], instru
                 ),
             ),
         },
-        
+
         # Connection timeouts
         timeout_connection=30.0,
         timeout_reconciliation=15.0,

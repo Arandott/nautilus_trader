@@ -4,20 +4,19 @@ Handles email, webhook, and console notifications.
 """
 
 import asyncio
-import json
 import os
-from typing import Dict, List, Optional
-from datetime import datetime, timezone
-from dataclasses import asdict
+from datetime import UTC
+from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 import aiohttp
 import aiosmtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from jinja2 import Template
 
+from monitoring.risk_monitor import RiskAlert
+from monitoring.risk_monitor import RiskLevel
 from nautilus_trader.common.component import Logger
-from monitoring.risk_monitor import RiskAlert, RiskLevel
 
 
 class AlertManager:
@@ -30,28 +29,28 @@ class AlertManager:
     - Webhook notifications
     - File logging
     """
-    
+
     def __init__(self, logger: Logger):
         self.logger = logger
-        
+
         # Email configuration
-        self.email_enabled = os.getenv('ENABLE_EMAIL_ALERTS', 'false').lower() == 'true'
-        self.smtp_host = os.getenv('SMTP_HOST', 'smtp.gmail.com')
-        self.smtp_port = int(os.getenv('SMTP_PORT', 587))
-        self.smtp_user = os.getenv('SMTP_USER', '')
-        self.smtp_password = os.getenv('SMTP_PASSWORD', '')
-        
+        self.email_enabled = os.getenv("ENABLE_EMAIL_ALERTS", "false").lower() == "true"
+        self.smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        self.smtp_port = int(os.getenv("SMTP_PORT", 587))
+        self.smtp_user = os.getenv("SMTP_USER", "")
+        self.smtp_password = os.getenv("SMTP_PASSWORD", "")
+
         # Webhook configuration
-        self.webhook_enabled = os.getenv('ENABLE_WEBHOOK_ALERTS', 'false').lower() == 'true'
-        self.webhook_url = os.getenv('WEBHOOK_URL', '')
-        
+        self.webhook_enabled = os.getenv("ENABLE_WEBHOOK_ALERTS", "false").lower() == "true"
+        self.webhook_url = os.getenv("WEBHOOK_URL", "")
+
         # Alert rate limiting
         self._alert_counts = {}
         self._last_alert_times = {}
-        
+
         self.logger.info(f"AlertManager initialized - Email: {self.email_enabled}, Webhook: {self.webhook_enabled}")
-    
-    async def send_alert(self, alert: RiskAlert, portfolio_summary: Optional[Dict] = None) -> None:
+
+    async def send_alert(self, alert: RiskAlert, portfolio_summary: dict | None = None) -> None:
         """
         Send alert through all configured channels.
         
@@ -64,37 +63,37 @@ class AlertManager:
         """
         # Rate limiting - prevent spam
         alert_key = f"{alert.category}_{alert.level.value}"
-        current_time = datetime.now(timezone.utc)
-        
+        current_time = datetime.now(UTC)
+
         if self._should_rate_limit(alert_key, current_time):
             return
-        
+
         # Update rate limiting counters
         self._alert_counts[alert_key] = self._alert_counts.get(alert_key, 0) + 1
         self._last_alert_times[alert_key] = current_time
-        
+
         # Send through all enabled channels
         await asyncio.gather(
             self._send_console_alert(alert),
             self._send_email_alert(alert, portfolio_summary) if self.email_enabled else self._noop(),
             self._send_webhook_alert(alert, portfolio_summary) if self.webhook_enabled else self._noop(),
         )
-    
+
     async def _send_console_alert(self, alert: RiskAlert) -> None:
         """Send alert to console/logs."""
         level_colors = {
-            RiskLevel.LOW: 'blue',
-            RiskLevel.MEDIUM: 'yellow', 
-            RiskLevel.HIGH: 'red',
-            RiskLevel.CRITICAL: 'magenta'
+            RiskLevel.LOW: "blue",
+            RiskLevel.MEDIUM: "yellow",
+            RiskLevel.HIGH: "red",
+            RiskLevel.CRITICAL: "magenta"
         }
-        
+
         message = (
             f"🚨 ALERT [{alert.level.value}] {alert.category} 🚨\\n"
             f"Time: {alert.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}\\n"
             f"Message: {alert.message}\\n"
         )
-        
+
         if alert.instrument:
             message += f"Instrument: {alert.instrument}\\n"
         if alert.current_value is not None:
@@ -103,24 +102,24 @@ class AlertManager:
             message += f"Threshold: {alert.threshold_value}\\n"
         if alert.action_required:
             message += f"Action Required: {alert.action_required}\\n"
-        
+
         if alert.level in [RiskLevel.CRITICAL, RiskLevel.HIGH]:
             self.logger.error(message)
         elif alert.level == RiskLevel.MEDIUM:
             self.logger.warning(message)
         else:
             self.logger.info(message)
-    
-    async def _send_email_alert(self, alert: RiskAlert, portfolio_summary: Optional[Dict]) -> None:
+
+    async def _send_email_alert(self, alert: RiskAlert, portfolio_summary: dict | None) -> None:
         """Send alert via email."""
         if not self.smtp_user or not self.smtp_password:
             return
-        
+
         try:
             # Create email content
             subject = f"FactorExp Trading Alert [{alert.level.value}] - {alert.category}"
-            
-            email_template = Template('''
+
+            email_template = Template("""
 <!DOCTYPE html>
 <html>
 <head>
@@ -182,23 +181,23 @@ class AlertManager:
     </div>
 </body>
 </html>
-            ''')
-            
+            """)
+
             html_content = email_template.render(
                 alert=alert,
                 portfolio_summary=portfolio_summary,
                 alert_color=self._get_alert_color(alert.level)
             )
-            
+
             # Create message
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = subject
-            msg['From'] = self.smtp_user
-            msg['To'] = self.smtp_user  # Send to self by default
-            
-            html_part = MIMEText(html_content, 'html')
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = self.smtp_user
+            msg["To"] = self.smtp_user  # Send to self by default
+
+            html_part = MIMEText(html_content, "html")
             msg.attach(html_part)
-            
+
             # Send email
             await aiosmtplib.send(
                 msg,
@@ -208,101 +207,100 @@ class AlertManager:
                 username=self.smtp_user,
                 password=self.smtp_password,
             )
-            
+
             self.logger.info(f"Email alert sent for {alert.category}")
-            
+
         except Exception as e:
             self.logger.error(f"Failed to send email alert: {e}")
-    
-    async def _send_webhook_alert(self, alert: RiskAlert, portfolio_summary: Optional[Dict]) -> None:
+
+    async def _send_webhook_alert(self, alert: RiskAlert, portfolio_summary: dict | None) -> None:
         """Send alert via webhook."""
         if not self.webhook_url:
             return
-        
+
         try:
             payload = {
-                'timestamp': alert.timestamp.isoformat(),
-                'level': alert.level.value,
-                'category': alert.category,
-                'message': alert.message,
-                'instrument': alert.instrument,
-                'current_value': alert.current_value,
-                'threshold_value': alert.threshold_value,
-                'action_required': alert.action_required,
-                'portfolio_summary': portfolio_summary,
-                'source': 'factorexp_live_trading'
+                "timestamp": alert.timestamp.isoformat(),
+                "level": alert.level.value,
+                "category": alert.category,
+                "message": alert.message,
+                "instrument": alert.instrument,
+                "current_value": alert.current_value,
+                "threshold_value": alert.threshold_value,
+                "action_required": alert.action_required,
+                "portfolio_summary": portfolio_summary,
+                "source": "factorexp_live_trading"
             }
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     self.webhook_url,
                     json=payload,
-                    headers={'Content-Type': 'application/json'},
+                    headers={"Content-Type": "application/json"},
                     timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
                     if response.status == 200:
                         self.logger.info(f"Webhook alert sent for {alert.category}")
                     else:
                         self.logger.warning(f"Webhook alert failed with status {response.status}")
-            
+
         except Exception as e:
             self.logger.error(f"Failed to send webhook alert: {e}")
-    
+
     def _should_rate_limit(self, alert_key: str, current_time: datetime) -> bool:
         """Check if alert should be rate limited."""
         # Rate limiting rules:
         # - CRITICAL: No rate limiting
         # - HIGH: Max 1 per 5 minutes
-        # - MEDIUM: Max 1 per 15 minutes  
+        # - MEDIUM: Max 1 per 15 minutes
         # - LOW: Max 1 per 30 minutes
-        
-        if 'CRITICAL' in alert_key:
+
+        if "CRITICAL" in alert_key:
             return False
-        
+
         last_time = self._last_alert_times.get(alert_key)
         if not last_time:
             return False
-        
+
         time_diff = (current_time - last_time).total_seconds()
-        
-        if 'HIGH' in alert_key and time_diff < 300:  # 5 minutes
+
+        if "HIGH" in alert_key and time_diff < 300:  # 5 minutes
             return True
-        elif 'MEDIUM' in alert_key and time_diff < 900:  # 15 minutes
+        elif "MEDIUM" in alert_key and time_diff < 900:  # 15 minutes
             return True
-        elif 'LOW' in alert_key and time_diff < 1800:  # 30 minutes
+        elif "LOW" in alert_key and time_diff < 1800:  # 30 minutes
             return True
-        
+
         return False
-    
+
     def _get_alert_color(self, level: RiskLevel) -> str:
         """Get color for alert level."""
         colors = {
-            RiskLevel.CRITICAL: '#dc3545',
-            RiskLevel.HIGH: '#fd7e14',
-            RiskLevel.MEDIUM: '#ffc107',
-            RiskLevel.LOW: '#17a2b8'
+            RiskLevel.CRITICAL: "#dc3545",
+            RiskLevel.HIGH: "#fd7e14",
+            RiskLevel.MEDIUM: "#ffc107",
+            RiskLevel.LOW: "#17a2b8"
         }
-        return colors.get(level, '#17a2b8')
-    
+        return colors.get(level, "#17a2b8")
+
     async def _noop(self) -> None:
         """No-op coroutine for disabled channels."""
-        pass
-    
+
     async def send_startup_notification(self) -> None:
         """Send notification when trading system starts."""
         startup_alert = RiskAlert(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             level=RiskLevel.LOW,
             category="SYSTEM",
             message="FactorExp live trading system started successfully",
             action_required="MONITOR"
         )
         await self.send_alert(startup_alert)
-    
+
     async def send_shutdown_notification(self) -> None:
         """Send notification when trading system shuts down."""
         shutdown_alert = RiskAlert(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             level=RiskLevel.MEDIUM,
             category="SYSTEM",
             message="FactorExp live trading system shutdown",

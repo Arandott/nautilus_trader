@@ -27,7 +27,8 @@ from nautilus_trader.model.data import EXTENDED_BAR_FIELD_SPECS
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.model.objects import FIXED_PRECISION_BYTES
 from nautilus_trader.model.objects import FIXED_SCALAR
-from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.model.objects import Price
+from nautilus_trader.model.objects import Quantity
 
 
 def _is_missing_value(value: Any) -> bool:

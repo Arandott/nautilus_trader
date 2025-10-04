@@ -1,14 +1,21 @@
 """Tests for FactorExp extended_bar feature integration."""
 
 import time
+
 import pytest
 
-from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
-from nautilus_trader.model.data import Bar, BarSpecification, BarType
-from nautilus_trader.model.enums import AggregationSource, BarAggregation
-from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
-from nautilus_trader.model.objects import Price, Quantity
 from nautilus_trader.core.nautilus_pyo3 import PriceType
+from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
+from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import BarSpecification
+from nautilus_trader.model.data import BarType
+from nautilus_trader.model.enums import AggregationSource
+from nautilus_trader.model.enums import BarAggregation
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.model.objects import Price
+from nautilus_trader.model.objects import Quantity
 
 
 pytestmark = pytest.mark.skipif(

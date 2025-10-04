@@ -37,6 +37,9 @@ from decimal import Decimal
 
 import pandas as pd
 
+# Import our FactorExp strategy
+from examples.backtest.factorexp.factorexp_ema_cross_strategy import FactorExpEMACross
+from examples.backtest.factorexp.factorexp_ema_cross_strategy import FactorExpEMACrossConfig
 from nautilus_trader.adapters.binance import BINANCE_VENUE
 from nautilus_trader.backtest.engine import BacktestEngine
 from nautilus_trader.backtest.engine import BacktestEngineConfig
@@ -50,10 +53,6 @@ from nautilus_trader.model.objects import Money
 from nautilus_trader.persistence.wranglers import TradeTickDataWrangler
 from nautilus_trader.test_kit.providers import TestDataProvider
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
-
-# Import our FactorExp strategy
-from examples.backtest.factorexp.factorexp_ema_cross_strategy import FactorExpEMACross
-from examples.backtest.factorexp.factorexp_ema_cross_strategy import FactorExpEMACrossConfig
 
 
 def main():
@@ -73,7 +72,7 @@ def main():
     print("This example demonstrates FactorExp integration with Nautilus Trader.")
     print("The strategy uses complex FactorExp expressions for:")
     print("  • EMA ratio calculations (fast/slow EMA)")
-    print("  • Volatility filtering (rolling std / rolling mean)")  
+    print("  • Volatility filtering (rolling std / rolling mean)")
     print("  • Momentum analysis (price deviation from moving average)")
     print("  • Trend strength (EMA difference as percentage)")
     print()
@@ -187,10 +186,10 @@ def main():
     # Additional FactorExp-specific analysis
     print("FACTOREXP STRATEGY ANALYSIS")
     print("-" * 40)
-    
+
     # Get strategy instance to access indicator values
     strategy_instance = engine.trader.strategies()[0]
-    
+
     print("Final Indicator Values:")
     if strategy_instance.ema_ratio.initialized:
         print(f"  • EMA Ratio: {strategy_instance.ema_ratio.value:.6f}")
@@ -199,7 +198,7 @@ def main():
         print(f"  • Trend Strength: {strategy_instance.trend_strength.value:.6f}")
     else:
         print("  • Indicators not fully initialized")
-    
+
     print(f"  • Total Bars Processed: {engine.cache.bar_count(strategy_config.bar_type)}")
     print(f"  • EMA Ratio Period: {strategy_instance.ema_ratio.period}")
     print(f"  • Volatility Period: {strategy_instance.volatility.period}")

@@ -750,6 +750,8 @@ cdef extern from "../includes/model.h":
         uint64_t ts_event;
         # UNIX timestamp (nanoseconds) when the instance was created.
         uint64_t ts_init;
+        # The bars amt (extended field).
+        Quantity_t amt;
 
     # Represents a mark price update.
     cdef struct MarkPriceUpdate_t:

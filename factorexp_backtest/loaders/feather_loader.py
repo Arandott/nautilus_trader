@@ -7,25 +7,22 @@ in Rust, it can set the amt field on bars.
 """
 
 import warnings
-from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 import pyarrow.feather as feather
 
-from nautilus_trader.core.datetime import dt_to_unix_nanos
-from nautilus_trader.core.nautilus_pyo3 import (
-    Bar,
-    AggregationSource,
-    BarAggregation,
-    BarSpecification,
-    BarType,
-    PriceType,
-)
+from nautilus_trader.core.nautilus_pyo3 import AggregationSource
+from nautilus_trader.core.nautilus_pyo3 import Bar
+from nautilus_trader.core.nautilus_pyo3 import BarAggregation
+from nautilus_trader.core.nautilus_pyo3 import BarSpecification
+from nautilus_trader.core.nautilus_pyo3 import BarType
+from nautilus_trader.core.nautilus_pyo3 import PriceType
 from nautilus_trader.model.data import EXTENDED_BAR_FIELD_SPECS
-from nautilus_trader.model.identifiers import InstrumentId, Venue
-from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.objects import Price
+from nautilus_trader.model.objects import Quantity
 
 
 class FeatherBarLoader:
@@ -62,11 +59,11 @@ class FeatherBarLoader:
     def load_bars(
         self,
         instrument_id: InstrumentId,
-        start_date: Optional[pd.Timestamp] = None,
-        end_date: Optional[pd.Timestamp] = None,
-        bar_spec: Optional[BarSpecification] = None,
-        field_mappings: Optional[Dict[str, str]] = None,
-    ) -> List[Bar]:
+        start_date: pd.Timestamp | None = None,
+        end_date: pd.Timestamp | None = None,
+        bar_spec: BarSpecification | None = None,
+        field_mappings: dict[str, str] | None = None,
+    ) -> list[Bar]:
         """
         Load bars for an instrument from feather files.
 
@@ -112,9 +109,9 @@ class FeatherBarLoader:
 
         # Apply date filters
         if start_date:
-            df = df[df['ts_event'] >= start_date.value]
+            df = df[df["ts_event"] >= start_date.value]
         if end_date:
-            df = df[df['ts_event'] <= end_date.value]
+            df = df[df["ts_event"] <= end_date.value]
 
         # Create bars
         bars = self._create_bars(df, instrument_id, bar_spec)
@@ -152,7 +149,7 @@ class FeatherBarLoader:
         try:
             # Try pyarrow feather reader
             df = feather.read_feather(filepath)
-        except Exception as e:
+        except Exception:
             # Fallback to pandas
             try:
                 df = pd.read_feather(filepath)
@@ -160,29 +157,29 @@ class FeatherBarLoader:
                 raise RuntimeError(f"Failed to load feather file {filepath}: {e2}")
 
         # Ensure required columns exist
-        required_columns = ['open', 'high', 'low', 'close', 'volume']
+        required_columns = ["open", "high", "low", "close", "volume"]
         missing = set(required_columns) - set(df.columns)
         if missing:
             raise ValueError(f"Missing required columns: {missing}")
 
         # Check for timestamp column (might be named differently)
-        if 'ts_event' not in df.columns:
-            if 'timestamp' in df.columns:
-                df['ts_event'] = df['timestamp']
-            elif 'time' in df.columns:
-                df['ts_event'] = df['time']
-            elif 'datetime' in df.columns:
-                df['ts_event'] = df['datetime']
+        if "ts_event" not in df.columns:
+            if "timestamp" in df.columns:
+                df["ts_event"] = df["timestamp"]
+            elif "time" in df.columns:
+                df["ts_event"] = df["time"]
+            elif "datetime" in df.columns:
+                df["ts_event"] = df["datetime"]
             else:
                 # Use index if it's a datetime index
                 if isinstance(df.index, pd.DatetimeIndex):
-                    df['ts_event'] = df.index
+                    df["ts_event"] = df.index
                 else:
                     raise ValueError("No timestamp column found")
 
         # Convert timestamp to nanoseconds if needed
-        if pd.api.types.is_datetime64_any_dtype(df['ts_event']):
-            df['ts_event'] = df['ts_event'].astype('int64')
+        if pd.api.types.is_datetime64_any_dtype(df["ts_event"]):
+            df["ts_event"] = df["ts_event"].astype("int64")
 
         return df
 
@@ -191,7 +188,7 @@ class FeatherBarLoader:
         df: pd.DataFrame,
         instrument_id: InstrumentId,
         bar_spec: BarSpecification,
-    ) -> List[Bar]:
+    ) -> list[Bar]:
         """Create Bar objects from DataFrame."""
         bars = []
 
@@ -217,7 +214,7 @@ class FeatherBarLoader:
         # Create bars
         for _, row in df.iterrows():
             # Create base bar
-            kwargs: Dict[str, Any] = {}
+            kwargs: dict[str, Any] = {}
 
             if self._has_extended_bar:
                 for spec in extended_specs:
@@ -227,13 +224,13 @@ class FeatherBarLoader:
 
             bar = Bar(
                 bar_type=bar_type,
-                open=Price.from_str(str(row['open'])),
-                high=Price.from_str(str(row['high'])),
-                low=Price.from_str(str(row['low'])),
-                close=Price.from_str(str(row['close'])),
-                volume=Quantity.from_str(str(row['volume'])),
-                ts_event=int(row['ts_event']),
-                ts_init=int(row.get('ts_init', row['ts_event'])),
+                open=Price.from_str(str(row["open"])),
+                high=Price.from_str(str(row["high"])),
+                low=Price.from_str(str(row["low"])),
+                close=Price.from_str(str(row["close"])),
+                volume=Quantity.from_str(str(row["volume"])),
+                ts_event=int(row["ts_event"]),
+                ts_init=int(row.get("ts_init", row["ts_event"])),
                 **kwargs,
             )
 
@@ -249,7 +246,7 @@ class FeatherBarLoader:
         return bars
 
     @staticmethod
-    def _convert_extended_value(spec: Dict[str, Any], raw: Any) -> Any:
+    def _convert_extended_value(spec: dict[str, Any], raw: Any) -> Any:
         field_type = spec["type"]
         if field_type == "quantity":
             return Quantity.from_str(str(raw)) if not isinstance(raw, Quantity) else raw
@@ -266,7 +263,7 @@ class FeatherBarLoader:
             return lowered in {"true", "1", "yes", "y", "t"}
         raise ValueError(f"Unsupported extended field type '{field_type}'")
 
-    def get_available_instruments(self) -> List[str]:
+    def get_available_instruments(self) -> list[str]:
         """Get list of available instruments in data directory."""
         feather_files = list(self.data_dir.glob("*.feather")) + list(self.data_dir.glob("*.fea"))
         instruments = []
@@ -275,8 +272,8 @@ class FeatherBarLoader:
             # Remove extension and any date suffixes
             name = f.stem
             # Handle files like "BTCUSDT_2023-03-29.feather"
-            if '_' in name:
-                name = name.split('_')[0]
+            if "_" in name:
+                name = name.split("_")[0]
             instruments.append(name)
 
         return sorted(set(instruments))
@@ -286,8 +283,8 @@ class FeatherBarLoader:
         instrument_id: InstrumentId,
         start_date: pd.Timestamp,
         end_date: pd.Timestamp,
-        bar_spec: Optional[BarSpecification] = None,
-    ) -> List[Bar]:
+        bar_spec: BarSpecification | None = None,
+    ) -> list[Bar]:
         """
         Load bars from multiple daily feather files.
 
@@ -297,10 +294,10 @@ class FeatherBarLoader:
         all_bars = []
 
         # Generate date range
-        date_range = pd.date_range(start_date.date(), end_date.date(), freq='D')
+        date_range = pd.date_range(start_date.date(), end_date.date(), freq="D")
 
         for date in date_range:
-            date_str = date.strftime('%Y-%m-%d')
+            date_str = date.strftime("%Y-%m-%d")
 
             # Try to find file for this date
             date_file = self.data_dir / f"{date_str}.fea"
@@ -312,9 +309,9 @@ class FeatherBarLoader:
                     df = self._load_feather(date_file)
 
                     # Filter for the specific instrument if multiple instruments in file
-                    if 'symbol' in df.columns:
+                    if "symbol" in df.columns:
                         symbol = instrument_id.symbol.value
-                        df = df[df['symbol'] == symbol]
+                        df = df[df["symbol"] == symbol]
 
                     if not df.empty:
                         bars = self._create_bars(df, instrument_id, bar_spec or BarSpecification(

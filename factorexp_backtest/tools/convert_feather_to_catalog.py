@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Feather ➜ Parquet catalog converter for FactorExp backtests.
+"""
+Feather ➜ Parquet catalog converter for FactorExp backtests.
 
 This utility reads per-day Feather/IPC files (``*.fea``) exported under
 ``factorexp_backtest/data`` and materialises Nautilus-compatible Parquet files via
@@ -23,10 +24,13 @@ from __future__ import annotations
 import argparse
 import sys
 from collections import defaultdict
+from collections.abc import Iterable
+from collections.abc import Iterator
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Sequence
 
 import pandas as pd
 import pyarrow.feather as feather
@@ -111,8 +115,8 @@ def build_quantity(value: float, precision: int) -> Quantity:
     return Quantity.from_raw(raw, precision)
 
 
-def collect_rows(root: Path, symbols: Iterable[str], start: datetime | None, end: datetime | None) -> Dict[str, pd.DataFrame]:
-    frames: Dict[str, List[pd.DataFrame]] = defaultdict(list)
+def collect_rows(root: Path, symbols: Iterable[str], start: datetime | None, end: datetime | None) -> dict[str, pd.DataFrame]:
+    frames: dict[str, list[pd.DataFrame]] = defaultdict(list)
     for file_path in iter_feather_files(root, start, end):
         df = normalise_dataframe(file_path)
         for symbol in symbols:
@@ -122,7 +126,7 @@ def collect_rows(root: Path, symbols: Iterable[str], start: datetime | None, end
     return {symbol: pd.concat(frames_list, ignore_index=True).sort_values("ts_event") for symbol, frames_list in frames.items() if frames_list}
 
 
-def detect_symbols(root: Path, start: datetime | None, end: datetime | None) -> List[str]:
+def detect_symbols(root: Path, start: datetime | None, end: datetime | None) -> list[str]:
     symbols: set[str] = set()
     for file_path in iter_feather_files(root, start, end):
         table = feather.read_table(file_path, columns=["code"])
@@ -133,7 +137,7 @@ def detect_symbols(root: Path, start: datetime | None, end: datetime | None) -> 
 def build_catalog(
     root: Path,
     catalog_path: Path,
-    symbol_frames: Dict[str, pd.DataFrame],
+    symbol_frames: dict[str, pd.DataFrame],
     venue: str,
     step: int,
     aggregation: str,
@@ -143,26 +147,19 @@ def build_catalog(
     size_precision: int,
     amt_precision: int,
     dry_run: bool,
-) -> List[ConversionStats]:
+) -> list[ConversionStats]:
     catalog_path = catalog_path.resolve()
     catalog_path.mkdir(parents=True, exist_ok=True)
 
     catalog = ParquetDataCatalog(str(catalog_path))
-    stats: List[ConversionStats] = []
+    stats: list[ConversionStats] = []
 
     for symbol, df in symbol_frames.items():
         bar_type = build_bar_type(symbol, venue, step, aggregation, price_type, source)
         wrangler = BarDataWranglerV2(bar_type=bar_type, price_precision=price_precision, size_precision=size_precision)
-        frame = df[["open", "high", "low", "close", "volume", "ts_event", "ts_init"]].copy()
+        # Include 'amt' column for extended bar fields (wrangler auto-detects from EXTENDED_BAR_FIELD_SPECS)
+        frame = df[["open", "high", "low", "close", "volume", "ts_event", "ts_init", "amt"]].copy()
         bars = wrangler.from_pandas(frame)
-        amt_values = df["amt"].to_list() if "amt" in df.columns else [float("nan")] * len(bars)
-
-        for bar, amt in zip(bars, amt_values):
-            if pd.isna(amt):
-                continue
-            if hasattr(bar, "amt"):
-                quantity = build_quantity(float(amt), amt_precision)
-                bar.amt = quantity
 
         if dry_run:
             # Only capture stats without writing to disk.
@@ -235,8 +232,8 @@ def main(argv: Sequence[str]) -> int:
 
     print("\nConversion summary:")
     for entry in stats:
-        start_iso = datetime.utcfromtimestamp(entry.first_ts / 1e9).isoformat() if entry.first_ts else "-"
-        end_iso = datetime.utcfromtimestamp(entry.last_ts / 1e9).isoformat() if entry.last_ts else "-"
+        start_iso = datetime.fromtimestamp(entry.first_ts / 1e9, tz=UTC).isoformat() if entry.first_ts else "-"
+        end_iso = datetime.fromtimestamp(entry.last_ts / 1e9, tz=UTC).isoformat() if entry.last_ts else "-"
         print(f"  {entry.symbol:>12} | {entry.rows:6d} bars | {entry.bar_type} | {start_iso} -> {end_iso}")
     if args.dry_run:
         print("Dry-run mode: no data written to catalog.")

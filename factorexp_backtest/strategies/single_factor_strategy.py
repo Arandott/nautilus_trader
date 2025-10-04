@@ -7,18 +7,17 @@ directly maps to position sizing under 2x leverage.
 
 from decimal import Decimal
 from pathlib import Path
-from typing import Optional
 
+from factorexp_backtest.configs.config_loader import FactorConfigLoader
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.config import StrategyConfig
-from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
+from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.instruments import Instrument
 from nautilus_trader.trading.strategy import Strategy
-from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
-
-from factorexp_backtest.configs.config_loader import FactorConfigLoader
 
 
 class SingleFactorStrategyConfig(StrategyConfig):
@@ -40,11 +39,12 @@ class SingleFactorStrategyConfig(StrategyConfig):
     position_scale : float
         Scale factor for position sizing (1.0 = use factor value directly).
     """
+
     instrument_id: str
     bar_type: str = "BTCUSDT.BINANCE-15-MINUTE-LAST-EXTERNAL"
     config_path: str = "configs/factors.yaml"
     factor_id: str = "amt_momentum"
-    rebalance_interval: Optional[int] = None
+    rebalance_interval: int | None = None
     position_scale: float = 1.0
 
 
@@ -80,15 +80,15 @@ class SingleFactorStrategy(Strategy):
 
         # Get defaults
         defaults = self.config_loader.get_defaults()
-        self.zscore_period = defaults.get('zscore_period', 5760)
+        self.zscore_period = defaults.get("zscore_period", 5760)
         self.rebalance_interval = (
             config.rebalance_interval or
-            defaults.get('rebalance_interval', 30)
+            defaults.get("rebalance_interval", 30)
         )
 
         # State
-        self.instrument: Optional[Instrument] = None
-        self.factor_indicator: Optional[FactorExpIndicator] = None
+        self.instrument: Instrument | None = None
+        self.factor_indicator: FactorExpIndicator | None = None
         self.current_position: float = 0.0
         self.bars_since_rebalance: int = 0
 

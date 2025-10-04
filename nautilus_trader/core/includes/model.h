@@ -1350,6 +1350,10 @@ typedef struct Bar_t {
      * UNIX timestamp (nanoseconds) when the instance was created.
      */
     uint64_t ts_init;
+    /**
+    * The bars amt (extended field).
+    */
+    struct Quantity_t amt;
 } Bar_t;
 
 /**

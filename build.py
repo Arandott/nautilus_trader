@@ -19,6 +19,7 @@ from Cython.Compiler.Version import version as cython_compiler_version
 from setuptools import Distribution
 from setuptools import Extension
 
+
 try:  # Python ≥3.11
     import tomllib  # type: ignore[attr-defined]
 except ModuleNotFoundError:  # pragma: no cover - fallback for older interpreters
@@ -227,11 +228,11 @@ def _generate_extended_bar_cython_files() -> None:
     ]
 
     init_body_lines = [
-        "        Condition.is_true(high._mem.raw >= open._mem.raw, \"high was < open\")",
-        "        Condition.is_true(high._mem.raw >= low._mem.raw, \"high was < low\")",
-        "        Condition.is_true(high._mem.raw >= close._mem.raw, \"high was < close\")",
-        "        Condition.is_true(low._mem.raw <= close._mem.raw, \"low was > close\")",
-        "        Condition.is_true(low._mem.raw <= open._mem.raw, \"low was > open\")",
+        '        Condition.is_true(high._mem.raw >= open._mem.raw, "high was < open")',
+        '        Condition.is_true(high._mem.raw >= low._mem.raw, "high was < low")',
+        '        Condition.is_true(high._mem.raw >= close._mem.raw, "high was < close")',
+        '        Condition.is_true(low._mem.raw <= close._mem.raw, "low was > close")',
+        '        Condition.is_true(low._mem.raw <= open._mem.raw, "low was > open")',
     ]
 
     bar_new_lines = [
@@ -257,7 +258,7 @@ def _generate_extended_bar_cython_files() -> None:
 
         if field_type == "quantity":
             signature_lines.append(f"        Quantity {ident}=None,")
-            default_expr = f"Quantity.from_str({repr(string_default or '0')})"
+            default_expr = f"Quantity.from_str({string_default or '0'!r})"
             init_body_lines.append(f"        if {ident} is None:")
             init_body_lines.append(f"            {ident} = {default_expr}")
             init_body_lines.append(f"        cdef Quantity_t _ext_{ident} = {ident}._mem")
@@ -280,7 +281,7 @@ def _generate_extended_bar_cython_files() -> None:
             )
         elif field_type == "price":
             signature_lines.append(f"        Price {ident}=None,")
-            default_expr = f"Price.from_str({repr(string_default or '0')})"
+            default_expr = f"Price.from_str({string_default or '0'!r})"
             init_body_lines.append(f"        if {ident} is None:")
             init_body_lines.append(f"            {ident} = {default_expr}")
             init_body_lines.append(f"        cdef Price_t _ext_{ident} = {ident}._mem")
@@ -350,11 +351,11 @@ def _generate_extended_bar_cython_files() -> None:
         field_specs_entries.append(
             "    {" + ", ".join(
                 [
-                    f"\"name\": {repr(ident)}",
-                    f"\"type\": {repr(field_type)}",
-                    f"\"default\": {repr(string_default or '')}",
+                    f'"name": {ident!r}',
+                    f'"type": {field_type!r}',
+                    f"\"default\": {string_default or ''!r}",
                     f"\"precision\": {repr(precision) if precision is not None else 'None'}",
-                    f"\"doc\": {repr(doc if isinstance(doc, str) else '')}",
+                    f"\"doc\": {doc if isinstance(doc, str) else ''!r}",
                 ]
             ) + "},"
         )
@@ -451,9 +452,9 @@ def _generate_extended_bar_cython_files() -> None:
                 lines.append(f"            cdef Quantity_t {var_name}")
                 lines.append(f"            if len(state) == {length_var}:")
                 lines.append(f"                {var_name} = quantity_new(state[idx], state[idx + 1])")
-                lines.append(f"                idx += 2")
+                lines.append("                idx += 2")
                 lines.append("            else:")
-                lines.append(f"                cdef Quantity _default_{ident} = Quantity.from_str_c({repr(default_str)})")
+                lines.append(f"                cdef Quantity _default_{ident} = Quantity.from_str_c({default_str!r})")
                 lines.append(f"                {var_name} = _default_{ident}._mem")
                 for adjustment in _precision_adjustment_lines(var_name, precision, "                "):
                     lines.append(adjustment)
@@ -461,9 +462,9 @@ def _generate_extended_bar_cython_files() -> None:
                 lines.append(f"            cdef Price_t {var_name}")
                 lines.append(f"            if len(state) == {length_var}:")
                 lines.append(f"                {var_name} = price_new(state[idx], state[idx + 1])")
-                lines.append(f"                idx += 2")
+                lines.append("                idx += 2")
                 lines.append("            else:")
-                lines.append(f"                cdef Price _default_{ident} = Price.from_str_c({repr(default_str)})")
+                lines.append(f"                cdef Price _default_{ident} = Price.from_str_c({default_str!r})")
                 lines.append(f"                {var_name} = _default_{ident}._mem")
                 for adjustment in _precision_adjustment_lines(var_name, precision, "                "):
                     lines.append(adjustment)
@@ -471,14 +472,14 @@ def _generate_extended_bar_cython_files() -> None:
                 lines.append(f"            cdef uint64_t {var_name}")
                 lines.append(f"            if len(state) == {length_var}:")
                 lines.append(f"                {var_name} = <uint64_t> state[idx]")
-                lines.append(f"                idx += 1")
+                lines.append("                idx += 1")
                 lines.append("            else:")
                 lines.append(f"                {var_name} = {default_int}")
             elif field_type == "bool":
                 lines.append(f"            cdef bint {var_name}")
                 lines.append(f"            if len(state) == {length_var}:")
                 lines.append(f"                {var_name} = <bint> state[idx]")
-                lines.append(f"                idx += 1")
+                lines.append("                idx += 1")
                 lines.append("            else:")
                 lines.append(f"                {var_name} = {default_bool}")
         return lines
@@ -556,7 +557,7 @@ def _generate_extended_bar_cython_files() -> None:
         *composite_field_lines,
         *composite_bar_new_lines,
         "        else:",
-        "            raise ValueError(\"Invalid state length for Bar\")",
+        '            raise ValueError("Invalid state length for Bar")',
     ]
 
     from_raw_c_lines = [
@@ -590,11 +591,11 @@ def _generate_extended_bar_cython_files() -> None:
         default_int = spec.get("default_int", 0)
         var_name = f"_ext_{ident}"
         if field_type == "quantity":
-            from_raw_c_lines.append(f"        cdef Quantity {var_name}_obj = Quantity.from_str_c({repr(default_str)})")
+            from_raw_c_lines.append(f"        cdef Quantity {var_name}_obj = Quantity.from_str_c({default_str!r})")
             from_raw_c_lines.append(f"        cdef Quantity_t {var_name} = {var_name}_obj._mem")
             from_raw_c_lines.extend(_precision_adjustment_lines(var_name, precision, "        "))
         elif field_type == "price":
-            from_raw_c_lines.append(f"        cdef Price {var_name}_obj = Price.from_str_c({repr(default_str)})")
+            from_raw_c_lines.append(f"        cdef Price {var_name}_obj = Price.from_str_c({default_str!r})")
             from_raw_c_lines.append(f"        cdef Price_t {var_name} = {var_name}_obj._mem")
             from_raw_c_lines.extend(_precision_adjustment_lines(var_name, precision, "        "))
         elif field_type == "u64":
@@ -648,7 +649,7 @@ def _generate_extended_bar_cython_files() -> None:
         from_raw_arrays_lines[-1] += ","
 
     from_raw_arrays_lines.extend([
-        "            \"Array lengths must be equal\",",
+        '            "Array lengths must be equal",',
         "        )",
         "",
         "        cdef int count = ts_events.shape[0]",
@@ -685,10 +686,10 @@ def _generate_extended_bar_cython_files() -> None:
         default_int = spec.get("default_int", 0)
         var_name = f"_ext_{ident}_default"
         if field_type == "quantity":
-            from_raw_arrays_lines.append(f"        {var_name} = Quantity.from_str_c({repr(default_str)})._mem")
+            from_raw_arrays_lines.append(f"        {var_name} = Quantity.from_str_c({default_str!r})._mem")
             from_raw_arrays_lines.extend(_precision_adjustment_lines(var_name, precision, "        "))
         elif field_type == "price":
-            from_raw_arrays_lines.append(f"        {var_name} = Price.from_str_c({repr(default_str)})._mem")
+            from_raw_arrays_lines.append(f"        {var_name} = Price.from_str_c({default_str!r})._mem")
             from_raw_arrays_lines.extend(_precision_adjustment_lines(var_name, precision, "        "))
         elif field_type == "u64":
             from_raw_arrays_lines.append(f"        {var_name} = {default_int}")
@@ -885,7 +886,7 @@ def _generate_full_bar_variants() -> None:
     def inline_include(line: str) -> list[str]:
         # Extract path between quotes
         try:
-            path = line.split("\"")[1]
+            path = line.split('"')[1]
         except Exception:
             return [line]
         p = gen_dir / Path(path).name
@@ -926,13 +927,13 @@ def _generate_full_bar_variants() -> None:
         # Normalize indentation - remove any common leading spaces from all lines
         if out:
             # Find minimum indentation (excluding empty lines)
-            min_indent = float('inf')
+            min_indent = float("inf")
             for line in out:
                 if line.strip():  # Non-empty line
                     min_indent = min(min_indent, indent_width(line))
 
             # Remove the common indentation from all lines
-            if min_indent > 0 and min_indent != float('inf'):
+            if min_indent > 0 and min_indent != float("inf"):
                 normalized = []
                 for line in out:
                     if line.strip():  # Non-empty line
@@ -1141,7 +1142,7 @@ def _generate_full_bar_variants() -> None:
                         branch_base_indent = 12
 
                         # Copy the block contents preserving relative indentation
-                        while i < len(standard) and not "self._mem = bar_new(" in standard[i] and not standard[i].strip().startswith("else:"):
+                        while i < len(standard) and "self._mem = bar_new(" not in standard[i] and not standard[i].strip().startswith("else:"):
                             line_content = standard[i]
                             if line_content.strip():
                                 # Preserve relative indentation from original
@@ -1157,7 +1158,7 @@ def _generate_full_bar_variants() -> None:
                                     if fields:
                                         # Check if state has extended fields (new format) or legacy format
                                         out.append(f"            if len(state) == {expected_len_var}:")
-                                        out.append(f"                # Extended state format - restore fields")
+                                        out.append("                # Extended state format - restore fields")
                                         out.append(f"                idx = {start_idx}")
 
                                         # Restore each extended field from state
@@ -1166,20 +1167,20 @@ def _generate_full_bar_variants() -> None:
                                             field_type = field.get("type")
                                             if field_type == "quantity":
                                                 out.append(f"                _ext_{ident} = quantity_new(state[idx], state[idx + 1])")
-                                                out.append(f"                idx += 2")
+                                                out.append("                idx += 2")
                                             elif field_type == "price":
                                                 out.append(f"                _ext_{ident} = price_new(state[idx], state[idx + 1])")
-                                                out.append(f"                idx += 2")
+                                                out.append("                idx += 2")
                                             elif field_type == "u64":
                                                 out.append(f"                _ext_{ident} = <uint64_t>state[idx]")
-                                                out.append(f"                idx += 1")
+                                                out.append("                idx += 1")
                                             elif field_type == "bool":
                                                 out.append(f"                _ext_{ident} = <bint>state[idx]")
-                                                out.append(f"                idx += 1")
+                                                out.append("                idx += 1")
 
                                         # Else branch for legacy state without extended fields
-                                        out.append(f"            else:")
-                                        out.append(f"                # Legacy state format - use defaults")
+                                        out.append("            else:")
+                                        out.append("                # Legacy state format - use defaults")
                                         for field in fields:
                                             ident = field.get("ident")
                                             field_type = field.get("type")
@@ -1211,7 +1212,7 @@ def _generate_full_bar_variants() -> None:
                         branch_base_indent = 12
 
                         # Copy else block preserving relative indentation
-                        while i < len(standard) and standard[i].strip() and not "self._mem = bar_new(" in standard[i] and not "def " in standard[i]:
+                        while i < len(standard) and standard[i].strip() and "self._mem = bar_new(" not in standard[i] and "def " not in standard[i]:
                             line_content = standard[i]
                             if line_content.strip():
                                 # Preserve relative indentation from original
@@ -1227,7 +1228,7 @@ def _generate_full_bar_variants() -> None:
                                     if fields:
                                         # Check if state has extended fields (new format) or legacy format
                                         out.append(f"            if len(state) == {expected_len_var}:")
-                                        out.append(f"                # Extended state format - restore fields")
+                                        out.append("                # Extended state format - restore fields")
                                         out.append(f"                idx = {start_idx}")
 
                                         # Restore each extended field from state
@@ -1236,20 +1237,20 @@ def _generate_full_bar_variants() -> None:
                                             field_type = field.get("type")
                                             if field_type == "quantity":
                                                 out.append(f"                _ext_{ident} = quantity_new(state[idx], state[idx + 1])")
-                                                out.append(f"                idx += 2")
+                                                out.append("                idx += 2")
                                             elif field_type == "price":
                                                 out.append(f"                _ext_{ident} = price_new(state[idx], state[idx + 1])")
-                                                out.append(f"                idx += 2")
+                                                out.append("                idx += 2")
                                             elif field_type == "u64":
                                                 out.append(f"                _ext_{ident} = <uint64_t>state[idx]")
-                                                out.append(f"                idx += 1")
+                                                out.append("                idx += 1")
                                             elif field_type == "bool":
                                                 out.append(f"                _ext_{ident} = <bint>state[idx]")
-                                                out.append(f"                idx += 1")
+                                                out.append("                idx += 1")
 
                                         # Else branch for legacy state without extended fields
-                                        out.append(f"            else:")
-                                        out.append(f"                # Legacy state format - use defaults")
+                                        out.append("            else:")
+                                        out.append("                # Legacy state format - use defaults")
                                         for field in fields:
                                             ident = field.get("ident")
                                             field_type = field.get("type")
@@ -1577,7 +1578,7 @@ def _generate_full_bar_variants() -> None:
                 out.append(line)
                 i += 1
                 # Copy parameters until closing
-                while i < len(standard) and not ") -> Bar:" in standard[i]:
+                while i < len(standard) and ") -> Bar:" not in standard[i]:
                     if "uint64_t ts_init," in standard[i]:
                         out.append(standard[i])
                         # Add extended field parameters matching from_raw_c (8 spaces)
@@ -1636,7 +1637,7 @@ def _generate_full_bar_variants() -> None:
                 out.append(line)
                 i += 1
                 # Copy parameters until closing
-                while i < len(standard) and not ") -> list[Bar]:" in standard[i]:
+                while i < len(standard) and ") -> list[Bar]:" not in standard[i]:
                     if "uint64_t[:] ts_inits," in standard[i]:
                         out.append(standard[i])
                         # Add extended field array parameters (8 spaces to match other params)
@@ -1695,12 +1696,12 @@ def _generate_full_bar_variants() -> None:
             doc = field.get("doc", "")
 
             out.append("")  # Empty line separator (truly empty)
-            out.append(f"    @property")
+            out.append("    @property")
             out.append(f"    def {ident}(self):")
             if doc:
-                out.append(f'        """')
-                out.append(f'        {doc}')
-                out.append(f'        """')
+                out.append('        """')
+                out.append(f"        {doc}")
+                out.append('        """')
 
             if field_type == "quantity":
                 out.append(f"        return Quantity.from_raw_c(self._mem.{ident}.raw, self._mem.{ident}.precision)")

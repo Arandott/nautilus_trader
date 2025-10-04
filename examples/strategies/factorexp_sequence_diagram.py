@@ -7,7 +7,6 @@ from market data to trading signals.
 
 def generate_mermaid_sequence():
     """Generate Mermaid sequence diagram code."""
-    
     diagram = """
 sequenceDiagram
     participant Market as Market Data
@@ -78,13 +77,12 @@ sequenceDiagram
     
     Note over Market,EE: Process repeats for each bar
 """
-    
+
     return diagram
 
 
 def generate_component_diagram():
     """Generate component interaction diagram."""
-    
     diagram = """
 graph TB
     subgraph "Market Data Layer"
@@ -147,7 +145,7 @@ graph TB
     style FEI fill:#f9f,stroke:#333,stroke-width:4px
     style Engine fill:#bbf,stroke:#333,stroke-width:2px
 """
-    
+
     return diagram
 
 
@@ -156,13 +154,13 @@ if __name__ == "__main__":
     print(generate_mermaid_sequence())
     print("\n=== Component Diagram ===")
     print(generate_component_diagram())
-    
+
     # Save to files for rendering
     with open("factorexp_sequence.mmd", "w") as f:
         f.write(generate_mermaid_sequence())
-    
+
     with open("factorexp_components.mmd", "w") as f:
         f.write(generate_component_diagram())
-    
+
     print("\nDiagrams saved to factorexp_sequence.mmd and factorexp_components.mmd")
     print("Use https://mermaid.live to render these diagrams")

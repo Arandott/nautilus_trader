@@ -29,7 +29,6 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.data import QuoteTick
 from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.enums import OrderSide
-from nautilus_trader.model.events import OrderFilled
 from nautilus_trader.model.events import PositionChanged
 from nautilus_trader.model.events import PositionClosed
 from nautilus_trader.model.events import PositionOpened
@@ -114,25 +113,25 @@ class FactorExpEMACross(Strategy):
         self.instrument: Instrument | None = None
 
         # Create FactorExp indicators to demonstrate various capabilities
-        
+
         # 1. EMA Ratio: Shows relative position of fast vs slow EMA
         self.ema_ratio = FactorExpIndicator(
             f"TS_Mean($close, {config.fast_ema_period}) / TS_Mean($close, {config.slow_ema_period})",
             name="EMA_Ratio"
         )
-        
+
         # 2. Volatility: Rolling standard deviation normalized by price
         self.volatility = FactorExpIndicator(
             f"TS_Std($close, {config.volatility_period}) / TS_Mean($close, {config.volatility_period})",
             name="Volatility"
         )
-        
+
         # 3. Momentum: Price change relative to moving average
         self.momentum = FactorExpIndicator(
             f"($close - TS_Mean($close, {config.slow_ema_period})) / TS_Mean($close, {config.slow_ema_period})",
             name="Momentum"
         )
-        
+
         # 4. Trend Strength: Difference between EMAs as percentage of slow EMA
         self.trend_strength = FactorExpIndicator(
             f"(TS_Mean($close, {config.fast_ema_period}) - TS_Mean($close, {config.slow_ema_period})) / TS_Mean($close, {config.slow_ema_period})",
@@ -184,7 +183,7 @@ class FactorExpEMACross(Strategy):
         self.volatility.reset()
         self.momentum.reset()
         self.trend_strength.reset()
-        
+
         # Reset state
         self.prev_ema_ratio = None
         self.position_entry_bar = None
@@ -193,25 +192,21 @@ class FactorExpEMACross(Strategy):
         """
         Actions to be performed when the strategy is running and receives an instrument.
         """
-        pass
 
     def on_order_book(self, order_book: OrderBook) -> None:
         """
         Actions to be performed when the strategy is running and receives an order book.
         """
-        pass
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
         """
         Actions to be performed when the strategy is running and receives a quote tick.
         """
-        pass
 
     def on_trade_tick(self, tick: TradeTick) -> None:
         """
         Actions to be performed when the strategy is running and receives a trade tick.
         """
-        pass
 
     def on_bar(self, bar: Bar) -> None:
         """
@@ -257,7 +252,7 @@ class FactorExpEMACross(Strategy):
         if self.prev_ema_ratio is not None:
             # Bullish cross: fast EMA crosses above slow EMA (ratio goes above 1.0)
             bullish_cross = (self.prev_ema_ratio <= 1.0 and current_ema_ratio > 1.0)
-            
+
             # Bearish cross: fast EMA crosses below slow EMA (ratio goes below 1.0)
             bearish_cross = (self.prev_ema_ratio >= 1.0 and current_ema_ratio < 1.0)
 
@@ -332,7 +327,6 @@ class FactorExpEMACross(Strategy):
         """
         Actions to be performed when the strategy is running and receives data.
         """
-        pass
 
     def on_event(self, event: Event) -> None:
         """
@@ -360,10 +354,8 @@ class FactorExpEMACross(Strategy):
         """
         Actions to be performed when the strategy is loaded.
         """
-        pass
 
     def on_dispose(self) -> None:
         """
         Actions to be performed when the strategy is disposed.
         """
-        pass

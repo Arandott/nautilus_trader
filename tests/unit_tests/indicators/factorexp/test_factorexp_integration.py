@@ -9,8 +9,9 @@ This script tests the complete integration of:
 """
 
 import sys
-from pathlib import Path
 import traceback
+from pathlib import Path
+
 
 # Add project to path
 project_root = Path(__file__).parent
@@ -44,7 +45,7 @@ def test_direct_rust_parsing():
         try:
             # New architecture: string goes directly to Rust
             indicator = FactorExpIndicator(expr)
-            print(f"✅ Parsed and compiled successfully in Rust")
+            print("✅ Parsed and compiled successfully in Rust")
             print(f"   Period: {indicator.period}")
             print(f"   Expression: {indicator.expression}")
         except Exception as e:
@@ -63,7 +64,7 @@ def test_rust_module_availability():
         print("✅ Rust factorexp module found")
 
         # Check for FactorExpIndicator in the module
-        if hasattr(factorexp, 'FactorExpIndicator'):
+        if hasattr(factorexp, "FactorExpIndicator"):
             print("✅ FactorExpIndicator class available in Rust module")
         else:
             print("⚠️  FactorExpIndicator not found in module")
@@ -75,7 +76,7 @@ def test_rust_module_availability():
         try:
             # Direct Rust instantiation (with new architecture)
             rust_indicator = factorexp.FactorExpIndicator(test_expr)
-            print(f"✅ Created Rust indicator directly")
+            print("✅ Created Rust indicator directly")
             print(f"   Period: {rust_indicator.period}")
             print(f"   Expression: {rust_indicator.expression}")
         except Exception as e:
@@ -92,29 +93,36 @@ def test_indicator_creation():
     print("\n" + "=" * 60)
     print("Testing Indicator Creation")
     print("=" * 60)
-    
+
     try:
-        from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
-        from nautilus_trader.model.data import Bar, BarType, BarSpecification
-        from nautilus_trader.model.objects import Price, Quantity
-        from nautilus_trader.model.enums import BarAggregation, AggregationSource
-        from nautilus_trader.core.nautilus_pyo3 import PriceType
-        from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
-        from nautilus_trader.core.uuid import UUID4
         import time
-        
+
+        from nautilus_trader.core.nautilus_pyo3 import PriceType
+        from nautilus_trader.core.uuid import UUID4
+        from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
+        from nautilus_trader.model.data import Bar
+        from nautilus_trader.model.data import BarSpecification
+        from nautilus_trader.model.data import BarType
+        from nautilus_trader.model.enums import AggregationSource
+        from nautilus_trader.model.enums import BarAggregation
+        from nautilus_trader.model.identifiers import InstrumentId
+        from nautilus_trader.model.identifiers import Symbol
+        from nautilus_trader.model.identifiers import Venue
+        from nautilus_trader.model.objects import Price
+        from nautilus_trader.model.objects import Quantity
+
         print("✅ Imports successful")
     except ImportError as e:
         print(f"❌ Import failed: {e}")
         return
-    
+
     # Create test bar
     bar_type = BarType(
         instrument_id=InstrumentId(Symbol("TEST"), Venue("SIM")),
         bar_spec=BarSpecification(1, BarAggregation.MINUTE, PriceType.LAST),
         aggregation_source=AggregationSource.EXTERNAL,
     )
-    
+
     bar = Bar(
         bar_type=bar_type,
         open=Price.from_str("100.00"),
@@ -125,7 +133,7 @@ def test_indicator_creation():
         ts_event=int(time.time() * 1e9),
         ts_init=int(time.time() * 1e9),
     )
-    
+
     # Test simple expression
     print("\nTesting simple expression: $close")
     try:
@@ -137,7 +145,7 @@ def test_indicator_creation():
         print(f"❌ Failed: {e}")
         traceback.print_exc()
         # print(f"❌ Failed: {e}")
-    
+
     # Test rolling operator
     print("\nTesting rolling operator: TS_Mean($close, 5)")
     try:
@@ -158,7 +166,7 @@ def test_indicator_creation():
         print(f"   Initialized: {indicator.initialized}")
     except Exception as e:
         print(f"❌ Failed: {e}")
-    
+
     # Test complex expression
     print("\nTesting complex expression: TS_Mean($close, 2) / TS_Mean($close, 15)")
     try:

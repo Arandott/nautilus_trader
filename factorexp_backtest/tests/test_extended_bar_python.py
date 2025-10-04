@@ -9,6 +9,7 @@ are working correctly when the extended_bar feature is enabled.
 import sys
 from pathlib import Path
 
+
 # Add nautilus_trader to path if needed
 nautilus_path = Path(__file__).parent.parent.parent / "nautilus_trader"
 if nautilus_path.exists():
@@ -17,17 +18,15 @@ if nautilus_path.exists():
 def test_extended_bar_basic():
     """Test basic extended bar functionality."""
     try:
-        from nautilus_trader.core.nautilus_pyo3 import (
-            Bar,
-            BarType,
-            BarSpecification,
-            BarAggregation,
-            PriceType,
-            AggregationSource,
-            InstrumentId,
-            Price,
-            Quantity,
-        )
+        from nautilus_trader.core.nautilus_pyo3 import AggregationSource
+        from nautilus_trader.core.nautilus_pyo3 import Bar
+        from nautilus_trader.core.nautilus_pyo3 import BarAggregation
+        from nautilus_trader.core.nautilus_pyo3 import BarSpecification
+        from nautilus_trader.core.nautilus_pyo3 import BarType
+        from nautilus_trader.core.nautilus_pyo3 import InstrumentId
+        from nautilus_trader.core.nautilus_pyo3 import Price
+        from nautilus_trader.core.nautilus_pyo3 import PriceType
+        from nautilus_trader.core.nautilus_pyo3 import Quantity
         from nautilus_trader.model.data import EXTENDED_BAR_FIELD_SPECS
 
         # Create instrument and bar type
@@ -94,7 +93,8 @@ def test_extended_bar_with_feather_loader():
     try:
         # Import our custom loader
         from factorexp_backtest.loaders import FeatherBarLoader
-        from nautilus_trader.model.identifiers import InstrumentId, Venue
+        from nautilus_trader.model.identifiers import InstrumentId
+        from nautilus_trader.model.identifiers import Venue
 
         # Create test data directory
         data_dir = Path(__file__).parent.parent / "data" / "test"

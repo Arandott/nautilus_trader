@@ -9,13 +9,15 @@ such as amt (成交额), vwap, bid/ask volumes, etc.
 __version__ = "0.1.0"
 __author__ = "Nautilus Trader Team"
 
-from .loaders import FeatherBarLoader
-from .strategies import SingleFactorStrategy, SingleFactorStrategyConfig
 from .configs import FactorConfigLoader
+from .loaders import FeatherBarLoader
+from .strategies import SingleFactorStrategy
+from .strategies import SingleFactorStrategyConfig
+
 
 __all__ = [
+    "FactorConfigLoader",
     "FeatherBarLoader",
     "SingleFactorStrategy",
     "SingleFactorStrategyConfig",
-    "FactorConfigLoader",
 ]

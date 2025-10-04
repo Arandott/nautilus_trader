@@ -169,6 +169,67 @@ fn build_extended_bar_cython_params(config_path: &Path) -> Vec<(String, String)>
         .collect()
 }
 
+fn rewrite_cython_bar_t_struct(contents: &str, params: &[(String, String)]) -> String {
+    if params.is_empty() {
+        return contents.to_string();
+    }
+
+    let mut lines: Vec<String> = contents.lines().map(|line| line.to_string()).collect();
+    let had_trailing_newline = contents.ends_with('\n');
+    let mut updated = false;
+
+    // Find "cdef struct Bar_t:" and locate where to insert fields
+    for index in 0..lines.len() {
+        if !lines[index].trim().starts_with("cdef struct Bar_t:") {
+            continue;
+        }
+
+        // Find the next struct or EOF to determine where Bar_t ends
+        let mut end_idx = lines.len();
+        for candidate in index + 1..lines.len() {
+            let trimmed = lines[candidate].trim();
+            if trimmed.starts_with("cdef struct") || trimmed.starts_with("cdef enum") || trimmed.starts_with("cdef class") {
+                end_idx = candidate;
+                break;
+            }
+        }
+
+        // Find the last field in Bar_t (should be ts_init)
+        let mut last_field_idx = index;
+        for candidate in (index + 1..end_idx).rev() {
+            if lines[candidate].contains("uint64_t ts_init") {
+                last_field_idx = candidate;
+                break;
+            }
+        }
+
+        // Get indentation from existing fields
+        let indent = "        ";
+
+        // Insert extended fields after ts_init
+        for (offset, (ty, name)) in params.iter().enumerate() {
+            let comment = format!("{}# The bars {} (extended field).", indent, name);
+            let field = format!("{}{} {};", indent, ty, name);
+
+            lines.insert(last_field_idx + 1 + (offset * 2), field);
+            lines.insert(last_field_idx + 1 + (offset * 2), comment);
+        }
+
+        updated = true;
+        break;
+    }
+
+    if !updated {
+        panic!("Failed to find `cdef struct Bar_t:` for extended bar rewrite in Cython pxd");
+    }
+
+    let mut output = lines.join("\n");
+    if had_trailing_newline {
+        output.push('\n');
+    }
+    output
+}
+
 fn rewrite_bar_new_signature(contents: &str, params: &[(String, String)]) -> String {
     if params.is_empty() {
         return contents.to_string();
@@ -249,6 +310,65 @@ fn build_extended_bar_header_params(config_path: &Path) -> Vec<(String, String)>
             (ty.to_string(), field.ident)
         })
         .collect()
+}
+
+fn rewrite_bar_t_struct(contents: &str, params: &[(String, String)]) -> String {
+    if params.is_empty() {
+        return contents.to_string();
+    }
+
+    let mut lines: Vec<String> = contents.lines().map(|line| line.to_string()).collect();
+    let had_trailing_newline = contents.ends_with('\n');
+    let mut updated = false;
+
+    // Find "typedef struct Bar_t {" and the closing "} Bar_t;"
+    for index in 0..lines.len() {
+        if !lines[index].contains("typedef struct Bar_t {") {
+            continue;
+        }
+
+        // Find the closing brace
+        let mut closing_idx = None;
+        for candidate in index + 1..lines.len() {
+            if lines[candidate].trim() == "} Bar_t;" {
+                closing_idx = Some(candidate);
+                break;
+            }
+        }
+
+        let closing_idx = closing_idx
+            .unwrap_or_else(|| panic!("Failed to locate end of Bar_t struct definition in model.h"));
+
+        // Get indentation from existing fields (use same as ts_init)
+        let indent = "    ";
+
+        // Insert extended fields before the closing brace
+        for (ty, name) in params.iter().rev() {
+            let comment = format!("{}/**", indent);
+            let doc = format!("{}* The bars {} (extended field).", indent, name);
+            let end_comment = format!("{}*/", indent);
+            // ty already contains "struct Quantity_t", so no need to add "struct" prefix
+            let field = format!("{}{} {};", indent, ty, name);
+
+            lines.insert(closing_idx, field);
+            lines.insert(closing_idx, end_comment);
+            lines.insert(closing_idx, doc);
+            lines.insert(closing_idx, comment);
+        }
+
+        updated = true;
+        break;
+    }
+
+    if !updated {
+        panic!("Failed to find `typedef struct Bar_t` for extended bar struct rewrite");
+    }
+
+    let mut output = lines.join("\n");
+    if had_trailing_newline {
+        output.push('\n');
+    }
+    output
 }
 
 fn rewrite_bar_new_header_signature(contents: &str, params: &[(String, String)]) -> String {
@@ -380,13 +500,19 @@ fn main() {
             .expect("unable to generate bindings")
             .write_to_file(&c_header_path);
 
-        // Post-process C header to add extended bar field parameters to bar_new signature
+        // Post-process C header to add extended bar fields to Bar_t struct and bar_new signature
         if cfg!(feature = "extended_bar") {
             let config_path = locate_extended_bar_config(&crate_dir);
             let header_params = build_extended_bar_header_params(&config_path);
             let header_contents = std::fs::read_to_string(&c_header_path)
                 .expect("Failed to read generated C header");
-            let rewritten_header = rewrite_bar_new_header_signature(&header_contents, &header_params);
+
+            // Step 1: Add fields to Bar_t struct
+            let with_struct = rewrite_bar_t_struct(&header_contents, &header_params);
+
+            // Step 2: Add parameters to bar_new signature
+            let rewritten_header = rewrite_bar_new_header_signature(&with_struct, &header_params);
+
             std::fs::write(&c_header_path, rewritten_header)
                 .expect("Failed to write modified C header");
         }
@@ -479,6 +605,9 @@ fn main() {
             let config_path = locate_extended_bar_config(&crate_dir);
             let params = build_extended_bar_cython_params(&config_path);
             if !params.is_empty() {
+                // Step 1: Add fields to Bar_t struct
+                data = rewrite_cython_bar_t_struct(&data, &params);
+                // Step 2: Add parameters to bar_new signature
                 data = rewrite_bar_new_signature(&data, &params);
             }
         }

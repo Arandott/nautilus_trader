@@ -5,7 +5,9 @@ This configuration follows Nautilus Trader official patterns for maintainability
 framework compatibility, and future-proofing.
 """
 
-from nautilus_trader.config import PositiveFloat, PositiveInt, StrategyConfig
+from nautilus_trader.config import PositiveFloat
+from nautilus_trader.config import PositiveInt
+from nautilus_trader.config import StrategyConfig
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.identifiers import InstrumentId
 
@@ -59,35 +61,35 @@ class FactorExpLiveStrategyConfig(StrategyConfig, frozen=True):
     max_drawdown_pct : PositiveFloat, default 0.05
         Maximum drawdown percentage (5%)
     """
-    
+
     # Required parameters
     instrument_id: InstrumentId
     bar_type: BarType
-    
+
     # FactorExp indicator parameters
     ema_fast_period: PositiveInt = 12
     ema_slow_period: PositiveInt = 26
     volatility_period: PositiveInt = 20
     momentum_period: PositiveInt = 14
-    
+
     # Professional capital management
     max_account_usage_pct: PositiveFloat = 0.8
     max_absolute_exposure: PositiveFloat = 5000.0
     position_risk_pct: PositiveFloat = 0.02
-    
+
     # Risk management parameters
     stop_loss_pct: PositiveFloat = 0.015
     take_profit_pct: PositiveFloat = 0.03
     volatility_threshold: PositiveFloat = 0.001
-    
+
     # Signal thresholds
     ema_ratio_long_threshold: PositiveFloat = 1.005
     ema_ratio_short_threshold: PositiveFloat = 0.995
     momentum_threshold: PositiveFloat = 0.001
-    
+
     # Trading parameters
     use_market_orders: bool = True
-    
+
     # Daily limits and risk controls
     max_daily_trades: PositiveInt = 20
     max_daily_loss_usd: PositiveFloat = 200.0
@@ -124,30 +126,30 @@ class FactorExpLiveStrategyConfig(StrategyConfig, frozen=True):
         conservative_config = {
             # Reduced capital usage for safety margin
             "max_account_usage_pct": 0.6,  # 60% instead of 80%
-            
+
             # Lower position risk to account for minimum trade sizes
             "position_risk_pct": 0.015,  # 1.5% instead of 2%
-            
+
             # Tighter stop loss for small accounts
             "stop_loss_pct": 0.012,  # 1.2% instead of 1.5%
-            
+
             # Conservative take profit
             "take_profit_pct": 0.025,  # 2.5% instead of 3%
-            
+
             # Reduced daily limits proportional to account size
             "max_daily_trades": 10,  # Fewer trades for small accounts
             "max_daily_loss_usd": account_size_usd * 0.05,  # 5% of account
-            
+
             # Tighter drawdown control
             "max_drawdown_pct": 0.03,  # 3% instead of 5%
-            
+
             # Conservative absolute exposure (should not be reached for small accounts)
             "max_absolute_exposure": max(account_size_usd * 2, 500.0),
         }
-        
+
         # Merge with any user overrides
         conservative_config.update(kwargs)
-        
+
         return cls(
             instrument_id=instrument_id,
             bar_type=bar_type,
@@ -164,7 +166,7 @@ class FactorExpConfig:
     Use FactorExpLiveStrategyConfig instead for new implementations.
     This class is maintained for backward compatibility only.
     """
-    
+
     def __init__(self):
         import warnings
         warnings.warn(
@@ -172,7 +174,7 @@ class FactorExpConfig:
             DeprecationWarning,
             stacklevel=2
         )
-        
+
         # Legacy default values for backward compatibility
         self.instruments = ["BTCUSDT-PERP.BINANCE", "ETHUSDT-PERP.BINANCE"]
         self.primary_instrument = "BTCUSDT-PERP.BINANCE"

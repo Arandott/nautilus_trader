@@ -25,12 +25,11 @@ Note: This feature requires the extended_bar feature to be enabled at compile ti
 To enable it, modify build.py line 126 to include "extended_bar" in the features string.
 """
 
-from datetime import datetime
 
+from nautilus_trader.model.data import EXTENDED_BAR_FIELD_SPECS
 from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import BarSpecification
 from nautilus_trader.model.data import BarType
-from nautilus_trader.model.data import EXTENDED_BAR_FIELD_SPECS
 from nautilus_trader.model.enums import AggregationSource
 from nautilus_trader.model.enums import BarAggregation
 from nautilus_trader.model.enums import PriceType

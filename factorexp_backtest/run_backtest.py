@@ -10,25 +10,30 @@ position sizing under 2x leverage.
 import argparse
 import sys
 from datetime import datetime
-from decimal import Decimal
 from pathlib import Path
+
 
 # Add nautilus_trader to path
 nautilus_path = Path(__file__).parent.parent / "nautilus_trader"
 if nautilus_path.exists():
     sys.path.insert(0, str(nautilus_path))
 
-from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
-from nautilus_trader.config import LoggingConfig
-from nautilus_trader.model.currencies import BTC, USDT
-from nautilus_trader.model.enums import AccountType, OmsType
-from nautilus_trader.model.identifiers import Venue, InstrumentId, Symbol
-from nautilus_trader.model.objects import Money
-from nautilus_trader.test_kit.providers import TestInstrumentProvider
-
 from factorexp_backtest.configs import FactorConfigLoader
 from factorexp_backtest.loaders import FeatherBarLoader
-from factorexp_backtest.strategies import SingleFactorStrategy, SingleFactorStrategyConfig
+from factorexp_backtest.strategies import SingleFactorStrategy
+from factorexp_backtest.strategies import SingleFactorStrategyConfig
+from nautilus_trader.backtest.engine import BacktestEngine
+from nautilus_trader.backtest.engine import BacktestEngineConfig
+from nautilus_trader.config import LoggingConfig
+from nautilus_trader.model.currencies import BTC
+from nautilus_trader.model.currencies import USDT
+from nautilus_trader.model.enums import AccountType
+from nautilus_trader.model.enums import OmsType
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.model.objects import Money
+from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
 
 def list_available_factors(config_path: Path):
@@ -53,7 +58,7 @@ def list_available_factors(config_path: Path):
         print(f"  Description: {factor.description}")
         print(f"  Expression: {factor.expression[:50]}...")
         if factor.requires_extended:
-            print(f"  ⚠️  Requires extended bar fields")
+            print("  ⚠️  Requires extended bar fields")
 
 
 def check_extended_support() -> bool:
@@ -131,8 +136,8 @@ def setup_backtest_engine(
 
     # Create InstrumentId from string
     instrument_id_str = "BTCUSDT.BINANCE"
-    instrument_symbol = Symbol(instrument_id_str.split('.')[0])
-    instrument_venue = Venue(instrument_id_str.split('.')[1])
+    instrument_symbol = Symbol(instrument_id_str.split(".")[0])
+    instrument_venue = Venue(instrument_id_str.split(".")[1])
     instrument_id_obj = InstrumentId(symbol=instrument_symbol, venue=instrument_venue)
 
     bars = loader.load_bars(
@@ -147,7 +152,7 @@ def setup_backtest_engine(
         # Check first bar for extended fields
         if bars and loader._has_extended_bar:
             first_bar = bars[0]
-            amt = getattr(first_bar, 'amt', None)
+            amt = getattr(first_bar, "amt", None)
             if amt is not None:
                 print(f"✅ First bar has amt value: {amt:,.2f}")
             else:
@@ -255,18 +260,18 @@ def main():
     print(f"Description: {factor_config.description}")
     print(f"Expression: {factor_config.expression}")
     if factor_config.requires_extended:
-        print(f"⚠️  Requires extended bar fields")
+        print("⚠️  Requires extended bar fields")
 
     # Display defaults
     defaults = config_loader.get_defaults()
-    print(f"\nDefault Settings:")
+    print("\nDefault Settings:")
     print(f"  Zscore Period: {defaults.get('zscore_period', 5760)} bars")
     print(f"  Rebalance Interval: {defaults.get('rebalance_interval', 30)} bars")
 
     # Display risk management settings
     if config_loader.risk_config:
         risk = config_loader.risk_config
-        print(f"\nRisk Management:")
+        print("\nRisk Management:")
         print(f"  Max Position Size: {risk.max_position_size}x")
         print(f"  Stop Loss: {risk.stop_loss:.1%}")
         print(f"  Min Rebalance Interval: {risk.min_rebalance_interval} bars")
@@ -275,7 +280,7 @@ def main():
     # Display execution settings
     if config_loader.execution_config:
         exec_cfg = config_loader.execution_config
-        print(f"\nExecution Settings:")
+        print("\nExecution Settings:")
         print(f"  Slippage: {exec_cfg.slippage_bps} bps")
         print(f"  Commission: {exec_cfg.commission_bps} bps")
         print(f"  Min Order Size: {exec_cfg.min_order_size}")
@@ -325,7 +330,7 @@ def main():
 
     # Get portfolio statistics
     account = engine.trader.generate_account_report(Venue("BINANCE"))
-    print(f"\nAccount Statistics:")
+    print("\nAccount Statistics:")
     print(f"  Final Balance (USDT): {account.balances_total.get(USDT, 0):,.2f}")
     print(f"  Final Balance (BTC): {account.balances_total.get(BTC, 0):.8f}")
 
@@ -337,7 +342,7 @@ def main():
 
     # Get positions report
     positions = engine.trader.generate_positions_report()
-    print(f"\nPosition Statistics:")
+    print("\nPosition Statistics:")
     print(f"  Total Positions: {positions.total_count}")
     if positions.total_count > 0:
         print(f"  Win Rate: {positions.win_rate:.2%}" if positions.win_rate else "  Win Rate: N/A")
@@ -346,7 +351,7 @@ def main():
 
     # Get order statistics
     orders = engine.trader.generate_orders_report()
-    print(f"\nOrder Statistics:")
+    print("\nOrder Statistics:")
     print(f"  Total Orders: {orders.total_count}")
     if orders.total_count > 0:
         print(f"  Fill Rate: {orders.fill_rate:.2%}" if orders.fill_rate else "  Fill Rate: N/A")
@@ -359,7 +364,7 @@ def main():
         periods_per_year = 365 / ((datetime.fromisoformat(args.end_date) -
                                    datetime.fromisoformat(args.start_date)).days)
         annualized_return = avg_return * periods_per_year
-        print(f"\nRisk Metrics:")
+        print("\nRisk Metrics:")
         print(f"  Annualized Return: {annualized_return * 100:.2f}%")
 
     print("\n" + "=" * 60)

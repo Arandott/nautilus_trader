@@ -1,21 +1,23 @@
 
-import math
-import pytest
 import time
-import numpy as np
-from typing import List, Dict, Tuple
 
-from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
-from nautilus_trader.model.data import Bar, BarType, BarSpecification
-from nautilus_trader.model.objects import Price, Quantity
-from nautilus_trader.model.enums import BarAggregation, AggregationSource
 from nautilus_trader.core.nautilus_pyo3 import PriceType
-from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
+from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
+from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import BarSpecification
+from nautilus_trader.model.data import BarType
+from nautilus_trader.model.enums import AggregationSource
+from nautilus_trader.model.enums import BarAggregation
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.model.objects import Price
+from nautilus_trader.model.objects import Quantity
 
 
 class TestFactorExpAdvanced:
     """Advanced test suite for FactorExp expressions."""
-    
+
     def setup_method(self):
         """Set up test data and utilities."""
         self.bar_type = BarType(
@@ -23,7 +25,7 @@ class TestFactorExpAdvanced:
             bar_spec=BarSpecification(1, BarAggregation.MINUTE, PriceType.LAST),
             aggregation_source=AggregationSource.EXTERNAL,
         )
-        
+
         # Create correlated test data for pair rolling operators
         self.correlated_data = [
             (100.0, 1000.0),  # close, volume
@@ -37,7 +39,7 @@ class TestFactorExpAdvanced:
             (92.0, 920.0),
             (110.0, 1100.0),
         ]
-        
+
         # Create anti-correlated test data
         self.anti_correlated_data = [
             (100.0, 1000.0),  # close, volume
@@ -51,8 +53,8 @@ class TestFactorExpAdvanced:
             (92.0, 1080.0),
             (110.0, 900.0),
         ]
-        
-    def create_bar(self, open_price: float, high_price: float, 
+
+    def create_bar(self, open_price: float, high_price: float,
                    low_price: float, close_price: float, volume: float) -> Bar:
         """Create a test bar with specified values."""
         return Bar(
@@ -65,41 +67,41 @@ class TestFactorExpAdvanced:
             ts_event=int(time.time() * 1e9),
             ts_init=int(time.time() * 1e9),
         )
-    
-    def feed_correlated_data(self, indicator: FactorExpIndicator, 
-                           data: List[Tuple[float, float]], 
+
+    def feed_correlated_data(self, indicator: FactorExpIndicator,
+                           data: list[tuple[float, float]],
                            count: int = None):
         """Feed correlated test data to indicator."""
         if count is None:
             count = len(data)
-        
+
         for i in range(min(count, len(data))):
             close, volume = data[i]
             # Create bars with correlated close/volume
             bar = self.create_bar(close, close + 1, close - 1, close, volume)
             indicator.handle_bar(bar)
-    
+
 
     #TS_Mean($close, 10) / TS_Mean($close, 20)
     def test_sma_ratio_operator(self):
         """Test SMA Ratio operator."""
         indicator = FactorExpIndicator("TS_Mean($close, 10) / TS_Mean($close, 20)")
-        
+
         # Feed data with known values
         known_values = [100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 124, 126, 128, 130, 132, 134, 136, 138, 140]
         for value in known_values:
             bar = self.create_bar(value, value + 1, value - 1, value, 1000)
             indicator.handle_bar(bar)
             print(f"SMA Ratio value after feeding {value}: {indicator.value}")
-    
+
     # ("($close - TS_Mean($close, 20)) / TS_Std($close, 20)", "Z-Score"),
     def test_z_score_operator(self):
         """Test Z-Score operator."""
         indicator = FactorExpIndicator("($close - TS_Mean($close, 20)) / TS_Std($close, 20)")
-        
+
         # Feed data with known values
-        known_values = [100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120,  
-                        122, 124, 126, 128, 130, 132, 134, 136, 138, 140, 
+        known_values = [100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120,
+                        122, 124, 126, 128, 130, 132, 134, 136, 138, 140,
                         142, 144, 146, 148, 150]
         for value in known_values:
             bar = self.create_bar(value, value + 1, value - 1, value, 1000)
@@ -110,9 +112,9 @@ class TestFactorExpAdvanced:
     def test_average_price_change(self):
         """Test Average Price Change operator."""
         indicator = FactorExpIndicator("TS_Mean(Abs($close - TS_Ref($close, 1)), 10)")
-        
+
         # Feed data with known values
-        known_values = [100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120, 
+        known_values = [100, 102, 104, 106, 108, 110, 112, 114, 116, 118, 120,
                         122, 124, 126, 128, 130, 132, 134, 136, 138, 140]
         for value in known_values:
             bar = self.create_bar(value, value + 1, value - 1, value, 1000)
@@ -123,15 +125,15 @@ class TestFactorExpAdvanced:
 def run_advanced_test_suite():
     """Run the advanced test suite with detailed reporting."""
     test_instance = TestFactorExpAdvanced()
-    test_methods = [method for method in dir(test_instance) if method.startswith('test_')]
-    
+    test_methods = [method for method in dir(test_instance) if method.startswith("test_")]
+
     print("=" * 80)
     print("Advanced FactorExp Test Suite")
     print("=" * 80)
-    
+
     passed = 0
     failed = 0
-    
+
     for method_name in test_methods:
         print(f"\nRunning {method_name}...")
         try:
@@ -143,18 +145,18 @@ def run_advanced_test_suite():
         except Exception as e:
             print(f"❌ {method_name} - FAILED: {e}")
             failed += 1
-    
+
     print("\n" + "=" * 80)
     print(f"Test Results: {passed} passed, {failed} failed")
     print("=" * 80)
-    
+
     return failed == 0
 
 
 if __name__ == "__main__":
     # Run the advanced test suite
     success = run_advanced_test_suite()
-    
+
     if success:
         print("🎉 All advanced tests passed!")
     else:

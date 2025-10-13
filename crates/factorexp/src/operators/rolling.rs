@@ -41,20 +41,18 @@ impl_rolling_operator_common!(Mean);
 impl Mean {
     /// Updates the operator with a new value and recalculates the mean.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
-            // Keep current value (either NaN if not ready, or last valid value)
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid mean
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            self.base.set_value(self.base.buffer().mean());
-        }
+        // Compute mean from valid values (buffer.mean() is now NaN-aware)
+        self.base.set_value(self.base.buffer().mean());
     }
 }
 
@@ -79,19 +77,18 @@ impl_rolling_operator_common!(Sum);
 impl Sum {
     /// Updates the operator with a new value and recalculates the sum.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid sum
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            self.base.set_value(self.base.buffer().sum());
-        }
+        // Compute sum from valid values (buffer.valid_sum() is NaN-aware)
+        self.base.set_value(self.base.buffer().valid_sum());
     }
 }
 
@@ -118,19 +115,18 @@ impl_rolling_operator_common!(Std);
 impl Std {
     /// Updates the operator with a new value and recalculates the standard deviation.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid std
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            self.base.set_value(self.base.buffer().std(self.ddof));
-        }
+        // Compute std from valid values (buffer.std() is NaN-aware)
+        self.base.set_value(self.base.buffer().std(self.ddof));
     }
 }
 
@@ -157,19 +153,18 @@ impl_rolling_operator_common!(Var);
 impl Var {
     /// Updates the operator with a new value and recalculates the variance.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid variance
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            self.base.set_value(self.base.buffer().variance(self.ddof));
-        }
+        // Compute variance from valid values (buffer.variance() is NaN-aware)
+        self.base.set_value(self.base.buffer().variance(self.ddof));
     }
 }
 
@@ -194,20 +189,19 @@ impl_rolling_operator_common!(Min);
 impl Min {
     /// Updates the operator with a new value and recalculates the minimum.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid min
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            if let Some(min) = self.base.buffer().min() {
-                self.base.set_value(min);
-            }
+        // Compute min from valid values (buffer.min() filters NaN)
+        if let Some(min) = self.base.buffer().min() {
+            self.base.set_value(min);
         }
     }
 }
@@ -233,20 +227,19 @@ impl_rolling_operator_common!(Max);
 impl Max {
     /// Updates the operator with a new value and recalculates the maximum.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid max
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            if let Some(max) = self.base.buffer().max() {
-                self.base.set_value(max);
-            }
+        // Compute max from valid values (buffer.max() filters NaN)
+        if let Some(max) = self.base.buffer().max() {
+            self.base.set_value(max);
         }
     }
 }
@@ -272,29 +265,28 @@ impl_rolling_operator_common!(Median);
 impl Median {
     /// Updates the operator with a new value and recalculates the median.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid median
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
+        // Compute median from valid values (filter NaN from window)
+        let mut sorted: Vec<f64> = self.base.buffer().values_valid();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mid = sorted.len() / 2;
 
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            let mut sorted: Vec<f64> = self.base.buffer().window();
-            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let mid = sorted.len() / 2;
+        let median = if sorted.len() % 2 == 0 {
+            (sorted[mid - 1] + sorted[mid]) / 2.0
+        } else {
+            sorted[mid]
+        };
 
-            let median = if sorted.len() % 2 == 0 {
-                (sorted[mid - 1] + sorted[mid]) / 2.0
-            } else {
-                sorted[mid]
-            };
-
-            self.base.set_value(median);
-        }
+        self.base.set_value(median);
     }
 }
 
@@ -335,27 +327,31 @@ impl_rolling_operator_common!(Delta);
 impl Delta {
     /// Updates the operator with a new value and calculates the delta (difference).
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Need enough data in the buffer
+        let len = self.base.buffer().len();
+        if len <= self.period {
+            // Not enough data yet
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-
-        // Need at least period + 1 valid samples
-        if self.base.valid_count() > self.period {
-            let len = self.base.buffer().len();
-            if len > self.period {
-                // Get current value and value from 'period' bars ago
-                if let (Some(old_value), Some(current)) = (
-                    self.base.buffer().get(len - self.period - 1),
-                    self.base.buffer().get(len - 1),
-                ) {
-                    self.base.set_value(current - old_value);
-                }
+        // Get current value and value from 'period' bars ago
+        if let (Some(old_value), Some(current)) = (
+            self.base.buffer().get(len - self.period - 1),
+            self.base.buffer().get(len - 1),
+        ) {
+            // Check if both values are valid (non-NaN)
+            if !old_value.is_nan() && !current.is_nan() {
+                self.base.set_value(current - old_value);
+            } else {
+                // One or both values are NaN, reuse last valid delta
+                self.base.set_stale_value();
             }
+        } else {
+            // Failed to get values, reuse last
+            self.base.set_stale_value();
         }
     }
 }
@@ -383,26 +379,30 @@ impl_rolling_operator_common!(Ref);
 impl Ref {
     /// Updates the operator with a new value and gets reference value.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Need enough data in the buffer
+        let len = self.base.buffer().len();
+        if len <= self.period {
+            // Not enough data yet
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() > self.period {
-            // Get value from N periods ago (counting from current position)
-            // For period=1: current is at len-1, 1 period ago is at len-1-1 = len-2
-            let len = self.base.buffer().len();
-            if len > self.period {
-                let ref_index = len - 1 - self.period;
-                if let Some(ref_value) = self.base.buffer().get(ref_index) {
-                    self.base.set_value(ref_value);
-                }
+        // Get value from N periods ago (counting from current position)
+        // For period=1: current is at len-1, 1 period ago is at len-1-1 = len-2
+        let ref_index = len - 1 - self.period;
+        if let Some(ref_value) = self.base.buffer().get(ref_index) {
+            // Check if the reference value is valid (non-NaN)
+            if !ref_value.is_nan() {
+                self.base.set_value(ref_value);
+            } else {
+                // Reference value is NaN, reuse last valid ref
+                self.base.set_stale_value();
             }
+        } else {
+            // Failed to get value, reuse last
+            self.base.set_stale_value();
         }
     }
 }
@@ -428,32 +428,43 @@ impl_rolling_operator_common!(Rank);
 impl Rank {
     /// Updates the operator with a new value and calculates rank.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid rank
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
+        // Find the latest valid value by scanning backward from the end
+        let all_values = self.base.buffer().window();
+        let current_value = all_values
+            .iter()
+            .rev()
+            .find(|&&x| !x.is_nan())
+            .copied();
 
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            let values = self.base.buffer().window();
-            let current_value = values[values.len() - 1]; // Use latest value in buffer
+        if let Some(current) = current_value {
+            // Compute rank using only valid values
+            let valid_values = self.base.buffer().values_valid();
 
             // Count how many values are less than current value
-            let smaller_count = values.iter().filter(|&&x| x < current_value).count() as f64;
+            let smaller_count = valid_values.iter().filter(|&&x| x < current).count() as f64;
 
             // Normalize rank to [0, 1] range
             // 0 = smallest value, 1 = largest value
-            let rank = if values.len() <= 1 {
+            let rank = if valid_values.len() <= 1 {
                 0.0
             } else {
-                smaller_count / (values.len() - 1) as f64
+                smaller_count / (valid_values.len() - 1) as f64
             };
 
             self.base.set_value(rank);
+        } else {
+            // No valid value found, reuse last
+            self.base.set_stale_value();
         }
     }
 }
@@ -479,26 +490,29 @@ impl_rolling_operator_common!(Argmax);
 impl Argmax {
     /// Updates the operator with a new value and finds argmax.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid argmax
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
+        // Find argmax among valid values (filter NaN)
+        let values = self.base.buffer().window();
 
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            let values = self.base.buffer().window();
-
-            if let Some((argmax_idx, _)) = values
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            {
-                self.base.set_value(argmax_idx as f64);
-            }
+        if let Some((argmax_idx, _)) = values
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| !v.is_nan())
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        {
+            self.base.set_value(argmax_idx as f64);
+        } else {
+            // No valid values found, reuse last
+            self.base.set_stale_value();
         }
     }
 }
@@ -524,26 +538,29 @@ impl_rolling_operator_common!(Argmin);
 impl Argmin {
     /// Updates the operator with a new value and finds argmin.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid argmin
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
+        // Find argmin among valid values (filter NaN)
+        let values = self.base.buffer().window();
 
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            let values = self.base.buffer().window();
-
-            if let Some((argmin_idx, _)) = values
-                .iter()
-                .enumerate()
-                .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            {
-                self.base.set_value(argmin_idx as f64);
-            }
+        if let Some((argmin_idx, _)) = values
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| !v.is_nan())
+            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        {
+            self.base.set_value(argmin_idx as f64);
+        } else {
+            // No valid values found, reuse last
+            self.base.set_stale_value();
         }
     }
 }
@@ -569,25 +586,23 @@ impl_rolling_operator_common!(Product);
 impl Product {
     /// Updates the operator with a new value and calculates product.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid product
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            let product = self
-                .base
-                .buffer()
-                .window()
-                .iter()
-                .fold(1.0, |acc, &x| acc * x);
-            self.base.set_value(product);
-        }
+        // Compute product from valid values (filter NaN)
+        let product = self
+            .base
+            .buffer()
+            .iter_valid()
+            .fold(1.0, |acc, x| acc * x);
+        self.base.set_value(product);
     }
 }
 
@@ -596,8 +611,6 @@ impl Product {
 #[derive(Debug)]
 pub struct ZScore {
     base: BaseOperator,
-    sum: f64,
-    sum_sq: f64,
     ddof: usize,
 }
 
@@ -607,8 +620,6 @@ impl ZScore {
     pub fn new(window_size: usize, ddof: usize) -> Self {
         Self {
             base: BaseOperator::new("ZScore", window_size),
-            sum: 0.0,
-            sum_sq: 0.0,
             ddof,
         }
     }
@@ -619,54 +630,38 @@ impl_rolling_operator_common!(ZScore);
 impl ZScore {
     /// Updates the operator with a new value and calculates ZScore.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Get the latest valid value by scanning backward
+        let all_values = self.base.buffer().window();
+        let current_value = all_values
+            .iter()
+            .rev()
+            .find(|&&x| !x.is_nan())
+            .copied();
+
+        // Check if we have any valid values and a valid current value
+        if self.base.buffer().valid_len() == 0 || current_value.is_none() {
+            // No valid values: reuse last valid zscore
+            self.base.set_stale_value();
             return;
         }
 
-        // Check if buffer is full and we need to subtract old value
-        if self.base.buffer().is_full() {
-            if let Some(old_value) = self.base.buffer().get(0) {
-                self.sum -= old_value;
-                self.sum_sq -= old_value * old_value;
-            }
-        }
+        let current = current_value.unwrap();
 
-        // Add new value to buffer and running sums
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-        self.sum += value;
-        self.sum_sq += value * value;
+        // Use buffer's NaN-aware mean and std
+        let mean = self.base.buffer().mean();
+        let std = self.base.buffer().std(self.ddof);
 
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            // Use the actual buffer count, not valid_count for window calculations
-            let n = self
-                .base
-                .buffer()
-                .count()
-                .min(self.base.buffer().window_size()) as f64;
-            let mean = self.sum / n;
-
-            // Calculate standard deviation with safety checks
-            let denom = n - self.ddof as f64;
-            if denom <= 0.0 {
-                // Not enough degrees of freedom for std calculation
-                self.base.set_value(f64::NAN);
-                return;
-            }
-
-            let variance = (self.sum_sq - self.sum * self.sum / n) / denom;
-
-            if variance > 0.0 {
-                let std = variance.sqrt();
-                // ZScore = (current_value - mean) / std
-                let zscore = (value - mean) / std;
-                self.base.set_value(zscore);
-            } else {
-                // No variation or negative variance (numerical error), zscore is undefined
-                self.base.set_value(f64::NAN);
-            }
+        // Check if std is valid and non-zero
+        if std.is_nan() || std <= 0.0 {
+            // Cannot compute zscore, reuse last valid
+            self.base.set_stale_value();
+        } else {
+            // ZScore = (current_value - mean) / std
+            let zscore = (current - mean) / std;
+            self.base.set_value(zscore);
         }
     }
 }
@@ -676,7 +671,6 @@ impl ZScore {
 #[derive(Debug)]
 pub struct Demean {
     base: BaseOperator,
-    sum: f64,
 }
 
 impl Demean {
@@ -685,7 +679,6 @@ impl Demean {
     pub fn new(window_size: usize) -> Self {
         Self {
             base: BaseOperator::new("Demean", window_size),
-            sum: 0.0,
         }
     }
 }
@@ -695,34 +688,36 @@ impl_rolling_operator_common!(Demean);
 impl Demean {
     /// Updates the operator with a new value and calculates demeaned value.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Get the latest valid value by scanning backward
+        let all_values = self.base.buffer().window();
+        let current_value = all_values
+            .iter()
+            .rev()
+            .find(|&&x| !x.is_nan())
+            .copied();
+
+        // Check if we have any valid values and a valid current value
+        if self.base.buffer().valid_len() == 0 || current_value.is_none() {
+            // No valid values: reuse last valid demeaned value
+            self.base.set_stale_value();
             return;
         }
 
-        // Check if buffer is full and we need to subtract old value
-        if self.base.buffer().is_full() {
-            if let Some(old_value) = self.base.buffer().get(0) {
-                self.sum -= old_value;
-            }
-        }
+        let current = current_value.unwrap();
 
-        // Add new value to buffer and running sum
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-        self.sum += value;
+        // Use buffer's NaN-aware mean
+        let mean = self.base.buffer().mean();
 
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            // Use the actual buffer count, not valid_count for window mean
-            let n = self
-                .base
-                .buffer()
-                .count()
-                .min(self.base.buffer().window_size()) as f64;
-            let mean = self.sum / n;
+        // Check if mean is valid
+        if mean.is_nan() {
+            // Cannot compute demean, reuse last valid
+            self.base.set_stale_value();
+        } else {
             // Demeaned value = current_value - mean
-            let demeaned = value - mean;
+            let demeaned = current - mean;
             self.base.set_value(demeaned);
         }
     }
@@ -995,6 +990,65 @@ mod tests {
         assert!(q_small.value().is_finite());
         assert!(q_large.value().is_finite());
     }
+
+    #[test]
+    fn test_quantile_reset_clears_state() {
+        // Test with small window (SortedArray implementation)
+        let mut q_small = Quantile::new(5, 0.5);
+
+        // Fill with initial data [100, 101, 102, 103, 104]
+        for i in 100..=104 {
+            q_small.update(i as f64);
+        }
+        assert!(q_small.is_ready());
+        let old_median = q_small.value();
+        assert!((old_median - 102.0).abs() < 1e-10, "Expected median 102.0");
+
+        // Reset operator
+        q_small.reset();
+        assert!(!q_small.is_ready(), "Should not be ready after reset");
+        assert!(q_small.value().is_nan(), "Value should be NaN after reset");
+
+        // Fill with new data [1, 2, 3, 4, 5]
+        for i in 1..=5 {
+            q_small.update(i as f64);
+        }
+        assert!(q_small.is_ready());
+        let new_median = q_small.value();
+        assert!(
+            (new_median - 3.0).abs() < 1e-10,
+            "Expected median 3.0 from new data, got {}",
+            new_median
+        );
+
+        // Test with large window (DualHeap implementation)
+        let mut q_large = Quantile::new(SMALL_WINDOW_THRESHOLD + 100, 0.5);
+
+        // Fill with initial data [1000..2099]
+        for i in 1000..=2099 {
+            q_large.update(i as f64);
+        }
+        assert!(q_large.is_ready());
+        let old_median_large = q_large.value();
+
+        // Reset operator
+        q_large.reset();
+        assert!(!q_large.is_ready(), "Should not be ready after reset");
+        assert!(q_large.value().is_nan(), "Value should be NaN after reset");
+
+        // Fill with new data [10..1134]
+        for i in 10..(10 + SMALL_WINDOW_THRESHOLD + 100) {
+            q_large.update(i as f64);
+        }
+        assert!(q_large.is_ready());
+        let new_median_large = q_large.value();
+
+        // New median should be significantly different from old median
+        assert!(
+            (new_median_large - old_median_large).abs() > 500.0,
+            "New median should differ from old median by at least 500"
+        );
+    }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -1043,40 +1097,100 @@ impl Quantile {
 
     /// Updates the operator with a new value.
     pub fn update_internal(&mut self, value: f64) {
-        // Filter NaN values
-        if value.is_nan() {
-            return;
-        }
-
-        self.base.increment_valid_count();
-
+        // Always advance the window (implementations handle NaN internally)
         match &mut self.implementation {
             QuantileImpl::SortedArray(inner) => {
                 inner.push(value);
                 if inner.is_ready() {
                     let q = inner.quantile_r7(self.phi);
-                    self.base.set_value(q);
+                    if q.is_nan() {
+                        // No valid values, reuse last valid quantile
+                        self.base.set_stale_value();
+                    } else {
+                        self.base.set_value(q);
+                    }
+                } else if value.is_nan() {
+                    // Not ready yet, but got NaN - reuse last
+                    self.base.set_stale_value();
                 }
             }
             QuantileImpl::DualHeap(inner) => {
                 inner.push(value);
                 if inner.is_ready() {
                     let q = inner.quantile_r7();
-                    self.base.set_value(q);
+                    if q.is_nan() {
+                        // No valid values, reuse last valid quantile
+                        self.base.set_stale_value();
+                    } else {
+                        self.base.set_value(q);
+                    }
+                } else if value.is_nan() {
+                    // Not ready yet, but got NaN - reuse last
+                    self.base.set_stale_value();
                 }
             }
         }
     }
 }
 
-impl_rolling_operator_common!(Quantile);
+// Manual implementation of RollingOperator for Quantile
+// (to provide custom reset that clears internal state)
+impl RollingOperator for Quantile {
+    #[inline]
+    fn name(&self) -> &str {
+        &self.base.name
+    }
+
+    #[inline]
+    fn window_size(&self) -> usize {
+        self.base.buffer.window_size()
+    }
+
+    #[inline]
+    fn is_ready(&self) -> bool {
+        self.base.buffer.count() >= self.base.buffer.window_size()
+    }
+
+    #[inline]
+    fn value(&self) -> f64 {
+        if self.is_ready() {
+            self.base.value
+        } else {
+            f64::NAN
+        }
+    }
+
+    #[inline]
+    fn update(&mut self, value: f64) {
+        self.update_internal(value);
+    }
+
+    #[inline]
+    fn count(&self) -> usize {
+        self.base.buffer.count()
+    }
+
+    /// Custom reset implementation that clears internal quantile state.
+    fn reset(&mut self) {
+        // Reset base operator state
+        self.base.buffer.reset();
+        self.base.value = f64::NAN;
+        self.base.last_valid_value = None;
+
+        // Reset implementation-specific state
+        match &mut self.implementation {
+            QuantileImpl::SortedArray(inner) => inner.reset(),
+            QuantileImpl::DualHeap(inner) => inner.reset(),
+        }
+    }
+}
 
 /// Sorted array implementation for small windows.
 #[derive(Debug)]
 struct SortedArrayQuantile {
     window_size: usize,
-    time_order: VecDeque<f64>, // Maintains insertion order
-    sorted: Vec<f64>,          // Maintains sorted order
+    time_order: VecDeque<Option<f64>>, // Maintains insertion order (None for NaN)
+    sorted: Vec<f64>,                  // Maintains sorted order (valid values only)
 }
 
 impl SortedArrayQuantile {
@@ -1089,31 +1203,37 @@ impl SortedArrayQuantile {
     }
 
     fn push(&mut self, value: f64) {
-        // Add to time order queue
-        self.time_order.push_back(value);
+        // Add to time order queue (None for NaN, Some for valid values)
+        let opt_value = if value.is_nan() { None } else { Some(value) };
+        self.time_order.push_back(opt_value);
 
-        // Binary search insertion into sorted array
-        let pos = self
-            .sorted
-            .binary_search_by(|x| x.partial_cmp(&value).unwrap())
-            .unwrap_or_else(|i| i);
-        self.sorted.insert(pos, value);
+        // Only insert valid values into sorted array
+        if let Some(v) = opt_value {
+            let pos = self
+                .sorted
+                .binary_search_by(|x| x.partial_cmp(&v).unwrap())
+                .unwrap_or_else(|i| i);
+            self.sorted.insert(pos, v);
+        }
 
         // Remove oldest if window is full
         if self.time_order.len() > self.window_size {
             let old_value = self.time_order.pop_front().unwrap();
 
-            // Binary search and remove from sorted array
-            let pos = self
-                .sorted
-                .binary_search_by(|x| x.partial_cmp(&old_value).unwrap())
-                .expect("Value must exist in sorted array");
-            self.sorted.remove(pos);
+            // Only remove from sorted array if it was a valid value
+            if let Some(old_val) = old_value {
+                let pos = self
+                    .sorted
+                    .binary_search_by(|x| x.partial_cmp(&old_val).unwrap())
+                    .expect("Value must exist in sorted array");
+                self.sorted.remove(pos);
+            }
         }
     }
 
     fn is_ready(&self) -> bool {
-        !self.sorted.is_empty()
+        // Ready once we have window_size updates (not just valid values)
+        self.time_order.len() >= self.window_size && !self.sorted.is_empty()
     }
 
     /// Calculates quantile using R-7 method (pandas default).
@@ -1146,6 +1266,12 @@ impl SortedArrayQuantile {
             (1.0 - g) * self.sorted[idx] + g * self.sorted[idx + 1]
         }
     }
+
+    /// Resets internal state (clears time_order and sorted arrays).
+    fn reset(&mut self) {
+        self.time_order.clear();
+        self.sorted.clear();
+    }
 }
 
 /// Dual heap implementation for medium/large windows.
@@ -1153,12 +1279,12 @@ impl SortedArrayQuantile {
 struct DualHeapQuantile {
     window_size: usize,
     phi: f64,
-    time_order: VecDeque<f64>,
-    left: BinaryHeap<OrderedFloat>, // max-heap for lower quantiles
+    time_order: VecDeque<Option<f64>>, // Maintains insertion order (None for NaN)
+    left: BinaryHeap<OrderedFloat>,    // max-heap for lower quantiles
     right: BinaryHeap<Reverse<OrderedFloat>>, // min-heap for upper quantiles
-    del_left: HashMap<u64, usize>,  // Lazy deletion counters
+    del_left: HashMap<u64, usize>,     // Lazy deletion counters
     del_right: HashMap<u64, usize>,
-    active_count: usize,
+    active_count: usize, // Count of valid (non-NaN) values in current window
 }
 
 /// Wrapper for f64 to implement Ord for heap operations.
@@ -1316,42 +1442,53 @@ impl DualHeapQuantile {
     }
 
     fn push(&mut self, value: f64) {
-        self.time_order.push_back(value);
-        self.active_count += 1;
+        // Add to time order queue (None for NaN, Some for valid values)
+        let opt_value = if value.is_nan() { None } else { Some(value) };
+        self.time_order.push_back(opt_value);
 
-        let ordered = OrderedFloat(value);
+        // Only insert valid values into heaps
+        if let Some(v) = opt_value {
+            self.active_count += 1;
 
-        // Insert into appropriate heap
-        self.prune_left();
-        if self.left.is_empty() || value <= self.left.peek().unwrap().0 {
-            self.left.push(ordered);
-        } else {
-            self.right.push(Reverse(ordered));
-        }
+            let ordered = OrderedFloat(v);
 
-        self.rebalance();
-
-        // Remove oldest if window is full
-        if self.time_order.len() > self.window_size {
-            let old_value = self.time_order.pop_front().unwrap();
-            self.active_count -= 1;
-
-            let k = Self::key(old_value);
-
-            // Determine which heap contains the old value
+            // Insert into appropriate heap
             self.prune_left();
-            if !self.left.is_empty() && old_value <= self.left.peek().unwrap().0 {
-                *self.del_left.entry(k).or_insert(0) += 1;
+            if self.left.is_empty() || v <= self.left.peek().unwrap().0 {
+                self.left.push(ordered);
             } else {
-                *self.del_right.entry(k).or_insert(0) += 1;
+                self.right.push(Reverse(ordered));
             }
 
             self.rebalance();
         }
+
+        // Remove oldest if window is full
+        if self.time_order.len() > self.window_size {
+            let old_value = self.time_order.pop_front().unwrap();
+
+            // Only process if it was a valid value
+            if let Some(old_val) = old_value {
+                self.active_count -= 1;
+
+                let k = Self::key(old_val);
+
+                // Determine which heap contains the old value
+                self.prune_left();
+                if !self.left.is_empty() && old_val <= self.left.peek().unwrap().0 {
+                    *self.del_left.entry(k).or_insert(0) += 1;
+                } else {
+                    *self.del_right.entry(k).or_insert(0) += 1;
+                }
+
+                self.rebalance();
+            }
+        }
     }
 
     fn is_ready(&self) -> bool {
-        self.active_count > 0
+        // Ready once we have window_size updates (not just valid values)
+        self.time_order.len() >= self.window_size && self.active_count > 0
     }
 
     /// Calculates quantile using R-7 method with interpolation.
@@ -1384,5 +1521,15 @@ impl DualHeapQuantile {
 
         let q_high = self.right.peek().unwrap().0.0;
         (1.0 - g) * q_low + g * q_high
+    }
+
+    /// Resets internal state (clears heaps, deletion maps, and counters).
+    fn reset(&mut self) {
+        self.time_order.clear();
+        self.left.clear();
+        self.right.clear();
+        self.del_left.clear();
+        self.del_right.clear();
+        self.active_count = 0;
     }
 }

@@ -96,6 +96,11 @@ tests/unit_tests/catalog/
 tests/unit_tests/persistence/catalog/
 tests/test_data/**/backtest/**
 
+# FactorExp Research
+factorexp_backtest/research/results/
+factorexp_backtest/research/notebooks/*
+!factorexp_backtest/research/notebooks/factor_playground.ipynb
+
 # Exceptions
 !tests/test_data/large/checksums.json
 !tests/test_data/nautilus/*/**.parquet

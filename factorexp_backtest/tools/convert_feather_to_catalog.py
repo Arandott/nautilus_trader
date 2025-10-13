@@ -34,10 +34,13 @@ from pathlib import Path
 
 import pandas as pd
 import pyarrow.feather as feather
+from decimal import Decimal
+from tqdm import tqdm
 
 from nautilus_trader.core.nautilus_pyo3 import Quantity
 from nautilus_trader.persistence.catalog.parquet import ParquetDataCatalog
 from nautilus_trader.persistence.wranglers_v2 import BarDataWranglerV2
+from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
 
 @dataclass
@@ -61,10 +64,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--aggregation", type=str, default="MINUTE", choices=["MINUTE"], help="Aggregation unit (currently only MINUTE)")
     parser.add_argument("--price-type", type=str, default="LAST", help="Price type segment (default: LAST)")
     parser.add_argument("--aggregation-source", type=str, default="EXTERNAL", help="Aggregation source segment (default: EXTERNAL)")
-    parser.add_argument("--price-precision", type=int, default=6, help="Price precision passed to BarDataWranglerV2")
-    parser.add_argument("--size-precision", type=int, default=0, help="Size precision passed to BarDataWranglerV2")
-    parser.add_argument("--amt-precision", type=int, default=2, help="Fixed precision used for amt Quantity serialization")
+    parser.add_argument("--price-precision", type=int, default=None, help="Price precision (default: auto-detect from TestInstrumentProvider or data)")
+    parser.add_argument("--size-precision", type=int, default=None, help="Size precision (default: auto-detect from TestInstrumentProvider or data)")
     parser.add_argument("--dry-run", action="store_true", help="Parse inputs and report stats without writing Parquet files")
+    parser.add_argument("--quiet", action="store_true", help="Disable progress bars")
     return parser.parse_args(argv)
 
 
@@ -102,11 +105,188 @@ def normalise_dataframe(file_path: Path) -> pd.DataFrame:
     )
     df["ts_event"] = ts_event
     df["ts_init"] = ts_event
+
+    # Forward-fill NaN values in all data columns (per symbol)
+    # This handles trading halts or data gaps by propagating the last known value
+    # Note: BarDataWranglerV2 expects clean data (nullable=False in PyArrow schema)
+    data_cols = ["open", "high", "low", "close", "volume", "amt"]
+    if df[data_cols].isna().any().any():
+        # Group by symbol and forward-fill within each group
+        df[data_cols] = df.groupby("code")[data_cols].ffill()
+
+        # Drop rows that still have NaN (first bars of each symbol if they start with NaN)
+        remaining_nan = df[data_cols].isna().any(axis=1)
+        if remaining_nan.any():
+            nan_count = remaining_nan.sum()
+            symbols_affected = df.loc[remaining_nan, "code"].unique()
+            print(
+                f"  Warning: {file_path.stem} - dropping {nan_count} rows with leading NaN "
+                f"(symbols: {', '.join(symbols_affected)})",
+                file=sys.stderr,
+            )
+            df = df[~remaining_nan].copy()
+
     return df
 
 
 def build_bar_type(symbol: str, venue: str, step: int, aggregation: str, price_type: str, source: str) -> str:
     return f"{symbol}.{venue}-{step}-{aggregation}-{price_type}-{source}"
+
+
+def get_decimal_precision(value: float) -> int:
+    """Get decimal precision of a float value."""
+    if pd.isna(value) or value == 0:
+        return 0
+    decimal_str = f"{value:.15f}".rstrip("0").rstrip(".")
+    if "." not in decimal_str:
+        return 0
+    return len(decimal_str.split(".")[1])
+
+
+def detect_data_precision(df: pd.DataFrame, column: str) -> int:
+    """Detect maximum precision in a DataFrame column by scanning all values."""
+    max_precision = 0
+    # Sample up to 10000 rows to avoid performance issues
+    sample_size = min(10000, len(df))
+    sample = df[column].sample(n=sample_size, random_state=42) if len(df) > sample_size else df[column]
+
+    for value in sample:
+        if pd.notna(value):
+            precision = get_decimal_precision(value)
+            max_precision = max(max_precision, precision)
+
+    return max_precision
+
+
+def resolve_bars_precision(
+    symbol: str,
+    venue: str,
+    price_precision: int | None = None,
+    size_precision: int | None = None,
+    df: pd.DataFrame | None = None,
+) -> tuple[int, int]:
+    """
+    Resolve price and size precision for a symbol.
+
+    Strategy:
+    1. Use explicit CLI overrides if provided
+    2. Try TestInstrumentProvider for known instruments
+    3. Fall back to data scanning if neither is available
+
+    Parameters
+    ----------
+    symbol : str
+        Trading symbol (e.g., "BTCUSDT")
+    venue : str
+        Venue name (e.g., "BINANCE")
+    price_precision : int | None
+        Explicit price precision override
+    size_precision : int | None
+        Explicit size precision override
+    df : pd.DataFrame | None
+        Data frame to scan if auto-detection is needed
+
+    Returns
+    -------
+    tuple[int, int]
+        (price_precision, size_precision)
+
+    Raises
+    ------
+    ValueError
+        If precision cannot be resolved (no CLI override, no provider, no data)
+    """
+    resolved_price = price_precision
+    resolved_size = size_precision
+    source = "CLI override"
+
+    # Try TestInstrumentProvider for known instruments
+    if resolved_price is None or resolved_size is None:
+        try:
+            provider = TestInstrumentProvider()
+            instrument_method = f"{symbol.lower()}_{venue.lower()}"
+            if hasattr(provider, instrument_method):
+                instrument = getattr(provider, instrument_method)()
+                if resolved_price is None:
+                    resolved_price = instrument.price_precision
+                if resolved_size is None:
+                    resolved_size = instrument.size_precision
+                source = "TestInstrumentProvider"
+        except Exception:
+            pass  # Fall through to data scanning
+
+    # Fall back to data scanning
+    if (resolved_price is None or resolved_size is None) and df is not None:
+        if resolved_price is None:
+            # Scan OHLC columns for max precision
+            price_cols = ["open", "high", "low", "close"]
+            max_price_precision = 0
+            for col in price_cols:
+                if col in df.columns:
+                    col_precision = detect_data_precision(df, col)
+                    max_price_precision = max(max_price_precision, col_precision)
+            resolved_price = max_price_precision
+
+        if resolved_size is None and "volume" in df.columns:
+            resolved_size = detect_data_precision(df, "volume")
+
+        source = "data scanning"
+
+    # Validate we have both values
+    if resolved_price is None or resolved_size is None:
+        raise ValueError(
+            f"Cannot resolve precision for {symbol}.{venue}: "
+            f"price_precision={resolved_price}, size_precision={resolved_size}. "
+            f"Provide --price-precision and --size-precision or ensure data is available."
+        )
+
+    return resolved_price, resolved_size, source
+
+
+def quantize_dataframe(
+    df: pd.DataFrame,
+    price_precision: int,
+    size_precision: int,
+) -> pd.DataFrame:
+    """
+    Quantize OHLCV data to target precision using Decimal for accuracy.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Data frame with OHLC, volume, and amt columns
+    price_precision : int
+        Target precision for price columns (open, high, low, close)
+    size_precision : int
+        Target precision for size column (volume)
+
+    Returns
+    -------
+    pd.DataFrame
+        Quantized data frame (copy)
+    """
+    df = df.copy()
+
+    # Quantize price columns
+    price_cols = ["open", "high", "low", "close"]
+    quantizer = Decimal(10) ** -price_precision
+
+    for col in price_cols:
+        if col in df.columns:
+            df[col] = df[col].apply(
+                lambda x: float(Decimal(str(x)).quantize(quantizer)) if pd.notna(x) else x
+            )
+
+    # Quantize volume
+    if "volume" in df.columns:
+        vol_quantizer = Decimal(10) ** -size_precision
+        df["volume"] = df["volume"].apply(
+            lambda x: float(Decimal(str(x)).quantize(vol_quantizer)) if pd.notna(x) else x
+        )
+
+    # Note: amt precision is less critical and will be handled by Quantity serialization
+
+    return df
 
 
 def build_quantity(value: float, precision: int) -> Quantity:
@@ -115,9 +295,13 @@ def build_quantity(value: float, precision: int) -> Quantity:
     return Quantity.from_raw(raw, precision)
 
 
-def collect_rows(root: Path, symbols: Iterable[str], start: datetime | None, end: datetime | None) -> dict[str, pd.DataFrame]:
+def collect_rows(root: Path, symbols: Iterable[str], start: datetime | None, end: datetime | None, *, quiet: bool = False) -> dict[str, pd.DataFrame]:
     frames: dict[str, list[pd.DataFrame]] = defaultdict(list)
-    for file_path in iter_feather_files(root, start, end):
+
+    # Convert to list to get count for progress bar
+    file_list = list(iter_feather_files(root, start, end))
+
+    for file_path in tqdm(file_list, desc="Collecting data", unit="file", disable=quiet):
         df = normalise_dataframe(file_path)
         for symbol in symbols:
             subset = df[df["code"].str.upper() == symbol.upper()]
@@ -126,16 +310,19 @@ def collect_rows(root: Path, symbols: Iterable[str], start: datetime | None, end
     return {symbol: pd.concat(frames_list, ignore_index=True).sort_values("ts_event") for symbol, frames_list in frames.items() if frames_list}
 
 
-def detect_symbols(root: Path, start: datetime | None, end: datetime | None) -> list[str]:
+def detect_symbols(root: Path, start: datetime | None, end: datetime | None, *, quiet: bool = False) -> list[str]:
     symbols: set[str] = set()
-    for file_path in iter_feather_files(root, start, end):
+
+    # Convert to list to get count for progress bar
+    file_list = list(iter_feather_files(root, start, end))
+
+    for file_path in tqdm(file_list, desc="Scanning symbols", unit="file", disable=quiet):
         table = feather.read_table(file_path, columns=["code"])
         symbols.update(code.upper() for code in table.column("code").to_pylist())
     return sorted(symbols)
 
 
 def build_catalog(
-    root: Path,
     catalog_path: Path,
     symbol_frames: dict[str, pd.DataFrame],
     venue: str,
@@ -143,10 +330,11 @@ def build_catalog(
     aggregation: str,
     price_type: str,
     source: str,
-    price_precision: int,
-    size_precision: int,
-    amt_precision: int,
+    price_precision: int | None,
+    size_precision: int | None,
     dry_run: bool,
+    *,
+    quiet: bool = False,
 ) -> list[ConversionStats]:
     catalog_path = catalog_path.resolve()
     catalog_path.mkdir(parents=True, exist_ok=True)
@@ -154,11 +342,28 @@ def build_catalog(
     catalog = ParquetDataCatalog(str(catalog_path))
     stats: list[ConversionStats] = []
 
-    for symbol, df in symbol_frames.items():
+    # Progress bar for symbol conversion
+    desc = "Converting (dry-run)" if dry_run else "Converting & writing"
+    for symbol, df in tqdm(symbol_frames.items(), desc=desc, unit="symbol", disable=quiet):
+        # Resolve precision for this symbol
+        resolved_price_prec, resolved_size_prec, prec_source = resolve_bars_precision(
+            symbol=symbol,
+            venue=venue,
+            price_precision=price_precision,
+            size_precision=size_precision,
+            df=df,
+        )
+
+        if not quiet:
+            print(f"  {symbol}: price_precision={resolved_price_prec}, size_precision={resolved_size_prec} (source: {prec_source})")
+
+        # Quantize data to target precision
+        df_quantized = quantize_dataframe(df, resolved_price_prec, resolved_size_prec)
+
         bar_type = build_bar_type(symbol, venue, step, aggregation, price_type, source)
-        wrangler = BarDataWranglerV2(bar_type=bar_type, price_precision=price_precision, size_precision=size_precision)
+        wrangler = BarDataWranglerV2(bar_type=bar_type, price_precision=resolved_price_prec, size_precision=resolved_size_prec)
         # Include 'amt' column for extended bar fields (wrangler auto-detects from EXTENDED_BAR_FIELD_SPECS)
-        frame = df[["open", "high", "low", "close", "volume", "ts_event", "ts_init", "amt"]].copy()
+        frame = df_quantized[["open", "high", "low", "close", "volume", "ts_event", "ts_init", "amt"]].copy()
         bars = wrangler.from_pandas(frame)
 
         if dry_run:
@@ -198,7 +403,7 @@ def main(argv: Sequence[str]) -> int:
     end = datetime.strptime(args.end_date, "%Y-%m-%d") if args.end_date else None
 
     if args.symbols.strip().upper() == "ALL":
-        symbols = detect_symbols(feather_root, start, end)
+        symbols = detect_symbols(feather_root, start, end, quiet=args.quiet)
     else:
         symbols = [symbol.strip().upper() for symbol in args.symbols.split(",") if symbol.strip()]
 
@@ -206,13 +411,12 @@ def main(argv: Sequence[str]) -> int:
         print("No symbols selected; nothing to do.", file=sys.stderr)
         return 0
 
-    symbol_frames = collect_rows(feather_root, symbols, start, end)
+    symbol_frames = collect_rows(feather_root, symbols, start, end, quiet=args.quiet)
     missing = sorted(set(symbols) - set(symbol_frames.keys()))
     if missing:
         print(f"Warning: no rows found for symbols {missing}", file=sys.stderr)
 
     stats = build_catalog(
-        feather_root,
         args.catalog_path,
         symbol_frames,
         args.venue.upper(),
@@ -222,8 +426,8 @@ def main(argv: Sequence[str]) -> int:
         args.aggregation_source.upper(),
         args.price_precision,
         args.size_precision,
-        args.amt_precision,
         args.dry_run,
+        quiet=args.quiet,
     )
 
     if not stats:

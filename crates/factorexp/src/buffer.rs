@@ -25,13 +25,23 @@ pub const MAX_WINDOW_SIZE: usize = 8_192;
 ///
 /// This buffer uses a fixed-size circular array for optimal cache performance
 /// and minimal memory allocation.
+///
+/// # NaN Handling
+///
+/// The buffer stores all values (including NaN) to maintain proper window timing,
+/// but separates valid (non-NaN) statistics for aggregations. This ensures:
+/// - Every update advances the window by one timestamp
+/// - Aggregations use only non-NaN values within the current window
+/// - When no valid values exist, operators can reuse their last valid output
 #[derive(Debug, Clone)]
 pub struct RollingBuffer {
     data: ArrayDeque<f64, MAX_WINDOW_SIZE, Wrapping>,
     window_size: usize,
     count: usize,
-    sum: f64,
-    sum_sq: f64,
+    // Valid value statistics (excluding NaN)
+    valid_len: usize,
+    valid_sum: f64,
+    valid_sum_sq: f64,
 }
 
 impl RollingBuffer {
@@ -54,12 +64,16 @@ impl RollingBuffer {
             data: ArrayDeque::new(),
             window_size,
             count: 0,
-            sum: 0.0,
-            sum_sq: 0.0,
+            valid_len: 0,
+            valid_sum: 0.0,
+            valid_sum_sq: 0.0,
         }
     }
 
     /// Updates the buffer with a new value.
+    ///
+    /// This method always advances the window by one timestamp, even if the value is NaN.
+    /// Valid (non-NaN) statistics are tracked separately to support NaN-aware aggregations.
     ///
     /// Returns the value that was evicted from the buffer, if any.
     pub fn update(&mut self, value: f64) -> Option<f64> {
@@ -72,13 +86,21 @@ impl RollingBuffer {
         let _ = self.data.push_back(value);
         self.count += 1;
 
-        // Update running statistics
-        self.sum += value;
-        self.sum_sq += value * value;
+        // Update valid value statistics (skip NaN)
+        let value_is_valid = !value.is_nan();
+        if value_is_valid {
+            self.valid_len += 1;
+            self.valid_sum += value;
+            self.valid_sum_sq += value * value;
+        }
 
+        // Subtract evicted valid value's contribution
         if let Some(old_value) = evicted {
-            self.sum -= old_value;
-            self.sum_sq -= old_value * old_value;
+            if !old_value.is_nan() {
+                self.valid_len -= 1;
+                self.valid_sum -= old_value;
+                self.valid_sum_sq -= old_value * old_value;
+            }
         }
 
         evicted
@@ -155,62 +177,123 @@ impl RollingBuffer {
         self.count
     }
 
-    /// Returns the current sum of values in the buffer.
+    /// Returns the number of valid (non-NaN) values in the current window.
+    #[inline]
+    #[must_use]
+    pub const fn valid_len(&self) -> usize {
+        self.valid_len
+    }
+
+    /// Returns the sum of valid (non-NaN) values in the buffer.
+    #[inline]
+    #[must_use]
+    pub const fn valid_sum(&self) -> f64 {
+        self.valid_sum
+    }
+
+    /// Returns the sum of squared valid (non-NaN) values in the buffer.
+    #[inline]
+    #[must_use]
+    pub const fn valid_sum_sq(&self) -> f64 {
+        self.valid_sum_sq
+    }
+
+    /// Returns the current sum of values in the buffer (deprecated, use valid_sum).
+    ///
+    /// # Deprecated
+    /// This method is deprecated. Use `valid_sum()` for NaN-aware summation.
     #[inline]
     #[must_use]
     pub const fn sum(&self) -> f64 {
-        self.sum
+        self.valid_sum
     }
 
-    /// Returns the current sum of squared values in the buffer.
+    /// Returns the current sum of squared values in the buffer (deprecated, use valid_sum_sq).
+    ///
+    /// # Deprecated
+    /// This method is deprecated. Use `valid_sum_sq()` for NaN-aware summation.
     #[inline]
     #[must_use]
     pub const fn sum_sq(&self) -> f64 {
-        self.sum_sq
+        self.valid_sum_sq
     }
 
-    /// Returns the mean of values in the buffer.
+    /// Returns the mean of valid (non-NaN) values in the buffer.
+    ///
+    /// Returns NaN if no valid values exist in the window.
     #[inline]
     #[must_use]
     pub fn mean(&self) -> f64 {
-        if self.is_empty() {
-            0.0
+        if self.valid_len == 0 {
+            f64::NAN
         } else {
-            self.sum / self.len() as f64
+            self.valid_sum / self.valid_len as f64
         }
     }
 
-    /// Returns the variance of values in the buffer.
+    /// Returns the variance of valid (non-NaN) values in the buffer.
+    ///
+    /// Returns NaN if there are insufficient valid values (valid_len <= ddof).
     #[inline]
     #[must_use]
     pub fn variance(&self, ddof: usize) -> f64 {
-        let n = self.len();
-        if n <= ddof {
-            return 0.0;
+        if self.valid_len <= ddof {
+            return f64::NAN;
         }
 
         let mean = self.mean();
-        let var = (self.sum_sq / n as f64) - mean * mean;
-        var * (n as f64 / (n - ddof) as f64)
+        let var = (self.valid_sum_sq / self.valid_len as f64) - mean * mean;
+        var * (self.valid_len as f64 / (self.valid_len - ddof) as f64)
     }
 
-    /// Returns the standard deviation of values in the buffer.
+    /// Returns the standard deviation of valid (non-NaN) values in the buffer.
+    ///
+    /// Returns NaN if there are insufficient valid values (valid_len <= ddof).
     #[inline]
     #[must_use]
     pub fn std(&self, ddof: usize) -> f64 {
         self.variance(ddof).sqrt()
     }
 
-    /// Returns the minimum value in the buffer.
+    /// Returns the minimum valid (non-NaN) value in the buffer.
+    ///
+    /// Returns None if no valid values exist.
     #[must_use]
     pub fn min(&self) -> Option<f64> {
-        self.data.iter().copied().reduce(f64::min)
+        self.data
+            .iter()
+            .copied()
+            .filter(|v| !v.is_nan())
+            .reduce(f64::min)
     }
 
-    /// Returns the maximum value in the buffer.
+    /// Returns the maximum valid (non-NaN) value in the buffer.
+    ///
+    /// Returns None if no valid values exist.
     #[must_use]
     pub fn max(&self) -> Option<f64> {
-        self.data.iter().copied().reduce(f64::max)
+        self.data
+            .iter()
+            .copied()
+            .filter(|v| !v.is_nan())
+            .reduce(f64::max)
+    }
+
+    /// Returns an iterator over valid (non-NaN) values in the buffer.
+    ///
+    /// This is a helper method for operators that need to process only valid values.
+    #[inline]
+    pub fn iter_valid(&self) -> impl Iterator<Item = f64> + '_ {
+        self.data.iter().copied().filter(|v| !v.is_nan())
+    }
+
+    /// Returns valid (non-NaN) values as a Vec.
+    ///
+    /// This allocates a new Vec containing only the valid values.
+    #[inline]
+    #[must_use]
+    pub fn values_valid(&self) -> Vec<f64> {
+        self.iter_valid().collect()
     }
 
     /// Returns the value at the given index.
@@ -238,8 +321,9 @@ impl RollingBuffer {
     pub fn reset(&mut self) {
         self.data.clear();
         self.count = 0;
-        self.sum = 0.0;
-        self.sum_sq = 0.0;
+        self.valid_len = 0;
+        self.valid_sum = 0.0;
+        self.valid_sum_sq = 0.0;
     }
 
     /// Alias for reset() method

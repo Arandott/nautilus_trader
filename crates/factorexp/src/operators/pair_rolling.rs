@@ -57,6 +57,8 @@ pub struct PairBaseOperator {
     sum_xx: f64,
     sum_yy: f64,
     sum_xy: f64,
+    // Joint validity tracking (torch-style semantics)
+    valid_pairs: usize,
 }
 
 impl PairBaseOperator {
@@ -71,6 +73,7 @@ impl PairBaseOperator {
             sum_xx: 0.0,
             sum_yy: 0.0,
             sum_xy: 0.0,
+            valid_pairs: 0,
         }
     }
 
@@ -86,17 +89,6 @@ impl PairBaseOperator {
         &mut self.base
     }
 
-    /// Gets the valid count.
-    #[inline]
-    pub fn valid_count(&self) -> usize {
-        self.base.valid_count()
-    }
-
-    /// Increments the valid count.
-    #[inline]
-    pub fn increment_valid_count(&mut self) {
-        self.base.increment_valid_count();
-    }
 
     /// Returns a reference to the X buffer.
     #[inline]
@@ -140,43 +132,57 @@ impl PairBaseOperator {
         self.sum_xy
     }
 
+    /// Returns the number of jointly-valid pairs in the current window.
+    #[inline]
+    pub fn valid_pairs(&self) -> usize {
+        self.valid_pairs
+    }
+
     /// Updates running statistics with new values (O(1) operation).
     pub fn update_statistics(&mut self, x: f64, y: f64) {
-        // Handle NaN inputs: skip if either value is NaN
-        if x.is_nan() || y.is_nan() {
-            return;
-        }
+        // Always advance both buffers, even for NaN
+        let evicted_x = self.buffer_x.update(x);
+        let evicted_y = self.buffer_y.update(y);
 
-        // Check if buffers are full and we need to subtract old values
-        if self.buffer_x.is_full() {
-            if let (Some(old_x), Some(old_y)) = (
-                self.buffer_x.get(0), // Oldest value in buffer
-                self.buffer_y.get(0),
-            ) {
-                // Subtract old values from running sums
+        // Track validity of input and evicted values (joint validity)
+        let input_valid = !x.is_nan() && !y.is_nan();
+        let evicted_valid = evicted_x.map_or(false, |v| !v.is_nan())
+            && evicted_y.map_or(false, |v| !v.is_nan());
+
+        // Subtract evicted valid pair from running sums and decrement valid_pairs
+        if evicted_valid {
+            if let (Some(old_x), Some(old_y)) = (evicted_x, evicted_y) {
                 self.sum_x -= old_x;
                 self.sum_y -= old_y;
                 self.sum_xx -= old_x * old_x;
                 self.sum_yy -= old_y * old_y;
                 self.sum_xy -= old_x * old_y;
+
+                // Decrement joint valid pairs counter
+                self.valid_pairs = self.valid_pairs.saturating_sub(1);
             }
         }
 
-        // Add new values to buffers
-        self.buffer_x.update(x);
-        self.buffer_y.update(y);
+        // Add new valid pair to running sums and increment valid_pairs
+        if input_valid {
+            self.sum_x += x;
+            self.sum_y += y;
+            self.sum_xx += x * x;
+            self.sum_yy += y * y;
+            self.sum_xy += x * y;
 
-        // Only increment valid count until we reach window size
-        if self.base.valid_count() < self.buffer_x.window_size() {
-            self.increment_valid_count();
+            // Increment joint valid pairs counter
+            self.valid_pairs += 1;
         }
 
-        // Add new values to running sums
-        self.sum_x += x;
-        self.sum_y += y;
-        self.sum_xx += x * x;
-        self.sum_yy += y * y;
-        self.sum_xy += x * y;
+        // Debug assertion: valid_pairs should never exceed the minimum of individual valid counts
+        debug_assert!(
+            self.valid_pairs <= self.buffer_x.valid_len().min(self.buffer_y.valid_len()),
+            "valid_pairs ({}) exceeds min(valid_x={}, valid_y={})",
+            self.valid_pairs,
+            self.buffer_x.valid_len(),
+            self.buffer_y.valid_len()
+        );
     }
 
     /// Sets the computed value.
@@ -194,6 +200,7 @@ impl PairBaseOperator {
         self.sum_xx = 0.0;
         self.sum_yy = 0.0;
         self.sum_xy = 0.0;
+        self.valid_pairs = 0;
     }
 }
 
@@ -214,7 +221,7 @@ macro_rules! impl_pair_rolling_operator_common {
 
             #[inline]
             fn is_ready(&self) -> bool {
-                self.base.base.valid_count >= self.base.base.buffer.window_size()
+                self.base.buffer_x.count() >= self.base.buffer_x.window_size()
             }
 
             #[inline]
@@ -239,7 +246,6 @@ macro_rules! impl_pair_rolling_operator_common {
             fn reset(&mut self) {
                 self.base.reset_statistics();
                 self.base.base.value = f64::NAN;
-                self.base.base.valid_count = 0;
                 self.base.base.last_valid_value = None;
             }
         }
@@ -269,24 +275,28 @@ impl Correlation {
     pub fn update_internal(&mut self, x: f64, y: f64) {
         self.base.update_statistics(x, y);
 
-        // Only compute if we have enough valid samples
-        if self.base.base().valid_count() >= self.base.buffer_x().window_size() {
-            let n = self.base.buffer_x().window_size() as f64;
+        // Check if we have any jointly-valid pairs in the current window
+        if self.base.valid_pairs() == 0 {
+            // No valid pairs, reuse last valid correlation
+            self.base.base.set_stale_value();
+            return;
+        }
 
-            // Correlation formula: (n*ΣXY - ΣX*ΣY) / sqrt((n*ΣX² - (ΣX)²)(n*ΣY² - (ΣY)²))
-            let numerator = n * self.base.sum_xy() - self.base.sum_x() * self.base.sum_y();
-            let denominator_x = n * self.base.sum_xx() - self.base.sum_x() * self.base.sum_x();
-            let denominator_y = n * self.base.sum_yy() - self.base.sum_y() * self.base.sum_y();
+        let n = self.base.valid_pairs() as f64;
 
-            let denominator = (denominator_x * denominator_y).sqrt();
+        // Correlation formula: (n*ΣXY - ΣX*ΣY) / sqrt((n*ΣX² - (ΣX)²)(n*ΣY² - (ΣY)²))
+        let numerator = n * self.base.sum_xy() - self.base.sum_x() * self.base.sum_y();
+        let denominator_x = n * self.base.sum_xx() - self.base.sum_x() * self.base.sum_x();
+        let denominator_y = n * self.base.sum_yy() - self.base.sum_y() * self.base.sum_y();
 
-            if denominator > f64::EPSILON {
-                let correlation = numerator / denominator;
-                self.base.set_value(correlation.clamp(-1.0, 1.0)); // Clamp to valid correlation range
-            } else {
-                // No variation in one or both series
-                self.base.set_value(f64::NAN);
-            }
+        let denominator = (denominator_x * denominator_y).sqrt();
+
+        if denominator > f64::EPSILON {
+            let correlation = numerator / denominator;
+            self.base.set_value(correlation.clamp(-1.0, 1.0)); // Clamp to valid correlation range
+        } else {
+            // No variation in one or both series, reuse last valid
+            self.base.base.set_stale_value();
         }
     }
 }
@@ -316,19 +326,23 @@ impl Covariance {
     pub fn update_internal(&mut self, x: f64, y: f64) {
         self.base.update_statistics(x, y);
 
-        // Only compute if we have enough valid samples
-        if self.base.base().valid_count() >= self.base.buffer_x().window_size() {
-            let n = self.base.buffer_x().window_size() as f64;
-
-            // Sample covariance: (ΣXY - ΣX*ΣY/n) / (n-ddof)
-            let mean_x = self.base.sum_x() / n;
-            let mean_y = self.base.sum_y() / n;
-            let mean_xy = self.base.sum_xy() / n;
-
-            let covariance = (mean_xy - mean_x * mean_y) * n / (n - self.ddof as f64);
-
-            self.base.set_value(covariance);
+        // Check if we have enough jointly-valid pairs for ddof
+        if self.base.valid_pairs() == 0 || self.base.valid_pairs() <= self.ddof {
+            // No valid pairs or insufficient for ddof, reuse last valid covariance
+            self.base.base.set_stale_value();
+            return;
         }
+
+        let n = self.base.valid_pairs() as f64;
+
+        // Sample covariance: (ΣXY - ΣX*ΣY/n) / (n-ddof)
+        let mean_x = self.base.sum_x() / n;
+        let mean_y = self.base.sum_y() / n;
+        let mean_xy = self.base.sum_xy() / n;
+
+        let covariance = (mean_xy - mean_x * mean_y) * n / (n - self.ddof as f64);
+
+        self.base.set_value(covariance);
     }
 }
 
@@ -358,29 +372,33 @@ impl Beta {
     pub fn update_internal(&mut self, x: f64, y: f64) {
         self.base.update_statistics(x, y);
 
-        // Only compute if we have enough valid samples
-        if self.base.base().valid_count() >= self.base.buffer_x().window_size() {
-            let n = self.base.buffer_x().window_size() as f64;
+        // Check if we have enough jointly-valid pairs for ddof
+        if self.base.valid_pairs() == 0 || self.base.valid_pairs() <= self.ddof {
+            // No valid pairs or insufficient for ddof, reuse last valid beta
+            self.base.base.set_stale_value();
+            return;
+        }
 
-            // Calculate covariance and variance of Y
-            let mean_x = self.base.sum_x() / n;
-            let mean_y = self.base.sum_y() / n;
-            let mean_xy = self.base.sum_xy() / n;
-            let mean_yy = self.base.sum_yy() / n;
+        let n = self.base.valid_pairs() as f64;
 
-            // Covariance(X,Y)
-            let covariance = (mean_xy - mean_x * mean_y) * n / (n - self.ddof as f64);
+        // Calculate covariance and variance of Y
+        let mean_x = self.base.sum_x() / n;
+        let mean_y = self.base.sum_y() / n;
+        let mean_xy = self.base.sum_xy() / n;
+        let mean_yy = self.base.sum_yy() / n;
 
-            // Variance(Y)
-            let variance_y = (mean_yy - mean_y * mean_y) * n / (n - self.ddof as f64);
+        // Covariance(X,Y)
+        let covariance = (mean_xy - mean_x * mean_y) * n / (n - self.ddof as f64);
 
-            if variance_y > f64::EPSILON {
-                let beta = covariance / variance_y;
-                self.base.set_value(beta);
-            } else {
-                // No variation in Y (independent variable)
-                self.base.set_value(f64::NAN);
-            }
+        // Variance(Y)
+        let variance_y = (mean_yy - mean_y * mean_y) * n / (n - self.ddof as f64);
+
+        if variance_y > f64::EPSILON {
+            let beta = covariance / variance_y;
+            self.base.set_value(beta);
+        } else {
+            // No variation in Y (independent variable), reuse last valid
+            self.base.base.set_stale_value();
         }
     }
 }
@@ -452,6 +470,124 @@ mod tests {
         op.update(4.0, 4.0);
 
         assert!(op.is_ready());
+        assert!((op.value() - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_correlation_nan_misalignment() {
+        let mut op = Correlation::new(5);
+
+        // Alternating NaN scenario - tests joint-validity tracking
+        // Only pairs where both are valid should be counted
+        op.update(1.0, f64::NAN);      // pair 0: invalid (y is NaN)
+        op.update(f64::NAN, 2.0);      // pair 1: invalid (x is NaN)
+        op.update(3.0, 3.0);           // pair 2: valid
+        op.update(4.0, 4.0);           // pair 3: valid
+        op.update(5.0, 5.0);           // pair 4: valid
+
+        assert!(op.is_ready());
+        // Only 3 valid pairs: (3,3), (4,4), (5,5) - perfect correlation
+        assert!((op.value() - 1.0).abs() < 1e-9, "Expected perfect correlation for valid pairs");
+
+        // Add more data to test rolling behavior
+        op.update(6.0, 6.0);           // pair 5: valid, evicts pair 0 (was invalid)
+        assert!((op.value() - 1.0).abs() < 1e-9);
+
+        // Now add a misaligned pair
+        op.update(f64::NAN, 7.0);      // pair 6: invalid, evicts pair 1 (was invalid)
+        // Window: [pair 2,3,4,5,6] -> valid pairs: [pair 2,3,4,5] = 4 pairs
+        assert!((op.value() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_correlation_zero_valid_pairs() {
+        let mut op = Correlation::new(3);
+
+        // No jointly-valid pairs - all are misaligned NaN
+        op.update(1.0, f64::NAN);
+        op.update(f64::NAN, 2.0);
+        op.update(3.0, f64::NAN);
+
+        assert!(op.is_ready()); // Window is full (3 updates)
+        // But no valid pairs, so should return NaN (no previous valid value)
+        assert!(op.value().is_nan(), "Expected NaN when no valid pairs exist");
+
+        // Add one valid pair
+        op.update(4.0, 4.0);
+        // Window now: [NaN,2.0], [3.0,NaN], [4.0,4.0] -> only 1 valid pair
+        // Cannot compute correlation with only 1 pair, should reuse stale (NaN)
+        assert!(op.value().is_nan(), "Expected NaN with only 1 valid pair");
+
+        // Add another valid pair
+        op.update(5.0, 5.0);
+        // Window: [3.0,NaN], [4.0,4.0], [5.0,5.0] -> 2 valid pairs
+        // Can now compute correlation
+        assert!(!op.value().is_nan(), "Expected valid correlation with 2+ pairs");
+    }
+
+    #[test]
+    fn test_covariance_joint_validity() {
+        let mut op = Covariance::new(5, 1);
+
+        // Mix of valid and invalid pairs
+        op.update(f64::NAN, 1.0);      // invalid
+        op.update(2.0, f64::NAN);      // invalid
+        op.update(3.0, 3.0);           // valid
+        op.update(4.0, 4.0);           // valid
+        op.update(5.0, 5.0);           // valid
+
+        assert!(op.is_ready());
+        // Should compute covariance using only 3 valid pairs
+        // Cov([3,4,5], [3,4,5]) = Var([3,4,5]) = 1.0 (with ddof=1)
+        assert!((op.value() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_beta_joint_validity() {
+        let mut op = Beta::new(5, 1);
+
+        // Scenario: some NaN pairs
+        op.update(f64::NAN, 2.0);      // invalid
+        op.update(3.0, f64::NAN);      // invalid
+        op.update(4.0, 2.0);           // valid: x=4, y=2
+        op.update(5.0, 2.5);           // valid: x=5, y=2.5
+        op.update(6.0, 3.0);           // valid: x=6, y=3.0
+
+        assert!(op.is_ready());
+        // Beta with 3 valid pairs: (4,2), (5,2.5), (6,3)
+        // X increases with Y, so beta should be positive
+        assert!(op.value() > 0.0, "Expected positive beta");
+        assert!(op.value().is_finite(), "Expected finite beta value");
+    }
+
+    #[test]
+    fn test_pair_operator_valid_pairs_counter() {
+        let mut op = Correlation::new(3);
+
+        // Manually test the valid_pairs counter through the public interface
+        op.update(1.0, 1.0);
+        assert_eq!(op.count(), 1); // Total updates
+        // We can't directly access valid_pairs from here, but we can verify behavior
+
+        op.update(f64::NAN, 2.0);
+        assert_eq!(op.count(), 2);
+
+        op.update(3.0, f64::NAN);
+        assert_eq!(op.count(), 3);
+        assert!(op.is_ready());
+
+        // Only 1 valid pair so far: (1.0, 1.0)
+        // Cannot compute correlation with just 1 pair
+        assert!(op.value().is_nan());
+
+        // Add more valid pairs
+        op.update(4.0, 4.0); // evicts (1.0, 1.0), window: [NaN,2], [3,NaN], [4,4]
+        assert_eq!(op.count(), 4);
+        // Still only 1 valid pair
+
+        op.update(5.0, 5.0); // evicts [NaN,2], window: [3,NaN], [4,4], [5,5]
+        // Now 2 valid pairs: (4,4), (5,5)
+        assert!(!op.value().is_nan(), "Should compute correlation with 2+ valid pairs");
         assert!((op.value() - 1.0).abs() < f64::EPSILON);
     }
 }

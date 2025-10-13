@@ -1,7 +1,35 @@
 # Factor configurations for backtesting
-# Each factor uses Clip(Zscore(expression, period), min, max) format
+# Each factor uses Clip(ZScore(expression, period), min, max) format
 # The output directly maps to position sizing under 2x leverage
-# IMPORTANT: Each backtest runs ONLY ONE factor at a time
+
+# ==============================================================================
+# PHASE C EXTENSION: Multi-Instrument×Factor Batch Backtesting Support
+# ==============================================================================
+# This config now supports:
+# - Multiple instruments definition
+# - Instrument×factor run combinations
+# - Backward compatibility: Single factor mode still works via CLI
+# ==============================================================================
+
+# Instrument definitions (Phase C)
+# Define all instruments available for backtesting
+instruments:
+  # BTC pairs
+  BTCUSDT:
+    venue: BINANCE
+    bar_spec: 15-MINUTE-LAST-EXTERNAL
+    base_currency: BTC
+    quote_currency: USDT
+    data_source: catalog  # or "feather" for fallback
+
+  # ETH pairs
+  ETHUSDT:
+    venue: BINANCE
+    bar_spec: 15-MINUTE-LAST-EXTERNAL
+    base_currency: ETH
+    quote_currency: USDT
+    data_source: catalog
+
 
 # Default parameters
 defaults:
@@ -13,52 +41,11 @@ defaults:
 
 # Factor definitions (each runs independently)
 factors:
-  # Momentum factors
-  amt_momentum:
-    name: "AMT Momentum"
-    expression: "Clip(Zscore($amt / TS_Mean($amt, 96), 5760), -2, 2)"
-    description: "Turnover amount momentum relative to short-term average"
-
-  price_momentum:
-    name: "Price Momentum"
-    expression: "Clip(Zscore($close / Ref($close, 20) - 1, 5760), -2, 2)"
-    description: "20-bar price momentum"
-
-  volume_momentum:
-    name: "Volume Momentum"
-    expression: "Clip(Zscore($volume / TS_Mean($volume, 48), 5760), -2, 2)"
-    description: "Volume relative to 48-bar average"
-
-  # Flow factors
-  amt_flow:
-    name: "AMT Flow"
-    expression: "Clip(Zscore(($close - Ref($close, 1)) * $amt / TS_Mean($amt, 48), 5760), -2, 2)"
-    description: "Price-weighted turnover flow"
-
-  # Mean reversion factors
-  price_deviation:
-    name: "Price Deviation"
-    expression: "Clip(Zscore(-($close - TS_Mean($close, 96)) / TS_Std($close, 96), 5760), -2, 2)"
-    description: "Mean reversion from 96-bar average (negative for reversal)"
-
-  # Volatility factors
-  range_factor:
-    name: "Range Factor"
-    expression: "Clip(Zscore(($high - $low) / $close, 5760), -2, 2)"
-    description: "Normalized daily range"
-
-  # Microstructure factors (requires extended_bar)
-  volume_imbalance:
-    name: "Volume Imbalance"
-    expression: "Clip(Zscore(($bid_volume - $ask_volume) / ($bid_volume + $ask_volume + 0.0001), 5760), -2, 2)"
-    description: "Order flow imbalance"
-    requires_extended: true
-
-  # Liquidity factors
-  amt_relative:
-    name: "AMT Relative Strength"
-    expression: "Clip(Zscore($amt / TS_Mean($amt, 288), 5760), -2, 2)"
-    description: "AMT relative to 3-day average (288 = 3 * 24 * 4)"
+  # VWAP-based factors
+  vwap_return_std:
+    name: "VWAP Return Volatility"
+    expression: "Clip(ZScore(TS_Std(When(Greater(TS_Delta($volume, 1), 0), Div(Sub(Div($amt, $volume), TS_Ref(Div($amt, $volume), 1)), TS_Ref(Div($amt, $volume), 1)), Div(0, 0)), 96), 5760), -2, 2)"
+    description: "Standard deviation of VWAP returns over 1440 bars (15 days), filtered for positive volume changes"
     requires_extended: true
 
 # Risk management
@@ -74,3 +61,25 @@ execution:
   commission_bps: 5           # 5 basis points commission
   min_order_size: 0.001       # Minimum order size
   max_order_size: 100.0       # Maximum order size
+
+# ==============================================================================
+# Run Definitions (Phase C)
+# ==============================================================================
+# Define instrument×factor combinations for batch backtesting
+# Each run represents one backtest job
+#
+# Usage:
+#   python run_backtest.py --run-id btc_amt_momentum     # Run single
+#   python run_backtest.py --all-runs                    # Run all enabled
+#   python run_backtest.py --all-runs --max-workers 4    # Parallel execution
+# ==============================================================================
+
+runs:
+  # VWAP return volatility factors (NEW)
+  btc_vwap_return_std:
+    instrument: BTCUSDT
+    factor: vwap_return_std
+    enabled: true
+    position_scale: 1.0
+
+ 

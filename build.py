@@ -1679,6 +1679,97 @@ def _generate_full_bar_variants() -> None:
                         out.append(standard[i])
                         i += 1
 
+            # Process to_pyo3_list method - add extended fields as kwargs
+            elif "def to_pyo3_list(list bars)" in line:
+                out.append(line)
+                i += 1
+                # Copy method body until we find nautilus_pyo3.Bar construction
+                while i < len(standard):
+                    # Check if we found the Bar construction line
+                    if "pyo3_bar = nautilus_pyo3.Bar(" in standard[i]:
+                        out.append(standard[i])
+                        i += 1
+                        # Copy all positional arguments (OHLCV + timestamps)
+                        # until we find the closing parenthesis
+                        bar_construction_lines = []
+                        while i < len(standard) and not standard[i].strip() == ")":
+                            bar_construction_lines.append(standard[i])
+                            i += 1
+
+                        # Output all the positional argument lines
+                        out.extend(bar_construction_lines)
+
+                        # Now inject extended field keyword arguments
+                        # The indentation should match the other arguments (bar._mem.ts_init line)
+                        arg_indent = "                "  # Match bar._mem.ts_init indentation
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"{arg_indent}{ident}=nautilus_pyo3.Quantity.from_raw(bar._mem.{ident}.raw, bar._mem.{ident}.precision),")
+                            elif field_type == "price":
+                                out.append(f"{arg_indent}{ident}=nautilus_pyo3.Price.from_raw(bar._mem.{ident}.raw, bar._mem.{ident}.precision),")
+                            elif field_type == "u64":
+                                out.append(f"{arg_indent}{ident}=bar._mem.{ident},")
+                            elif field_type == "bool":
+                                out.append(f"{arg_indent}{ident}=bar._mem.{ident},")
+
+                        # Add the closing parenthesis
+                        out.append(standard[i])
+                        i += 1
+                        # After processing the Bar construction, continue copying the rest of the method
+                        continue
+
+                    # Check if we've reached the next method definition (not cdef)
+                    if i > 0 and standard[i].strip().startswith("def ") and "def to_pyo3_list" not in standard[i]:
+                        # We've reached the next method without finding Bar construction
+                        break
+
+                    # Regular line - just copy it
+                    out.append(standard[i])
+                    i += 1
+
+            # Process to_pyo3 instance method - add extended fields as kwargs
+            elif "def to_pyo3(self)" in line:
+                out.append(line)
+                i += 1
+                # Copy method until we find the return statement with nautilus_pyo3.Bar
+                while i < len(standard):
+                    if "return nautilus_pyo3.Bar(" in standard[i]:
+                        out.append(standard[i])
+                        i += 1
+                        # Copy all positional arguments until closing parenthesis
+                        return_construction_lines = []
+                        while i < len(standard) and not standard[i].strip() == ")":
+                            return_construction_lines.append(standard[i])
+                            i += 1
+
+                        # Output all positional argument lines
+                        out.extend(return_construction_lines)
+
+                        # Inject extended field keyword arguments
+                        # Match indentation of other arguments
+                        arg_indent = "                "  # Match nautilus_pyo3.Price indentation in to_pyo3
+                        for field in fields:
+                            ident = field.get("ident")
+                            field_type = field.get("type")
+                            if field_type == "quantity":
+                                out.append(f"{arg_indent}{ident}=nautilus_pyo3.Quantity.from_raw(self._mem.{ident}.raw, self._mem.{ident}.precision),")
+                            elif field_type == "price":
+                                out.append(f"{arg_indent}{ident}=nautilus_pyo3.Price.from_raw(self._mem.{ident}.raw, self._mem.{ident}.precision),")
+                            elif field_type == "u64":
+                                out.append(f"{arg_indent}{ident}=self._mem.{ident},")
+                            elif field_type == "bool":
+                                out.append(f"{arg_indent}{ident}=self._mem.{ident},")
+
+                        # Add the closing parenthesis
+                        out.append(standard[i])
+                        i += 1
+                        break  # End of return statement, exit method processing
+                    else:
+                        out.append(standard[i])
+                        i += 1
+
             else:
                 # Check for the specific indentation issue with return bar_from_mem_c
                 if "return bar_from_mem_c(ptr.bar)" in line and line.startswith("            "):

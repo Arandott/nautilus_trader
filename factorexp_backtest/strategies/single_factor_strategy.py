@@ -52,7 +52,7 @@ class SingleFactorStrategy(Strategy):
     """
     A single-factor trading strategy.
 
-    This strategy runs ONE factor where the output Clip(Zscore(...), -2, 2)
+    This strategy runs ONE factor where the output Clip(ZScore(...), -2, 2)
     directly maps to position sizing under 2x leverage.
     """
 
@@ -81,16 +81,11 @@ class SingleFactorStrategy(Strategy):
         # Get defaults
         defaults = self.config_loader.get_defaults()
         self.zscore_period = defaults.get("zscore_period", 5760)
-        self.rebalance_interval = (
-            config.rebalance_interval or
-            defaults.get("rebalance_interval", 30)
-        )
 
         # State
         self.instrument: Instrument | None = None
         self.factor_indicator: FactorExpIndicator | None = None
         self.current_position: float = 0.0
-        self.bars_since_rebalance: int = 0
 
     def on_start(self):
         """Actions to be performed on strategy start."""
@@ -141,7 +136,7 @@ class SingleFactorStrategy(Strategy):
             LogColor.CYAN,
         )
         self.log.info(
-            f"Rebalance interval: {self.rebalance_interval} bars",
+            "Rebalance: Every bar (15min)",
             LogColor.CYAN,
         )
 
@@ -163,18 +158,13 @@ class SingleFactorStrategy(Strategy):
             self.log.debug("Factor indicator warming up...")
             return
 
-        # Increment rebalance counter
-        self.bars_since_rebalance += 1
-
-        # Check if it's time to rebalance
-        if self.bars_since_rebalance >= self.rebalance_interval:
-            self._rebalance_portfolio()
-            self.bars_since_rebalance = 0
+        # Rebalance on EVERY bar (factor value → position mapping)
+        self._rebalance_portfolio()
 
 
     def _rebalance_portfolio(self):
         """Rebalance portfolio based on the single factor signal."""
-        # Get factor value (already Clip(Zscore(...), -2, 2))
+        # Get factor value (already Clip(ZScore(...), -2, 2))
         factor_value = self.factor_indicator.value
 
         # Validate factor value range
@@ -280,6 +270,5 @@ class SingleFactorStrategy(Strategy):
 
         # Reset state
         self.current_position = 0.0
-        self.bars_since_rebalance = 0
 
         self.log.info("Strategy reset")

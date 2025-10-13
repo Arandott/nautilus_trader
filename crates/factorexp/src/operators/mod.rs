@@ -48,12 +48,19 @@ pub trait RollingOperator: Send + Sync + Debug {
 }
 
 /// Base implementation for rolling operators.
+///
+/// # NaN Handling Strategy
+///
+/// The operator tracks both total updates (`buffer.count()`) and valid values
+/// (`buffer.valid_len()`). Readiness is determined by total updates, ensuring
+/// the window advances on every timestamp. When no valid values exist in the
+/// current window, operators reuse `last_valid_value` instead of recomputing
+/// with stale data.
 #[derive(Debug)]
 pub struct BaseOperator {
     name: String,
     buffer: RollingBuffer,
     value: f64,
-    valid_count: usize,
     last_valid_value: Option<f64>,
 }
 
@@ -64,7 +71,6 @@ impl BaseOperator {
             name: name.into(),
             buffer: RollingBuffer::new(window_size),
             value: f64::NAN,
-            valid_count: 0,
             last_valid_value: None,
         }
     }
@@ -82,22 +88,27 @@ impl BaseOperator {
     }
 
     /// Sets the current value.
+    ///
+    /// If the value is not NaN, also updates last_valid_value.
     #[inline]
     pub fn set_value(&mut self, value: f64) {
         self.value = value;
-        self.last_valid_value = Some(value);
+        if !value.is_nan() {
+            self.last_valid_value = Some(value);
+        }
     }
 
-    /// Gets the valid count.
+    /// Sets the value to the last valid value when the window has no valid samples.
+    ///
+    /// This prevents operators from returning stale computations when all current
+    /// window values are NaN.
     #[inline]
-    pub fn valid_count(&self) -> usize {
-        self.valid_count
-    }
-
-    /// Increments the valid count.
-    #[inline]
-    pub fn increment_valid_count(&mut self) {
-        self.valid_count += 1;
+    pub fn set_stale_value(&mut self) {
+        if let Some(last) = self.last_valid_value {
+            self.value = last;
+        } else {
+            self.value = f64::NAN;
+        }
     }
 
     /// Gets the last valid value.
@@ -124,7 +135,7 @@ macro_rules! impl_rolling_operator_common {
 
             #[inline]
             fn is_ready(&self) -> bool {
-                self.base.valid_count >= self.base.buffer.window_size()
+                self.base.buffer.count() >= self.base.buffer.window_size()
             }
 
             #[inline]
@@ -149,7 +160,6 @@ macro_rules! impl_rolling_operator_common {
             fn reset(&mut self) {
                 self.base.buffer.reset();
                 self.base.value = f64::NAN;
-                self.base.valid_count = 0;
                 self.base.last_valid_value = None;
             }
         }

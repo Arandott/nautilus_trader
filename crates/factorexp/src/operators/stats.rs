@@ -41,27 +41,38 @@ impl_rolling_operator_common!(Skew);
 impl Skew {
     /// Updates the operator with a new value and recalculates the skewness.
     pub fn update_internal(&mut self, value: f64) {
-        self.base.buffer_mut().update(value);
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
 
-        if self.base.buffer().len() >= 3 {
-            let window = self.base.buffer().window();
-            let n = window.len() as f64;
-            let mean = self.base.buffer().mean();
-            let std = self.base.buffer().std(0);
-
-            if std > 0.0 {
-                let mut sum_cubed = 0.0;
-                for &val in &window {
-                    let diff = val - mean;
-                    sum_cubed += diff * diff * diff;
-                }
-
-                let skewness = (sum_cubed / n) / (std * std * std);
-                self.base.set_value(skewness);
-            } else {
-                self.base.set_value(0.0);
-            }
+        // Skewness requires at least 3 valid values
+        let valid_len = self.base.buffer().valid_len();
+        if valid_len < 3 {
+            // Not enough valid values: reuse last valid skewness
+            self.base.set_stale_value();
+            return;
         }
+
+        // Use NaN-aware mean and std from buffer
+        let mean = self.base.buffer().mean();
+        let std = self.base.buffer().std(0);
+
+        // Check for zero variance case
+        if std.is_nan() || std <= 0.0 {
+            // Zero variance: reuse last valid skewness
+            self.base.set_stale_value();
+            return;
+        }
+
+        // Compute skewness using only valid values
+        let mut sum_cubed = 0.0;
+        for val in self.base.buffer().iter_valid() {
+            let diff = val - mean;
+            sum_cubed += diff * diff * diff;
+        }
+
+        let n = valid_len as f64;
+        let skewness = (sum_cubed / n) / (std * std * std);
+        self.base.set_value(skewness);
     }
 }
 
@@ -86,27 +97,39 @@ impl_rolling_operator_common!(Kurtosis);
 impl Kurtosis {
     /// Updates the operator with a new value and recalculates the kurtosis.
     pub fn update_internal(&mut self, value: f64) {
-        self.base.buffer_mut().update(value);
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
 
-        if self.base.buffer().len() >= 4 {
-            let window = self.base.buffer().window();
-            let n = window.len() as f64;
-            let mean = self.base.buffer().mean();
-            let std = self.base.buffer().std(0);
-
-            if std > 0.0 {
-                let mut sum_fourth = 0.0;
-                for &val in &window {
-                    let diff = val - mean;
-                    sum_fourth += diff * diff * diff * diff;
-                }
-
-                let kurtosis = (sum_fourth / n) / (std * std * std * std) - 3.0;
-                self.base.set_value(kurtosis);
-            } else {
-                self.base.set_value(0.0);
-            }
+        // Kurtosis requires at least 4 valid values
+        let valid_len = self.base.buffer().valid_len();
+        if valid_len < 4 {
+            // Not enough valid values: reuse last valid kurtosis
+            self.base.set_stale_value();
+            return;
         }
+
+        // Use NaN-aware mean and std from buffer
+        let mean = self.base.buffer().mean();
+        let std = self.base.buffer().std(0);
+
+        // Check for zero variance case
+        if std.is_nan() || std <= 0.0 {
+            // Zero variance: reuse last valid kurtosis
+            self.base.set_stale_value();
+            return;
+        }
+
+        // Compute kurtosis using only valid values
+        let mut sum_fourth = 0.0;
+        for val in self.base.buffer().iter_valid() {
+            let diff = val - mean;
+            sum_fourth += diff * diff * diff * diff;
+        }
+
+        let n = valid_len as f64;
+        // Excess kurtosis (subtract 3 for normal distribution baseline)
+        let kurtosis = (sum_fourth / n) / (std * std * std * std) - 3.0;
+        self.base.set_value(kurtosis);
     }
 }
 
@@ -131,28 +154,27 @@ impl_rolling_operator_common!(Mad);
 impl Mad {
     /// Updates the operator with a new value and recalculates the mean absolute deviation.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid MAD
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
+        // Compute MAD from valid values only
+        let valid_values = self.base.buffer().values_valid();
+        let mean = self.base.buffer().mean();
 
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            let window = self.base.buffer().window();
-            let mean = self.base.buffer().mean();
-
-            let mut sum_abs_dev = 0.0;
-            for val in &window {
-                sum_abs_dev += (val - mean).abs();
-            }
-
-            let mad = sum_abs_dev / window.len() as f64;
-            self.base.set_value(mad);
+        let mut sum_abs_dev = 0.0;
+        for val in &valid_values {
+            sum_abs_dev += (val - mean).abs();
         }
+
+        let mad = sum_abs_dev / valid_values.len() as f64;
+        self.base.set_value(mad);
     }
 }
 
@@ -177,20 +199,19 @@ impl_rolling_operator_common!(Product);
 impl Product {
     /// Updates the operator with a new value and recalculates the product.
     pub fn update_internal(&mut self, value: f64) {
-        // Handle NaN input: don't push to buffer, return last valid value
-        if value.is_nan() {
+        // Always advance the window, even for NaN
+        let _ = self.base.buffer_mut().update(value);
+
+        // Check if we have any valid values in the current window
+        if self.base.buffer().valid_len() == 0 {
+            // No valid values: reuse last valid product
+            self.base.set_stale_value();
             return;
         }
 
-        // Valid value: push to buffer and increment valid count
-        self.base.buffer_mut().update(value);
-        self.base.increment_valid_count();
-
-        // Only compute if we have enough valid samples
-        if self.base.valid_count() >= self.base.buffer().window_size() {
-            let product = self.base.buffer().window().iter().product();
-            self.base.set_value(product);
-        }
+        // Compute product from valid values (filter NaN)
+        let product = self.base.buffer().iter_valid().product();
+        self.base.set_value(product);
     }
 }
 
@@ -226,5 +247,99 @@ mod tests {
 
         prod.update(5.0);
         assert_eq!(prod.value(), 60.0); // 3 * 4 * 5
+    }
+
+    #[test]
+    fn test_skew_nan_handling() {
+        let mut skew = Skew::new(5);
+
+        // Test with mixed valid and NaN values
+        skew.update(1.0);
+        skew.update(f64::NAN); // NaN should be filtered
+        skew.update(2.0);
+        skew.update(3.0);
+        skew.update(4.0);
+
+        // Should compute skewness using only valid values [1, 2, 3, 4]
+        assert!(skew.is_ready());
+        let skew_value = skew.value();
+        assert!(skew_value.is_finite(), "Skewness should be finite with valid values");
+
+        // Test insufficient valid values (< 3)
+        let mut skew2 = Skew::new(5);
+        skew2.update(1.0);
+        skew2.update(f64::NAN);
+        skew2.update(f64::NAN);
+        skew2.update(2.0);
+        skew2.update(f64::NAN);
+
+        // Only 2 valid values, should reuse stale value (NaN since never set)
+        assert!(skew2.is_ready());
+        assert!(skew2.value().is_nan(), "Should return NaN with insufficient valid values");
+    }
+
+    #[test]
+    fn test_skew_zero_variance() {
+        let mut skew = Skew::new(5);
+
+        // All same values = zero variance
+        for _ in 0..5 {
+            skew.update(10.0);
+        }
+
+        assert!(skew.is_ready());
+        // Zero variance case should reuse stale value (NaN since never set)
+        assert!(skew.value().is_nan(), "Should return NaN for zero variance");
+    }
+
+    #[test]
+    fn test_kurtosis_nan_handling() {
+        let mut kurt = Kurtosis::new(6);
+
+        // Test with mixed valid and NaN values
+        kurt.update(1.0);
+        kurt.update(f64::NAN); // NaN should be filtered
+        kurt.update(2.0);
+        kurt.update(3.0);
+        kurt.update(4.0);
+        kurt.update(5.0);
+
+        // Should compute kurtosis using only valid values [1, 2, 3, 4, 5]
+        assert!(kurt.is_ready());
+        let kurt_value = kurt.value();
+        assert!(
+            kurt_value.is_finite(),
+            "Kurtosis should be finite with valid values"
+        );
+
+        // Test insufficient valid values (< 4)
+        let mut kurt2 = Kurtosis::new(6);
+        kurt2.update(1.0);
+        kurt2.update(f64::NAN);
+        kurt2.update(2.0);
+        kurt2.update(f64::NAN);
+        kurt2.update(3.0);
+        kurt2.update(f64::NAN);
+
+        // Only 3 valid values, should reuse stale value (NaN since never set)
+        assert!(kurt2.is_ready());
+        assert!(
+            kurt2.value().is_nan(),
+            "Should return NaN with insufficient valid values"
+        );
+    }
+
+    #[test]
+    fn test_kurtosis_zero_variance() {
+        let mut kurt = Kurtosis::new(6);
+
+        // All same values = zero variance
+        for _ in 0..6 {
+            kurt.update(10.0);
+        }
+
+        assert!(kurt.is_ready());
+        // Zero variance case should reuse stale value (NaN since never set)
+        assert!(kurt.value().is_nan(), "Should return NaN for zero variance");
     }
 }

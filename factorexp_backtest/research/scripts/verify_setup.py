@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Verification script to test research workspace setup.
+"""
+Verification script to test research workspace setup.
 
 Checks:
 - Catalog accessibility
@@ -10,6 +11,7 @@ Checks:
 
 import sys
 from pathlib import Path
+
 
 # Add parent directories to path
 script_dir = Path(__file__).parent
@@ -22,12 +24,9 @@ def check_imports():
     """Verify all required modules can be imported."""
     print("Checking imports...")
     try:
-        from research.utils import (
-            load_catalog_bars,
-            get_available_instruments,
-            run_expression,
-            FactorRequest,
-        )
+        from research.utils import evaluate_factor
+        from research.utils import get_available_instruments
+        from research.utils import load_catalog_bars
         print("  ✅ All utils modules imported successfully")
         return True
     except ImportError as e:
@@ -72,7 +71,7 @@ def check_instruments():
         print(f"  ✅ Found {len(instruments)} instruments")
 
         if instruments:
-            print(f"\n  First 10 instruments:")
+            print("\n  First 10 instruments:")
             for inst in instruments[:10]:
                 print(f"    - {inst}")
         else:
@@ -88,7 +87,8 @@ def check_evaluation():
     """Test basic factor evaluation workflow."""
     print("\nTesting factor evaluation...")
     try:
-        from research.utils import get_available_instruments, run_expression, FactorRequest
+        from research.utils import evaluate_factor
+        from research.utils import get_available_instruments
 
         # Get first available instrument
         instruments = get_available_instruments()
@@ -99,19 +99,17 @@ def check_evaluation():
         test_instrument = instruments[0]
         print(f"  Testing with instrument: {test_instrument}")
 
-        # Create simple test request
-        request = FactorRequest(
-            expression="TS_Mean($close, 5)",  # Simple 5-bar moving average (note: use $close not close)
+        # Run simple test evaluation
+        result = evaluate_factor(
+            expression="TS_Mean($close, 5)",  # Simple 5-bar moving average
             instrument_id=test_instrument,
             start_date="2024-01-01",
             end_date="2024-01-03",  # Just 2 days for quick test
-            period=100,
+            verbose=True,
         )
 
-        result = run_expression(request)
-
         if len(result) > 0:
-            print(f"  ✅ Evaluation successful")
+            print("  ✅ Evaluation successful")
             print(f"    Generated {len(result)} values")
             print(f"    NaN count: {result['factor_value'].isna().sum()}")
             return True

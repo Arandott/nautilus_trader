@@ -285,8 +285,21 @@ impl ExpressionNode for OperatorNode {
     }
 
     fn reset(&mut self) {
-        // Reset operator state
-        self.operator = get_rolling_operator(&self.operator_name, self.window_size);
+        // Reset operator state with special handling for TS_Quantile
+        // to preserve phi parameter (otherwise would fallback to 0.5)
+        self.operator = if self.operator_name == "TS_Quantile" {
+            if let Some(&phi) = self.params.get("phi") {
+                Some(
+                    Box::new(crate::operators::rolling::Quantile::new(self.window_size, phi))
+                        as Box<dyn RollingOperator>,
+                )
+            } else {
+                get_rolling_operator(&self.operator_name, self.window_size)
+            }
+        } else {
+            get_rolling_operator(&self.operator_name, self.window_size)
+        };
+
         self.pair_operator = get_pair_rolling_operator(&self.operator_name, self.window_size);
         self.current_value = None;
         self.staleness_count = 0;
@@ -805,6 +818,7 @@ impl ComputationEngine {
             "TS_Med" | "TS_Median" | "TS_Product" | "TS_Delta" | "TS_Ref" | "TS_Rank" |
             "TS_Argmax" | "TS_Argmin" | "TS_EMA" | "TS_WMA" | "TS_Skew" |
             "TS_Kurt" | "TS_Kurtosis" | "TS_Mad" | "TS_Corr" | "TS_Cov" | "TS_Beta" |
+            "TS_Quantile" |  // CRITICAL: Must be treated as rolling operator
             // Statistical rolling operators without TS_ prefix
             "ZScore" | "Demean"
         )

@@ -16,7 +16,6 @@ Phase C additions:
 import argparse
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -116,7 +115,7 @@ def compute_position_metrics(report: pd.DataFrame) -> dict[str, Any]:
         }
 
     pnl_series = report["realized_pnl"].map(parse_money_value)
-    total_count = int(len(pnl_series))
+    total_count = len(pnl_series)
 
     if total_count == 0:
         return {
@@ -149,7 +148,7 @@ def compute_order_metrics(report: pd.DataFrame) -> dict[str, Any]:
             "fill_rate": 0.0,
         }
 
-    total_count = int(len(report))
+    total_count = len(report)
     filled_count = int((report["status"] == "FILLED").sum())
     fill_rate = filled_count / total_count if total_count else 0.0
 
@@ -165,6 +164,8 @@ def setup_backtest_engine(
     end_date: str,
     data_path: Path | None = None,
     catalog_path: Path | None = None,
+    commission_bps: int = 3,
+    slippage_bps: int = 10,
 ) -> BacktestEngine | None:
     """
     Set up the backtest engine with dynamic configuration (Phase C).
@@ -189,13 +190,25 @@ def setup_backtest_engine(
     """
     instrument_config = run_config.instrument
 
-    # Create engine configuration with file logging
+    # Create dedicated log directory for this backtest run
+    # Each run_id gets its own subdirectory for organized log management
+    log_dir = Path("./data/logs") / run_config.run_id
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create engine configuration with file logging and rotation
+    # Log rotation prevents individual files from growing too large
+    # - log_file_max_size: Maximum size per log file (200MB default, ~100k lines)
+    # - log_file_max_backup_count: Number of rotated files to keep (10 default)
+    # When max_size is reached, creates new file: <trader_id>_<timestamp>_<instance_id>.log
+    # Oldest backups are automatically deleted when backup_count is exceeded
     config = BacktestEngineConfig(
         trader_id=f"BACKTESTER-{run_config.run_id}",
         logging=LoggingConfig(
             log_level="INFO",
-            log_level_file="INFO",
-            log_directory="./data/logs",
+            log_level_file="DEBUG",
+            log_directory=str(log_dir),
+            log_file_max_size=10_000_000,      # 200 MB per file
+            log_file_max_backup_count=10,       # Keep 10 rotated files
         ),
     )
 
@@ -217,11 +230,16 @@ def setup_backtest_engine(
 
     from decimal import Decimal
 
+    # Convert bps to decimal fee rates (e.g., 3 bps = 0.0003)
+    maker_fee = Decimal(str(commission_bps / 10000))
+    taker_fee = Decimal(str(commission_bps / 10000))
+
     # Use USDT as account base currency (single-currency account)
     # For USDT-margined futures, only start with USDT balance
+    # HEDGING mode allows 96 independent positions (one per segment)
     engine.add_venue(
         venue=venue,
-        oms_type=OmsType.NETTING,
+        oms_type=OmsType.HEDGING,  # HEDGING mode for independent segment positions
         account_type=AccountType.MARGIN,
         base_currency=quote_currency,  # USDT as account base currency
         starting_balances=[
@@ -235,10 +253,108 @@ def setup_backtest_engine(
 
     # Add instrument
     provider = TestInstrumentProvider()
-    # Use provider method if available, otherwise create generic instrument
-    instrument_method = f"{instrument_config.instrument_id.lower()}_binance"
+    # Parse instrument_id from config (e.g., "BTCUSDT-PERP" → "btcusdt_perp_binance")
+    # Config now specifies full instrument IDs with suffix (-PERP, -FUTURE, or none for spot)
+    instrument_id = instrument_config.instrument_id
+    if instrument_id.endswith("-PERP"):
+        base_symbol = instrument_id[:-5]  # Remove "-PERP"
+        instrument_method = f"{base_symbol.lower()}_perp_binance"
+    elif instrument_id.endswith("-FUTURE"):
+        base_symbol = instrument_id[:-7]  # Remove "-FUTURE"
+        instrument_method = f"{base_symbol.lower()}_future_binance"
+    else:
+        # Spot instrument (no suffix)
+        instrument_method = f"{instrument_id.lower()}_binance"
+
     if hasattr(provider, instrument_method):
-        instrument = getattr(provider, instrument_method)()
+        # Get the default instrument and recreate it with custom fee rates
+        default_instrument = getattr(provider, instrument_method)()
+
+        from nautilus_trader.model.instruments import CryptoFuture
+        from nautilus_trader.model.instruments import CryptoPerpetual
+        from nautilus_trader.model.instruments import CurrencyPair
+        from nautilus_trader.model.objects import Price
+        from nautilus_trader.model.objects import Quantity
+
+        # Check instrument type and recreate with custom fees
+        if isinstance(default_instrument, CryptoPerpetual):
+            # Recreate CryptoPerpetual with custom maker/taker fees from config
+            # Use precision values matching actual Binance data format
+            instrument = CryptoPerpetual(
+                instrument_id=default_instrument.id,
+                raw_symbol=default_instrument.raw_symbol,
+                base_currency=default_instrument.base_currency,
+                quote_currency=default_instrument.quote_currency,
+                settlement_currency=default_instrument.settlement_currency,
+                is_inverse=default_instrument.is_inverse,
+                price_precision=2,  # Binance standard for USDT pairs (e.g., 42123.45)
+                size_precision=6,  # Binance standard for BTC volume (e.g., 0.123456)
+                price_increment=Price.from_str("0.01"),  # Matches price_precision=2
+                size_increment=Quantity.from_str("0.000001"),  # Matches size_precision=6
+                max_quantity=default_instrument.max_quantity,
+                min_quantity=default_instrument.min_quantity,
+                max_notional=default_instrument.max_notional,
+                min_notional=default_instrument.min_notional,
+                max_price=default_instrument.max_price,
+                min_price=default_instrument.min_price,
+                margin_init=default_instrument.margin_init,
+                margin_maint=default_instrument.margin_maint,
+                maker_fee=maker_fee,
+                taker_fee=taker_fee,
+                ts_event=default_instrument.ts_event,
+                ts_init=default_instrument.ts_init,
+            )
+        elif isinstance(default_instrument, CurrencyPair):
+            # Recreate CurrencyPair with custom maker/taker fees from config
+            instrument = CurrencyPair(
+                instrument_id=default_instrument.id,
+                raw_symbol=default_instrument.raw_symbol,
+                base_currency=default_instrument.base_currency,
+                quote_currency=default_instrument.quote_currency,
+                price_precision=default_instrument.price_precision,
+                size_precision=default_instrument.size_precision,
+                price_increment=default_instrument.price_increment,
+                size_increment=default_instrument.size_increment,
+                lot_size=default_instrument.lot_size,
+                max_quantity=default_instrument.max_quantity,
+                min_quantity=default_instrument.min_quantity,
+                max_notional=default_instrument.max_notional,
+                min_notional=default_instrument.min_notional,
+                max_price=default_instrument.max_price,
+                min_price=default_instrument.min_price,
+                margin_init=default_instrument.margin_init,
+                margin_maint=default_instrument.margin_maint,
+                maker_fee=maker_fee,
+                taker_fee=taker_fee,
+                ts_event=default_instrument.ts_event,
+                ts_init=default_instrument.ts_init,
+            )
+        else:
+            # Assume CryptoFuture or similar
+            instrument = CryptoFuture(
+                instrument_id=default_instrument.id,
+                raw_symbol=default_instrument.raw_symbol,
+                underlying=default_instrument.underlying,
+                quote_currency=default_instrument.quote_currency,
+                settlement_currency=default_instrument.settlement_currency,
+                is_inverse=default_instrument.is_inverse,
+                activation_ns=default_instrument.activation_ns,
+                expiration_ns=default_instrument.expiration_ns,
+                price_precision=default_instrument.price_precision,
+                size_precision=default_instrument.size_precision,
+                price_increment=default_instrument.price_increment,
+                size_increment=default_instrument.size_increment,
+                multiplier=default_instrument.multiplier,
+                lot_size=default_instrument.lot_size,
+                max_quantity=default_instrument.max_quantity,
+                min_quantity=default_instrument.min_quantity,
+                max_price=default_instrument.max_price,
+                min_price=default_instrument.min_price,
+                maker_fee=maker_fee,
+                taker_fee=taker_fee,
+                ts_event=default_instrument.ts_event,
+                ts_init=default_instrument.ts_init,
+            )
     else:
         # Create a generic instrument
         from nautilus_trader.model.instruments import CryptoFuture
@@ -266,11 +382,23 @@ def setup_backtest_engine(
             min_quantity=Quantity.from_str("0.000001"),
             max_price=Price.from_str("1000000"),
             min_price=Price.from_str("0.01"),
+            maker_fee=maker_fee,
+            taker_fee=taker_fee,
             ts_event=0,
             ts_init=0,
         )
 
     engine.add_instrument(instrument)
+
+    # Validate margin requirements for MARGIN accounts
+    if instrument.margin_maint == 0:
+        error_msg = (
+            f"FATAL: Instrument {instrument.id} has zero margin_maint, "
+            f"but account type is MARGIN. This will disable leverage and liquidation. "
+            f"Use a CryptoPerpetual or CryptoFuture instrument with proper margin requirements."
+        )
+        print(f"❌ {error_msg}")
+        return None
 
     # Load data based on data source preference
     bars = []
@@ -376,6 +504,14 @@ def run_single_backtest(
     print("=" * 80)
 
     try:
+        # Get execution config from config loader
+        execution_config = config_loader.execution_config
+        commission_bps = execution_config.commission_bps if execution_config else 3
+        slippage_bps = execution_config.slippage_bps if execution_config else 10
+
+        print(f"  Commission: {commission_bps} bps ({commission_bps/10000:.4%})")
+        print(f"  Slippage: {slippage_bps} bps ({slippage_bps/10000:.4%})")
+
         # Set up backtest engine
         engine = setup_backtest_engine(
             run_config=run_config,
@@ -383,6 +519,8 @@ def run_single_backtest(
             end_date=end_date,
             data_path=data_path,
             catalog_path=catalog_path,
+            commission_bps=commission_bps,
+            slippage_bps=slippage_bps,
         )
 
         if not engine:
@@ -453,7 +591,8 @@ def run_single_backtest(
         total_return = ((final_value - initial_value) / initial_value) * 100 if initial_value else 0
 
         # Calculate annualized return
-        days = (datetime.fromisoformat(end_date) - datetime.fromisoformat(start_date)).days
+        # Use pd.Timestamp for flexible date parsing (handles both '2025-3-20' and '2025-03-20')
+        days = (pd.Timestamp(end_date) - pd.Timestamp(start_date)).days
         if days > 0:
             periods_per_year = 365 / days
             annualized_return = total_return * periods_per_year
@@ -488,16 +627,16 @@ def run_single_backtest(
         print("=" * 80)
         print(f"Run ID: {results['run_id']}")
         print(f"Status: {results['status']}")
-        print(f"\nPerformance:")
+        print("\nPerformance:")
         print(f"  Total Return: {results['total_return_pct']:.2f}%")
         print(f"  Annualized Return: {results['annualized_return_pct']:.2f}%")
         print(f"  Final Balance: {results['final_balance']:,.2f} {run_config.instrument.quote_currency}")
-        print(f"\nTrading Statistics:")
+        print("\nTrading Statistics:")
         print(f"  Total Positions: {results['total_positions']}")
         print(f"  Win Rate: {results['win_rate']:.2f}%")
-        if results['avg_win'] > 0:
+        if results["avg_win"] > 0:
             print(f"  Avg Win: {results['avg_win']:,.2f} {run_config.instrument.quote_currency}")
-        if results['avg_loss'] < 0:
+        if results["avg_loss"] < 0:
             print(f"  Avg Loss: {results['avg_loss']:,.2f} {run_config.instrument.quote_currency}")
         print(f"  Total Orders: {results['total_orders']}")
         print(f"  Fill Rate: {results['fill_rate']:.2f}%")
@@ -792,14 +931,14 @@ def main():
                 print(f"  {run_id}:")
                 print(f"    Instrument: {run.instrument.instrument_id}.{run.instrument.venue}")
                 print(f"    Factor: {run.factor.name}")
-                print(f"    Status: DISABLED")
+                print("    Status: DISABLED")
 
         print("\n" + "=" * 80)
-        print(f"\nUsage:")
-        print(f"  Single run:    python run_backtest.py --run-id btc_amt_momentum")
-        print(f"  Multiple runs: python run_backtest.py --run-ids btc_amt_momentum,eth_amt_momentum")
-        print(f"  All runs:      python run_backtest.py --all-runs")
-        print(f"  Parallel:      python run_backtest.py --all-runs --max-workers 4")
+        print("\nUsage:")
+        print("  Single run:    python run_backtest.py --run-id btc_amt_momentum")
+        print("  Multiple runs: python run_backtest.py --run-ids btc_amt_momentum,eth_amt_momentum")
+        print("  All runs:      python run_backtest.py --all-runs")
+        print("  Parallel:      python run_backtest.py --all-runs --max-workers 4")
         print("=" * 80)
 
         return 0
@@ -837,7 +976,7 @@ def main():
     print(f"Config File: {args.config_path}")
     print(f"Runs to Execute: {len(run_ids_to_execute)}")
     print(f"Period: {args.start_date} to {args.end_date}")
-    print(f"Data Sources: Catalog (preferred), Feather (fallback)")
+    print("Data Sources: Catalog (preferred), Feather (fallback)")
     print(f"Execution Mode: {'Parallel' if args.max_workers > 1 else 'Sequential'}")
     if args.max_workers > 1:
         print(f"Max Workers: {args.max_workers}")

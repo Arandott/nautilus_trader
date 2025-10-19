@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Batch factor evaluation script for headless/CLI workflows.
+"""
+Batch factor evaluation script for headless/CLI workflows.
 
 This script allows evaluating factor expressions from the command line
 without requiring Jupyter, useful for CI pipelines or automated testing.
@@ -26,15 +27,15 @@ import argparse
 import sys
 from pathlib import Path
 
+
 # Add parent directories to path for imports
 script_dir = Path(__file__).parent
 research_dir = script_dir.parent
 backtest_dir = research_dir.parent
 sys.path.insert(0, str(backtest_dir))
 
-import pandas as pd
 
-from research.utils import run_expression, FactorRequest
+from research.utils import evaluate_factor
 
 
 def main():
@@ -49,7 +50,7 @@ def main():
         "--expression",
         "-e",
         required=True,
-        help="Factor expression string (e.g., 'ZScore(TS_Std(close, 20), 5760)')",
+        help="Factor expression string (e.g., 'ZScore(TS_Std($close, 20), 5760)')",
     )
     parser.add_argument(
         "--instrument",
@@ -71,13 +72,6 @@ def main():
         help="End date (YYYY-MM-DD)",
     )
     parser.add_argument(
-        "--period",
-        "-p",
-        type=int,
-        default=5760,
-        help="ZScore period (default: 5760 for 60 days @ 15min)",
-    )
-    parser.add_argument(
         "--output",
         "-o",
         type=Path,
@@ -92,26 +86,22 @@ def main():
 
     args = parser.parse_args()
 
-    # Create request
-    request = FactorRequest(
-        expression=args.expression,
-        instrument_id=args.instrument,
-        start_date=args.start,
-        end_date=args.end_date,
-        period=args.period,
-    )
-
     if not args.quiet:
-        print(f"Evaluating factor expression:")
+        print("Evaluating factor expression:")
         print(f"  Expression: {args.expression}")
         print(f"  Instrument: {args.instrument}")
         print(f"  Date Range: {args.start} to {args.end_date}")
-        print(f"  Period: {args.period}")
         print()
 
     # Run evaluation
     try:
-        result = run_expression(request)
+        result = evaluate_factor(
+            expression=args.expression,
+            instrument_id=args.instrument,
+            start_date=args.start,
+            end_date=args.end_date,
+            verbose=not args.quiet,
+        )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -125,7 +115,7 @@ def main():
           f"({result['factor_value'].isna().sum() / len(result) * 100:.2f}%)")
     print()
     print("Factor Value Statistics:")
-    print(result['factor_value'].describe())
+    print(result["factor_value"].describe())
     print()
     print(f"Skewness: {result['factor_value'].skew():.4f}")
     print(f"Kurtosis: {result['factor_value'].kurtosis():.4f}")
@@ -136,9 +126,9 @@ def main():
         output_path = args.output
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if output_path.suffix == '.csv':
+        if output_path.suffix == ".csv":
             result.to_csv(output_path, index=False)
-        elif output_path.suffix == '.feather':
+        elif output_path.suffix == ".feather":
             result.reset_index(drop=True).to_feather(output_path)
         else:
             print(f"Warning: Unknown output format '{output_path.suffix}', "

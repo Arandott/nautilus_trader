@@ -30,11 +30,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd
 import pyarrow.feather as feather
-from decimal import Decimal
 from tqdm import tqdm
 
 from nautilus_trader.core.nautilus_pyo3 import Quantity
@@ -60,6 +60,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--start-date", type=str, default=None, help="Inclusive start date (YYYY-MM-DD)")
     parser.add_argument("--end-date", type=str, default=None, help="Inclusive end date (YYYY-MM-DD)")
     parser.add_argument("--venue", type=str, default="BINANCE", help="Venue component in bar type (default: BINANCE)")
+    parser.add_argument("--instrument-type", type=str, default="perp", choices=["spot", "perp", "future"], help="Instrument type: spot (no suffix), perp (-PERP), future (-FUTURE) (default: perp)")
     parser.add_argument("--bar-step", type=int, default=15, help="Bar step size in minutes (default: 15)")
     parser.add_argument("--aggregation", type=str, default="MINUTE", choices=["MINUTE"], help="Aggregation unit (currently only MINUTE)")
     parser.add_argument("--price-type", type=str, default="LAST", help="Price type segment (default: LAST)")
@@ -129,8 +130,41 @@ def normalise_dataframe(file_path: Path) -> pd.DataFrame:
     return df
 
 
-def build_bar_type(symbol: str, venue: str, step: int, aggregation: str, price_type: str, source: str) -> str:
-    return f"{symbol}.{venue}-{step}-{aggregation}-{price_type}-{source}"
+def build_bar_type(symbol: str, venue: str, step: int, aggregation: str, price_type: str, source: str, instrument_type: str = "spot") -> str:
+    """
+    Build bar type string with optional instrument type suffix.
+
+    Parameters
+    ----------
+    symbol : str
+        Base symbol (e.g., "BTCUSDT")
+    venue : str
+        Venue name (e.g., "BINANCE")
+    step : int
+        Bar step size
+    aggregation : str
+        Aggregation unit (e.g., "MINUTE")
+    price_type : str
+        Price type (e.g., "LAST")
+    source : str
+        Aggregation source (e.g., "EXTERNAL")
+    instrument_type : str
+        Instrument type: "spot" (no suffix), "perp" (-PERP), "future" (-FUTURE)
+
+    Returns
+    -------
+    str
+        Bar type string (e.g., "BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL")
+    """
+    # Add suffix based on instrument type
+    if instrument_type == "perp":
+        symbol_with_suffix = f"{symbol}-PERP"
+    elif instrument_type == "future":
+        symbol_with_suffix = f"{symbol}-FUTURE"
+    else:  # spot
+        symbol_with_suffix = symbol
+
+    return f"{symbol_with_suffix}.{venue}-{step}-{aggregation}-{price_type}-{source}"
 
 
 def get_decimal_precision(value: float) -> int:
@@ -330,6 +364,7 @@ def build_catalog(
     aggregation: str,
     price_type: str,
     source: str,
+    instrument_type: str,
     price_precision: int | None,
     size_precision: int | None,
     dry_run: bool,
@@ -360,7 +395,7 @@ def build_catalog(
         # Quantize data to target precision
         df_quantized = quantize_dataframe(df, resolved_price_prec, resolved_size_prec)
 
-        bar_type = build_bar_type(symbol, venue, step, aggregation, price_type, source)
+        bar_type = build_bar_type(symbol, venue, step, aggregation, price_type, source, instrument_type)
         wrangler = BarDataWranglerV2(bar_type=bar_type, price_precision=resolved_price_prec, size_precision=resolved_size_prec)
         # Include 'amt' column for extended bar fields (wrangler auto-detects from EXTENDED_BAR_FIELD_SPECS)
         frame = df_quantized[["open", "high", "low", "close", "volume", "ts_event", "ts_init", "amt"]].copy()
@@ -424,6 +459,7 @@ def main(argv: Sequence[str]) -> int:
         args.aggregation.upper(),
         args.price_type.upper(),
         args.aggregation_source.upper(),
+        args.instrument_type.lower(),  # Pass instrument type
         args.price_precision,
         args.size_precision,
         args.dry_run,

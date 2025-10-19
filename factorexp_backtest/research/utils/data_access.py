@@ -1,4 +1,5 @@
-"""Data access utilities for research workflows.
+"""
+Data access utilities for research workflows.
 
 Provides helpers for:
 - Loading bar data from Parquet catalog
@@ -7,15 +8,16 @@ Provides helpers for:
 """
 
 from pathlib import Path
-from typing import List, Optional
 
 import pandas as pd
+
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
 
 
 def get_catalog_path() -> Path:
-    """Return the default catalog path for research data.
+    """
+    Return the default catalog path for research data.
 
     Returns
     -------
@@ -40,9 +42,10 @@ def load_catalog_bars(
     instrument_id: str,
     start_date: str,
     end_date: str,
-    catalog_path: Optional[Path] = None,
+    catalog_path: Path | None = None,
 ) -> pd.DataFrame:
-    """Load bar data from Parquet catalog.
+    """
+    Load bar data from Parquet catalog.
 
     Parameters
     ----------
@@ -94,21 +97,21 @@ def load_catalog_bars(
     data = []
     for bar in bars_list:
         row = {
-            'open': float(bar.open),
-            'high': float(bar.high),
-            'low': float(bar.low),
-            'close': float(bar.close),
-            'volume': float(bar.volume),
-            'ts_event': int(bar.ts_event),
-            'ts_init': int(bar.ts_init),
-            'bar_type': bar.bar_type,
+            "open": float(bar.open),
+            "high": float(bar.high),
+            "low": float(bar.low),
+            "close": float(bar.close),
+            "volume": float(bar.volume),
+            "ts_event": int(bar.ts_event),
+            "ts_init": int(bar.ts_init),
+            "bar_type": bar.bar_type,
         }
 
         # Add extended fields if available
-        if hasattr(bar, 'amt'):
-            row['amt'] = float(bar.amt)
-        if hasattr(bar, 'vwap_return'):
-            row['vwap_return'] = float(bar.vwap_return)
+        if hasattr(bar, "amt"):
+            row["amt"] = float(bar.amt)
+        if hasattr(bar, "vwap_return"):
+            row["vwap_return"] = float(bar.vwap_return)
 
         data.append(row)
 
@@ -117,8 +120,9 @@ def load_catalog_bars(
     return bars_df
 
 
-def get_available_instruments(catalog_path: Optional[Path] = None) -> List[str]:
-    """List all available instruments in the catalog.
+def get_available_instruments(catalog_path: Path | None = None) -> list[str]:
+    """
+    List all available instruments in the catalog.
 
     This function scans the bar data directory to find all available instruments,
     since the catalog may not have instrument definitions registered.
@@ -160,8 +164,8 @@ def get_available_instruments(catalog_path: Optional[Path] = None) -> List[str]:
         dir_name = dir_path.name
         # Split by first dash to separate instrument ID from bar spec
         # Example: "BTCUSDT.BINANCE-15-MINUTE-LAST-EXTERNAL" -> "BTCUSDT.BINANCE"
-        if '-' in dir_name:
-            instrument_id = dir_name.split('-')[0]
+        if "-" in dir_name:
+            instrument_id = dir_name.split("-")[0]
             instrument_ids.append(instrument_id)
 
     return sorted(set(instrument_ids))  # Remove duplicates and sort

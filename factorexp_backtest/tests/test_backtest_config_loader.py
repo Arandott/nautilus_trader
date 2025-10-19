@@ -9,15 +9,15 @@ Tests cover:
 - Error handling
 """
 
-import pytest
 from pathlib import Path
-from factorexp_backtest.configs import (
-    BacktestConfigLoader,
-    FactorConfigLoader,
-    InstrumentConfig,
-    RunConfig,
-    FactorConfig,
-)
+
+import pytest
+
+from factorexp_backtest.configs import BacktestConfigLoader
+from factorexp_backtest.configs import FactorConfig
+from factorexp_backtest.configs import FactorConfigLoader
+from factorexp_backtest.configs import InstrumentConfig
+from factorexp_backtest.configs import RunConfig
 
 
 @pytest.fixture

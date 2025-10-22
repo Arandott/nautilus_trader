@@ -33,6 +33,7 @@ from nautilus_trader.adapters.binance.factories import BinanceLiveDataClientFact
 from nautilus_trader.config import InstrumentProviderConfig
 from nautilus_trader.config import LiveDataEngineConfig
 from nautilus_trader.config import LoggingConfig
+from nautilus_trader.config import StrategyConfig
 from nautilus_trader.config import TradingNodeConfig
 from nautilus_trader.data.aggregation import TickBarAggregator
 from nautilus_trader.live.node import TradingNode
@@ -44,6 +45,43 @@ from nautilus_trader.model.enums import BarAggregation
 from nautilus_trader.model.enums import PriceType
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import TraderId
+from nautilus_trader.trading.strategy import Strategy
+
+
+class LiveAmtMonitorConfig(StrategyConfig, frozen=True):
+    """
+    Configuration for ``LiveAmtMonitor`` strategy.
+    """
+
+    instrument_id: InstrumentId
+
+
+class LiveAmtMonitor(Strategy):
+    """
+    Minimal strategy which subscribes to trade ticks and forwards them to hooks supplied
+    by the test.
+    """
+
+    def __init__(self, config: LiveAmtMonitorConfig) -> None:
+        super().__init__(config)
+        self._trade_hook = None
+        self._aggregator = None
+
+    def attach_hooks(self, trade_hook, aggregator=None) -> None:
+        self._trade_hook = trade_hook
+        self._aggregator = aggregator
+
+    def on_start(self) -> None:
+        self.subscribe_trade_ticks(self.config.instrument_id)
+
+    def on_stop(self) -> None:
+        self.unsubscribe_trade_ticks(self.config.instrument_id)
+
+    def on_trade_tick(self, tick) -> None:
+        if self._trade_hook is not None:
+            self._trade_hook(tick)
+        if self._aggregator is not None:
+            self._aggregator.handle_trade_tick(tick)
 
 
 # Skip if extended_bar feature is not enabled
@@ -180,6 +218,12 @@ async def test_live_amt_accumulation_btcusdt():
         trades.clear()
         expected_amt_decimal = Decimal("0")
 
+    # Register helper strategy to leverage built-in subscription commands
+    monitor_config = LiveAmtMonitorConfig(instrument_id=instrument_id)
+    monitor_strategy = LiveAmtMonitor(config=monitor_config)
+    monitor_strategy.attach_hooks(trade_hook=on_trade)
+    node.trader.add_strategy(monitor_strategy)
+
     # Bar configuration
     bar_spec = BarSpecification(
         step=100,
@@ -193,9 +237,8 @@ async def test_live_amt_accumulation_btcusdt():
     )
 
     try:
-        # Cache kernel and trader references to avoid repeated attribute access
+        # Cache kernel reference to avoid repeated attribute access
         kernel = node.kernel
-        trader = kernel.trader
 
         # Start node kernel (async startup)
         await kernel.start_async()
@@ -232,23 +275,8 @@ async def test_live_amt_accumulation_btcusdt():
             handler=on_bar,
         )
 
-        # Define handlers as variables for cleanup
-        def trade_handler(msg):
-            if hasattr(msg, 'price'):
-                on_trade(msg)
-
-        def aggregator_handler(msg):
-            if hasattr(msg, 'price'):
-                aggregator.handle_trade_tick(msg)
-
-        # Subscribe to message bus (for manual amt tracking and aggregator)
-        topic = f"data.trades.{instrument_id.venue}.{instrument_id.symbol}"
-        kernel.msgbus.subscribe(topic=topic, handler=trade_handler)
-        kernel.msgbus.subscribe(topic=topic, handler=aggregator_handler)
-
-        # Subscribe to trade ticks via Trader (official best practice)
-        # This automatically registers handlers with msgbus and sends SubscribeTradeTicks command
-        trader.subscribe_trade_ticks(instrument_id)
+        # Update helper strategy with aggregator so it can forward ticks to the test harness
+        monitor_strategy.attach_hooks(trade_hook=on_trade, aggregator=aggregator)
 
         print("✅ Subscribed to live data stream")
         print()
@@ -263,19 +291,6 @@ async def test_live_amt_accumulation_btcusdt():
         print("=" * 80)
         print("Stopping data collection...")
         print()
-
-        # Unsubscribe via Trader (official best practice)
-        try:
-            trader.unsubscribe_trade_ticks(instrument_id)
-        except Exception as e:
-            print(f"⚠️  Warning: Failed to unsubscribe trade ticks: {e}")
-
-        # Unsubscribe manual msgbus handlers
-        try:
-            kernel.msgbus.unsubscribe(topic, trade_handler)
-            kernel.msgbus.unsubscribe(topic, aggregator_handler)
-        except Exception as e:
-            print(f"⚠️  Warning: Failed to unsubscribe msgbus handlers: {e}")
 
         trades.clear()
 

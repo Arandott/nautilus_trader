@@ -193,8 +193,9 @@ async def test_live_amt_accumulation_btcusdt():
     )
 
     try:
-        # Cache kernel reference to avoid repeated attribute access
+        # Cache kernel and trader references to avoid repeated attribute access
         kernel = node.kernel
+        trader = kernel.trader
 
         # Start node kernel (async startup)
         await kernel.start_async()
@@ -240,13 +241,14 @@ async def test_live_amt_accumulation_btcusdt():
             if hasattr(msg, 'price'):
                 aggregator.handle_trade_tick(msg)
 
-        # Subscribe to message bus
+        # Subscribe to message bus (for manual amt tracking and aggregator)
         topic = f"data.trades.{instrument_id.venue}.{instrument_id.symbol}"
         kernel.msgbus.subscribe(topic=topic, handler=trade_handler)
         kernel.msgbus.subscribe(topic=topic, handler=aggregator_handler)
 
-        # Subscribe to trade ticks via data engine
-        kernel.data_engine.subscribe_trade_ticks(instrument_id)
+        # Subscribe to trade ticks via Trader (official best practice)
+        # This automatically registers handlers with msgbus and sends SubscribeTradeTicks command
+        trader.subscribe_trade_ticks(instrument_id)
 
         print("✅ Subscribed to live data stream")
         print()
@@ -262,17 +264,18 @@ async def test_live_amt_accumulation_btcusdt():
         print("Stopping data collection...")
         print()
 
-        # Unsubscribe
+        # Unsubscribe via Trader (official best practice)
         try:
-            kernel.data_engine.unsubscribe_trade_ticks(instrument_id)
+            trader.unsubscribe_trade_ticks(instrument_id)
         except Exception as e:
-            print(f"⚠️  Warning: Failed to unsubscribe: {e}")
+            print(f"⚠️  Warning: Failed to unsubscribe trade ticks: {e}")
 
+        # Unsubscribe manual msgbus handlers
         try:
             kernel.msgbus.unsubscribe(topic, trade_handler)
             kernel.msgbus.unsubscribe(topic, aggregator_handler)
         except Exception as e:
-            print(f"⚠️  Warning: Failed to unsubscribe handlers: {e}")
+            print(f"⚠️  Warning: Failed to unsubscribe msgbus handlers: {e}")
 
         trades.clear()
 

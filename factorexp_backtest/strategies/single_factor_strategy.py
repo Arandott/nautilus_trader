@@ -520,8 +520,8 @@ class SingleFactorStrategy(Strategy):
 
         # TRUE equity = cash + unrealized PnL
         total_equity = cash_balance + total_unrealized_pnl
-        # logg the amount of total equity
-        self.log.info(f"Total Equity: {total_equity:.2f} USDT", LogColor.CYAN)
+        # Log the amount of total equity at debug level to avoid noise in long runs
+        self.log.debug(f"Total Equity: {total_equity:.2f} USDT")
 
         # Log analytics every 96 bars (once per rotation cycle)
         if self.segment_index == 0:

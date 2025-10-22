@@ -170,11 +170,23 @@ macro_rules! impl_rolling_operator_common {
 pub fn get_pair_rolling_operator(
     name: &str,
     window_size: usize,
+    params: Option<&std::collections::HashMap<String, f64>>,
 ) -> Option<Box<dyn pair_rolling::PairRollingOperator>> {
     match name {
         "TS_Corr" => Some(Box::new(pair_rolling::Correlation::new(window_size))),
         "TS_Cov" => Some(Box::new(pair_rolling::Covariance::new(window_size, 1))),
         "TS_Beta" => Some(Box::new(pair_rolling::Beta::new(window_size, 1))),
+        "TS_MeanSelQ" => {
+            // Extract low_phi and high_phi from params
+            let params = params?;
+            let low_phi = *params.get("low_phi")?;
+            let high_phi = *params.get("high_phi")?;
+            Some(Box::new(pair_rolling::MeanSelQ::new(
+                window_size,
+                low_phi,
+                high_phi,
+            )))
+        }
         _ => None,
     }
 }

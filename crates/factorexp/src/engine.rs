@@ -168,7 +168,7 @@ impl OperatorNode {
             get_rolling_operator(&operator_name, window_size)
         };
 
-        let pair_operator = get_pair_rolling_operator(&operator_name, window_size);
+        let pair_operator = get_pair_rolling_operator(&operator_name, window_size, Some(&params));
 
         Ok(Self {
             operator_name,
@@ -200,8 +200,11 @@ impl ExpressionNode for OperatorNode {
                 ) {
                     // Initialize pair operator if not already done
                     if self.pair_operator.is_none() {
-                        self.pair_operator =
-                            get_pair_rolling_operator(&self.operator_name, self.window_size);
+                        self.pair_operator = get_pair_rolling_operator(
+                            &self.operator_name,
+                            self.window_size,
+                            Some(&self.params),
+                        );
                     }
 
                     // Update pair operator state with new values
@@ -300,7 +303,11 @@ impl ExpressionNode for OperatorNode {
             get_rolling_operator(&self.operator_name, self.window_size)
         };
 
-        self.pair_operator = get_pair_rolling_operator(&self.operator_name, self.window_size);
+        self.pair_operator = get_pair_rolling_operator(
+            &self.operator_name,
+            self.window_size,
+            Some(&self.params),
+        );
         self.current_value = None;
         self.staleness_count = 0;
 
@@ -818,7 +825,7 @@ impl ComputationEngine {
             "TS_Med" | "TS_Median" | "TS_Product" | "TS_Delta" | "TS_Ref" | "TS_Rank" |
             "TS_Argmax" | "TS_Argmin" | "TS_EMA" | "TS_WMA" | "TS_Skew" |
             "TS_Kurt" | "TS_Kurtosis" | "TS_Mad" | "TS_Corr" | "TS_Cov" | "TS_Beta" |
-            "TS_Quantile" |  // CRITICAL: Must be treated as rolling operator
+            "TS_Quantile" | "TS_MeanSelQ" |  // CRITICAL: Must be treated as rolling operator
             // Statistical rolling operators without TS_ prefix
             "ZScore" | "Demean"
         )

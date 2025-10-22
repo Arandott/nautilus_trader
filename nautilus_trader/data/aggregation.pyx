@@ -43,226 +43,235 @@ from nautilus_trader.model.objects cimport Price
 from nautilus_trader.model.objects cimport Quantity
 
 
-cdef class BarBuilder:
-    """
-    Provides a generic bar builder for aggregation.
+# Include extended bar aggregator configuration
+include "_generated/extended_bar_aggregator_config.pxi"
 
-    Parameters
-    ----------
-    instrument : Instrument
-        The instrument for the builder.
-    bar_type : BarType
-        The bar type for the builder.
 
-    Raises
-    ------
-    ValueError
-        If `instrument.id` != `bar_type.instrument_id`.
-    """
-
-    def __init__(
-        self,
-        Instrument instrument not None,
-        BarType bar_type not None,
-    ) -> None:
-        Condition.equal(instrument.id, bar_type.instrument_id, "instrument.id", "bar_type.instrument_id")
-
-        self._bar_type = bar_type
-
-        self.price_precision = instrument.price_precision
-        self.size_precision = instrument.size_precision
-        self.initialized = False
-        self.ts_last = 0
-        self.count = 0
-
-        self._partial_set = False
-        self._last_close = None
-        self._open = None
-        self._high = None
-        self._low = None
-        self._close = None
-        self.volume = Quantity.zero_c(precision=self.size_precision)
-
-    def __repr__(self) -> str:
-        return (
-            f"{type(self).__name__}("
-            f"{self._bar_type},"
-            f"{self._open},"
-            f"{self._high},"
-            f"{self._low},"
-            f"{self._close},"
-            f"{self.volume})"
-        )
-
-    cpdef void set_partial(self, Bar partial_bar):
+IF HAS_EXTENDED_BAR_FIELDS:
+    # Use generated extended BarBuilder with custom field support
+    include "_generated/_extended_bar_builder.pxi"
+ELSE:
+    # Use standard BarBuilder (no extended fields)
+    cdef class BarBuilder:
         """
-        Set the initial values for a partially completed bar.
-
-        This method can only be called once per instance.
+        Provides a generic bar builder for aggregation.
 
         Parameters
         ----------
-        partial_bar : Bar
-            The partial bar with values to set.
+        instrument : Instrument
+            The instrument for the builder.
+        bar_type : BarType
+            The bar type for the builder.
 
+        Raises
+        ------
+        ValueError
+            If `instrument.id` != `bar_type.instrument_id`.
         """
-        if self._partial_set:
-            return  # Already updated
 
-        self._open = partial_bar.open
+        def __init__(
+            self,
+            Instrument instrument not None,
+            BarType bar_type not None,
+        ) -> None:
+            Condition.equal(instrument.id, bar_type.instrument_id, "instrument.id", "bar_type.instrument_id")
 
-        if self._high is None or partial_bar.high > self._high:
-            self._high = partial_bar.high
+            self._bar_type = bar_type
 
-        if self._low is None or partial_bar.low < self._low:
-            self._low = partial_bar.low
+            self.price_precision = instrument.price_precision
+            self.size_precision = instrument.size_precision
+            self.initialized = False
+            self.ts_last = 0
+            self.count = 0
 
-        if self._close is None:
-            self._close = partial_bar.close
+            self._partial_set = False
+            self._last_close = None
+            self._open = None
+            self._high = None
+            self._low = None
+            self._close = None
+            self.volume = Quantity.zero_c(precision=self.size_precision)
 
-        self.volume = partial_bar.volume
+        def __repr__(self) -> str:
+            return (
+                f"{type(self).__name__}("
+                f"{self._bar_type},"
+                f"{self._open},"
+                f"{self._high},"
+                f"{self._low},"
+                f"{self._close},"
+                f"{self.volume})"
+            )
 
-        if self.ts_last == 0:
-            self.ts_last = partial_bar.ts_init
+        cpdef void set_partial(self, Bar partial_bar):
+            """
+            Set the initial values for a partially completed bar.
 
-        self._partial_set = True
-        self.initialized = True
+            This method can only be called once per instance.
 
-    cpdef void update(self, Price price, Quantity size, uint64_t ts_event):
-        """
-        Update the bar builder.
+            Parameters
+            ----------
+            partial_bar : Bar
+                The partial bar with values to set.
 
-        Parameters
-        ----------
-        price : Price
-            The update price.
-        size : Decimal
-            The update size.
-        ts_event : uint64_t
-            UNIX timestamp (nanoseconds) of the update.
+            """
+            if self._partial_set:
+                return  # Already updated
 
-        """
-        Condition.not_none(price, "price")
-        Condition.not_none(size, "size")
+            self._open = partial_bar.open
 
-        # TODO: What happens if the first tick updates before a partial bar is applied?
-        if ts_event < self.ts_last:
-            return  # Not applicable
+            if self._high is None or partial_bar.high > self._high:
+                self._high = partial_bar.high
 
-        if self._open is None:
-            # Initialize builder
-            self._open = price
-            self._high = price
-            self._low = price
+            if self._low is None or partial_bar.low < self._low:
+                self._low = partial_bar.low
+
+            if self._close is None:
+                self._close = partial_bar.close
+
+            self.volume = partial_bar.volume
+
+            if self.ts_last == 0:
+                self.ts_last = partial_bar.ts_init
+
+            self._partial_set = True
             self.initialized = True
-        elif price._mem.raw > self._high._mem.raw:
-            self._high = price
-        elif price._mem.raw < self._low._mem.raw:
-            self._low = price
 
-        self._close = price
-        self.volume._mem.raw += size._mem.raw
-        self.count += 1
-        self.ts_last = ts_event
+        cpdef void update(self, Price price, Quantity size, uint64_t ts_event):
+            """
+            Update the bar builder.
 
-    cpdef void update_bar(self, Bar bar, Quantity volume, uint64_t ts_init):
-        """
-        Update the bar builder.
+            Parameters
+            ----------
+            price : Price
+                The update price.
+            size : Decimal
+                The update size.
+            ts_event : uint64_t
+                UNIX timestamp (nanoseconds) of the update.
 
-        Parameters
-        ----------
-        bar : Bar
-            The update Bar.
+            """
+            Condition.not_none(price, "price")
+            Condition.not_none(size, "size")
 
-        """
-        Condition.not_none(bar, "bar")
+            # TODO: What happens if the first tick updates before a partial bar is applied?
+            if ts_event < self.ts_last:
+                return  # Not applicable
 
-        # TODO: What happens if the first bar updates before a partial bar is applied?
-        if ts_init < self.ts_last:
-            return  # Not applicable
+            if self._open is None:
+                # Initialize builder
+                self._open = price
+                self._high = price
+                self._low = price
+                self.initialized = True
+            elif price._mem.raw > self._high._mem.raw:
+                self._high = price
+            elif price._mem.raw < self._low._mem.raw:
+                self._low = price
 
-        if self._open is None:
-            # Initialize builder
-            self._open = bar.open
-            self._high = bar.high
-            self._low = bar.low
-            self.initialized = True
-        else:
-            if bar.high > self._high:
+            self._close = price
+            self.volume._mem.raw += size._mem.raw
+            self.count += 1
+            self.ts_last = ts_event
+
+        cpdef void update_bar(self, Bar bar, Quantity volume, uint64_t ts_init):
+            """
+            Update the bar builder.
+
+            Parameters
+            ----------
+            bar : Bar
+                The update Bar.
+
+            """
+            Condition.not_none(bar, "bar")
+
+            # TODO: What happens if the first bar updates before a partial bar is applied?
+            if ts_init < self.ts_last:
+                return  # Not applicable
+
+            if self._open is None:
+                # Initialize builder
+                self._open = bar.open
                 self._high = bar.high
-
-            if bar.low < self._low:
                 self._low = bar.low
+                self.initialized = True
+            else:
+                if bar.high > self._high:
+                    self._high = bar.high
 
-        self._close = bar.close
-        self.volume._mem.raw += volume._mem.raw
-        self.count += 1
-        self.ts_last = ts_init
+                if bar.low < self._low:
+                    self._low = bar.low
 
-    cpdef void reset(self):
-        """
-        Reset the bar builder.
+            self._close = bar.close
+            self.volume._mem.raw += volume._mem.raw
+            self.count += 1
+            self.ts_last = ts_init
 
-        All stateful fields are reset to their initial value.
-        """
-        self._open = None
-        self._high = None
-        self._low = None
+        cpdef void reset(self):
+            """
+            Reset the bar builder.
 
-        self.volume = Quantity.zero_c(precision=self.size_precision)
-        self.count = 0
+            All stateful fields are reset to their initial value.
+            """
+            self._open = None
+            self._high = None
+            self._low = None
 
-    cpdef Bar build_now(self):
-        """
-        Return the aggregated bar and reset.
+            self.volume = Quantity.zero_c(precision=self.size_precision)
+            self.count = 0
 
-        Returns
-        -------
-        Bar
+        cpdef Bar build_now(self):
+            """
+            Return the aggregated bar and reset.
 
-        """
-        return self.build(self.ts_last, self.ts_last)
+            Returns
+            -------
+            Bar
 
-    cpdef Bar build(self, uint64_t ts_event, uint64_t ts_init):
-        """
-        Return the aggregated bar with the given closing timestamp, and reset.
+            """
+            return self.build(self.ts_last, self.ts_last)
 
-        Parameters
-        ----------
-        ts_event : uint64_t
-            UNIX timestamp (nanoseconds) for the bar event.
-        ts_init : uint64_t
-            UNIX timestamp (nanoseconds) for the bar initialization.
+        cpdef Bar build(self, uint64_t ts_event, uint64_t ts_init):
+            """
+            Return the aggregated bar with the given closing timestamp, and reset.
 
-        Returns
-        -------
-        Bar
+            Parameters
+            ----------
+            ts_event : uint64_t
+                UNIX timestamp (nanoseconds) for the bar event.
+            ts_init : uint64_t
+                UNIX timestamp (nanoseconds) for the bar initialization.
 
-        """
-        if self._open is None:  # No tick was received
-            self._open = self._last_close
-            self._high = self._last_close
-            self._low = self._last_close
-            self._close = self._last_close
+            Returns
+            -------
+            Bar
+
+            """
+            if self._open is None:  # No tick was received
+                self._open = self._last_close
+                self._high = self._last_close
+                self._low = self._last_close
+                self._close = self._last_close
 
 
-        self._low._mem.raw = min(self._close._mem.raw, self._low._mem.raw)
-        self._high._mem.raw = max(self._close._mem.raw, self._high._mem.raw)
+            self._low._mem.raw = min(self._close._mem.raw, self._low._mem.raw)
+            self._high._mem.raw = max(self._close._mem.raw, self._high._mem.raw)
 
-        cdef Bar bar = Bar(
-            bar_type=self._bar_type,
-            open=self._open,
-            high=self._high,
-            low=self._low,
-            close=self._close,
-            volume=Quantity(self.volume, self.size_precision),
-            ts_event=ts_event,
-            ts_init=ts_init,
-        )
+            cdef Bar bar = Bar(
+                bar_type=self._bar_type,
+                open=self._open,
+                high=self._high,
+                low=self._low,
+                close=self._close,
+                volume=Quantity(self.volume, self.size_precision),
+                ts_event=ts_event,
+                ts_init=ts_init,
+            )
 
-        self._last_close = self._close
-        self.reset()
-        return bar
+            self._last_close = self._close
+            self.reset()
+            return bar
 
 
 cdef class BarAggregator:

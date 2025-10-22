@@ -28,34 +28,40 @@ from nautilus_trader.model.objects cimport Price
 from nautilus_trader.model.objects cimport Quantity
 
 
-cdef class BarBuilder:
-    cdef BarType _bar_type
+include "_generated/extended_bar_aggregator_config.pxi"
 
-    cdef readonly uint8_t price_precision
-    """The price precision for the builders instrument.\n\n:returns: `uint8`"""
-    cdef readonly uint8_t size_precision
-    """The size precision for the builders instrument.\n\n:returns: `uint8`"""
-    cdef readonly bint initialized
-    """If the builder is initialized.\n\n:returns: `bool`"""
-    cdef readonly uint64_t ts_last
-    """UNIX timestamp (nanoseconds) when the builder last updated.\n\n:returns: `uint64_t`"""
-    cdef readonly int count
-    """The builders current update count.\n\n:returns: `int`"""
+IF HAS_EXTENDED_BAR_FIELDS:
+    # Use generated extended BarBuilder declaration with custom field attributes
+    include "_generated/_extended_bar_builder.pxd"
+ELSE:
+    cdef class BarBuilder:
+        cdef BarType _bar_type
 
-    cdef bint _partial_set
-    cdef Price _last_close
-    cdef Price _open
-    cdef Price _high
-    cdef Price _low
-    cdef Price _close
-    cdef Quantity volume
+        cdef readonly uint8_t price_precision
+        """The price precision for the builders instrument.\n\n:returns: `uint8`"""
+        cdef readonly uint8_t size_precision
+        """The size precision for the builders instrument.\n\n:returns: `uint8`"""
+        cdef readonly bint initialized
+        """If the builder is initialized.\n\n:returns: `bool`"""
+        cdef readonly uint64_t ts_last
+        """UNIX timestamp (nanoseconds) when the builder last updated.\n\n:returns: `uint64_t`"""
+        cdef readonly int count
+        """The builders current update count.\n\n:returns: `int`"""
 
-    cpdef void set_partial(self, Bar partial_bar)
-    cpdef void update(self, Price price, Quantity size, uint64_t ts_event)
-    cpdef void update_bar(self, Bar bar, Quantity volume, uint64_t ts_init)
-    cpdef void reset(self)
-    cpdef Bar build_now(self)
-    cpdef Bar build(self, uint64_t ts_event, uint64_t ts_init)
+        cdef bint _partial_set
+        cdef Price _last_close
+        cdef Price _open
+        cdef Price _high
+        cdef Price _low
+        cdef Price _close
+        cdef Quantity volume
+
+        cpdef void set_partial(self, Bar partial_bar)
+        cpdef void update(self, Price price, Quantity size, uint64_t ts_event)
+        cpdef void update_bar(self, Bar bar, Quantity volume, uint64_t ts_init)
+        cpdef void reset(self)
+        cpdef Bar build_now(self)
+        cpdef Bar build(self, uint64_t ts_event, uint64_t ts_init)
 
 
 cdef class BarAggregator:

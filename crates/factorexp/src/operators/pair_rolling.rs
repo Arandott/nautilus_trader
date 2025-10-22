@@ -590,4 +590,393 @@ mod tests {
         assert!(!op.value().is_nan(), "Should compute correlation with 2+ valid pairs");
         assert!((op.value() - 1.0).abs() < f64::EPSILON);
     }
+
+    #[test]
+    fn test_mean_selq_basic_functionality() {
+        let mut op = MeanSelQ::new(5, 0.25, 0.75);
+
+        assert!(!op.is_ready());
+        assert!(op.value().is_nan());
+
+        // Add data: x values are 10-50, cond values are 1-5
+        // After window is full, cond=[1,2,3,4,5]
+        // Q1(cond)=2.0, Q3(cond)=4.0
+        // x values where cond in [2.0, 4.0]: x=[20, 30, 40]
+        // Mean of [20, 30, 40] = 30.0
+        op.update(10.0, 1.0);
+        op.update(20.0, 2.0);
+        op.update(30.0, 3.0);
+        op.update(40.0, 4.0);
+        op.update(50.0, 5.0);
+
+        assert!(op.is_ready());
+        let result = op.value();
+        assert!((result - 30.0).abs() < 0.1, "Expected mean ~30.0, got {}", result);
+    }
+
+    #[test]
+    fn test_mean_selq_extreme_quantiles() {
+        let mut op = MeanSelQ::new(5, 0.0, 1.0);
+
+        // With quantiles [0.0, 1.0], all values should be selected
+        op.update(10.0, 1.0);
+        op.update(20.0, 2.0);
+        op.update(30.0, 3.0);
+        op.update(40.0, 4.0);
+        op.update(50.0, 5.0);
+
+        assert!(op.is_ready());
+        let result = op.value();
+        // Mean of all x values [10, 20, 30, 40, 50] = 30.0
+        assert!((result - 30.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_mean_selq_single_quantile() {
+        let mut op = MeanSelQ::new(5, 0.5, 0.5);
+
+        // With quantiles [0.5, 0.5], only median of cond should be selected
+        op.update(10.0, 1.0);
+        op.update(20.0, 2.0);
+        op.update(30.0, 3.0);
+        op.update(40.0, 4.0);
+        op.update(50.0, 5.0);
+
+        assert!(op.is_ready());
+        // Median of cond=[1,2,3,4,5] is 3.0
+        // Only x=30.0 should be selected
+        let result = op.value();
+        assert!((result - 30.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_mean_selq_nan_handling() {
+        let mut op = MeanSelQ::new(5, 0.25, 0.75);
+
+        // Add data with NaN in cond
+        op.update(10.0, 1.0);
+        op.update(20.0, f64::NAN); // This pair should be excluded
+        op.update(30.0, 3.0);
+        op.update(40.0, 4.0);
+        op.update(50.0, 5.0);
+
+        assert!(op.is_ready());
+        // Valid cond values: [1, 3, 4, 5]
+        // Q1=2.5, Q3=4.5
+        // x values where cond in [2.5, 4.5]: x=[30, 40]
+        // Mean = 35.0
+        let result = op.value();
+        assert!(
+            (result - 35.0).abs() < 0.1,
+            "Expected mean ~35.0 with NaN filtering, got {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_mean_selq_empty_selection() {
+        let mut op = MeanSelQ::new(3, 0.9, 1.0);
+
+        // First, establish a valid value
+        op.update(10.0, 1.0);
+        op.update(20.0, 2.0);
+        op.update(30.0, 3.0);
+
+        assert!(op.is_ready());
+        let first_value = op.value();
+        assert!(!first_value.is_nan(), "Should have a valid value initially");
+
+        // Now add data where selection might be empty
+        // If cond=[1,2,3], Q90=2.8, Q100=3.0
+        // Only x where cond in [2.8, 3.0] would be selected
+        // This should select x=30.0 (cond=3.0)
+        op.update(40.0, 1.0);
+        assert!(!op.value().is_nan(), "Should maintain valid value");
+    }
+
+    #[test]
+    fn test_mean_selq_order_invariance() {
+        // MeanSelQ should NOT be order-dependent (unlike incorrect DSL workaround)
+        // Window-wide quantiles should give consistent results
+
+        let mut op1 = MeanSelQ::new(5, 0.25, 0.75);
+        let mut op2 = MeanSelQ::new(5, 0.25, 0.75);
+
+        // Same data, different order
+        let data1 = [(10.0, 1.0), (20.0, 2.0), (30.0, 3.0), (40.0, 4.0), (50.0, 5.0)];
+        let data2 = [(50.0, 5.0), (10.0, 1.0), (30.0, 3.0), (40.0, 4.0), (20.0, 2.0)];
+
+        for (x, cond) in data1 {
+            op1.update(x, cond);
+        }
+
+        for (x, cond) in data2 {
+            op2.update(x, cond);
+        }
+
+        assert!(op1.is_ready());
+        assert!(op2.is_ready());
+
+        // After both windows are full, they should have the same set of values
+        // and thus the same quantiles and same selected mean (order-invariant)
+        let result1 = op1.value();
+        let result2 = op2.value();
+
+        assert!(
+            (result1 - result2).abs() < 0.1,
+            "Results should be order-invariant: {} vs {}",
+            result1,
+            result2
+        );
+    }
+
+    #[test]
+    fn test_mean_selq_rolling_behavior() {
+        let mut op = MeanSelQ::new(3, 0.25, 0.75);
+
+        // Initial window: [(10, 1), (20, 2), (30, 3)]
+        op.update(10.0, 1.0);
+        op.update(20.0, 2.0);
+        op.update(30.0, 3.0);
+
+        assert!(op.is_ready());
+        let first_result = op.value();
+
+        // Add more data to test rolling behavior
+        // Window becomes: [(20, 2), (30, 3), (40, 4)]
+        op.update(40.0, 4.0);
+
+        let second_result = op.value();
+
+        // Results should differ as window content changed
+        assert!(
+            (first_result - second_result).abs() > 0.01,
+            "Rolling window should produce different results"
+        );
+    }
+
+    #[test]
+    fn test_mean_selq_all_nan_cond() {
+        let mut op = MeanSelQ::new(3, 0.25, 0.75);
+
+        // Establish a valid value first
+        op.update(10.0, 1.0);
+        op.update(20.0, 2.0);
+        op.update(30.0, 3.0);
+
+        assert!(op.is_ready());
+
+        // Now add data that will roll the window
+        // After (40, NaN), window = [(20, 2), (30, 3), (40, NaN)], valid_cond=[2,3]
+        op.update(40.0, f64::NAN);
+        // After (50, NaN), window = [(30, 3), (40, NaN), (50, NaN)], valid_cond=[3]
+        op.update(50.0, f64::NAN);
+        assert!(op.is_ready());
+        let last_valid = op.value(); // This should be 30.0 (only x=30 with cond=3)
+
+        // After (60, NaN), window = [(40, NaN), (50, NaN), (60, NaN)], valid_cond=[]
+        op.update(60.0, f64::NAN);
+
+        // Following consistent NaN strategy with other pair rolling operators:
+        // is_ready() should return true (window is full)
+        // value() should reuse last valid value when window has no valid data
+        assert!(op.is_ready(), "Should be ready when window is full (count >= window_size)");
+
+        let result = op.value();
+        assert_eq!(
+            result, last_valid,
+            "Should reuse last valid value when all cond are NaN, expected {}, got {}",
+            last_valid, result
+        );
+    }
+
+    #[test]
+    fn test_mean_selq_parameter_validation() {
+        // Test that low_phi > high_phi panics
+        let result = std::panic::catch_unwind(|| {
+            MeanSelQ::new(5, 0.75, 0.25); // Invalid: low > high
+        });
+        assert!(result.is_err(), "Should panic when low_phi > high_phi");
+
+        // Test that phi outside [0, 1] panics
+        let result = std::panic::catch_unwind(|| {
+            MeanSelQ::new(5, -0.1, 0.5); // Invalid: low_phi < 0
+        });
+        assert!(result.is_err(), "Should panic when low_phi < 0");
+
+        let result = std::panic::catch_unwind(|| {
+            MeanSelQ::new(5, 0.5, 1.1); // Invalid: high_phi > 1
+        });
+        assert!(result.is_err(), "Should panic when high_phi > 1");
+    }
+}
+
+/// Rolling mean with quantile-based selection.
+///
+/// Computes the NaN-aware mean of target values (x) where the corresponding
+/// selector values (cond) fall within a specified quantile range [low, high].
+///
+/// # Algorithm
+/// At each time step:
+/// 1. Compute quantile thresholds q_low and q_high from the current window of cond values
+/// 2. Filter x values where corresponding cond is in [q_low, q_high] and both are non-NaN
+/// 3. Return the mean of filtered x values
+///
+/// # Performance
+/// Uses two Quantile operators to efficiently maintain low and high quantile thresholds
+/// with O(log n) updates instead of O(n log n) sorting on every update.
+///
+/// # NaN Handling
+/// - When cond is NaN, the corresponding x is excluded from selection
+/// - When the selection is empty, reuse the last valid mean value
+#[derive(Debug)]
+pub struct MeanSelQ {
+    base: PairBaseOperator,
+    quantile_low: crate::operators::rolling::Quantile,  // Maintains q_low efficiently
+    quantile_high: crate::operators::rolling::Quantile, // Maintains q_high efficiently
+}
+
+impl MeanSelQ {
+    /// Creates a new rolling mean with quantile-based selection operator.
+    ///
+    /// # Arguments
+    /// * `window_size` - Size of the rolling window
+    /// * `low_phi` - Low quantile threshold (0.0-1.0)
+    /// * `high_phi` - High quantile threshold (0.0-1.0)
+    ///
+    /// # Panics
+    /// Panics if low_phi > high_phi or if either is outside [0, 1].
+    #[must_use]
+    pub fn new(window_size: usize, low_phi: f64, high_phi: f64) -> Self {
+        assert!(
+            low_phi >= 0.0 && low_phi <= 1.0,
+            "low_phi must be in [0, 1], got {}",
+            low_phi
+        );
+        assert!(
+            high_phi >= 0.0 && high_phi <= 1.0,
+            "high_phi must be in [0, 1], got {}",
+            high_phi
+        );
+        assert!(
+            low_phi <= high_phi,
+            "low_phi ({}) must be <= high_phi ({})",
+            low_phi,
+            high_phi
+        );
+
+        Self {
+            base: PairBaseOperator::new("TS_MeanSelQ", window_size),
+            quantile_low: crate::operators::rolling::Quantile::new(window_size, low_phi),
+            quantile_high: crate::operators::rolling::Quantile::new(window_size, high_phi),
+        }
+    }
+}
+
+// Manual implementation for MeanSelQ to override reset()
+impl PairRollingOperator for MeanSelQ {
+    #[inline]
+    fn name(&self) -> &str {
+        &self.base.base.name
+    }
+
+    #[inline]
+    fn window_size(&self) -> usize {
+        self.base.base.buffer.window_size()
+    }
+
+    #[inline]
+    fn is_ready(&self) -> bool {
+        // Following consistent NaN strategy: ready when count >= window_size
+        // (same as other pair rolling operators)
+        self.base.buffer_x.count() >= self.base.buffer_x.window_size()
+    }
+
+    #[inline]
+    fn value(&self) -> f64 {
+        if self.is_ready() {
+            self.base.base.value
+        } else {
+            f64::NAN
+        }
+    }
+
+    #[inline]
+    fn update(&mut self, value1: f64, value2: f64) {
+        self.update_internal(value1, value2);
+    }
+
+    #[inline]
+    fn count(&self) -> usize {
+        self.base.buffer_x.count()
+    }
+
+    fn reset(&mut self) {
+        self.base.reset_statistics();
+        self.base.base.value = f64::NAN;
+        self.base.base.last_valid_value = None;
+
+        // Also reset the quantile operators
+        use crate::operators::RollingOperator;
+        self.quantile_low.reset();
+        self.quantile_high.reset();
+    }
+}
+
+impl MeanSelQ {
+    /// Updates the operator with new values and calculates the conditional mean.
+    pub fn update_internal(&mut self, x: f64, cond: f64) {
+        // Always update both buffers to maintain time alignment
+        self.base.update_statistics(x, cond);
+
+        // Update quantile operators with cond value (O(log n) operation)
+        use crate::operators::RollingOperator;
+        self.quantile_low.update(cond);
+        self.quantile_high.update(cond);
+
+        // Check if we have any jointly-valid pairs in the current window
+        if self.base.valid_pairs() == 0 {
+            // No valid pairs, reuse last valid mean
+            self.base.base.set_stale_value();
+            return;
+        }
+
+        // Get quantile thresholds from pre-computed quantile operators
+        let q_low = self.quantile_low.value();
+        let q_high = self.quantile_high.value();
+
+        if q_low.is_nan() || q_high.is_nan() {
+            // Cannot compute quantiles, reuse last valid mean
+            self.base.base.set_stale_value();
+            return;
+        }
+
+        // Extract windows for filtering
+        let x_window = self.base.buffer_x().window();
+        let cond_window = self.base.buffer_y().window();
+
+        // Filter x values where corresponding cond is in [q_low, q_high]
+        // Both x and cond must be non-NaN, and cond must be within the quantile range
+        let mut sum = 0.0;
+        let mut count = 0;
+
+        for i in 0..x_window.len() {
+            let xi = x_window[i];
+            let ci = cond_window[i];
+
+            if !xi.is_nan() && !ci.is_nan() && ci >= q_low && ci <= q_high {
+                sum += xi;
+                count += 1;
+            }
+        }
+
+        if count == 0 {
+            // No values passed the selection criteria, reuse last valid mean
+            self.base.base.set_stale_value();
+        } else {
+            // Compute mean of selected values
+            let mean = sum / count as f64;
+            self.base.set_value(mean);
+        }
+    }
 }

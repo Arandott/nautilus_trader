@@ -71,6 +71,8 @@ pub enum Expr {
         right: Box<Expr>,
         /// Window size
         window: usize,
+        /// Additional parameters (e.g., low_phi, high_phi for MeanSelQ)
+        params: HashMap<String, f64>,
     },
 
     /// Ternary operation node (When/If-Then-Else)
@@ -157,6 +159,7 @@ pub enum PairRollingOpType {
     Corr,
     Cov,
     Beta,
+    MeanSelQ,
 }
 
 /// Simple recursive descent parser - no external dependencies, no complexity.
@@ -580,6 +583,55 @@ impl Parser {
     fn build_rolling_expr(&self, op_name: &str, args: Vec<Expr>) -> Result<Expr, String> {
         // Check if it's a pair rolling operator
         if let Ok(op) = self.parse_pair_rolling_op(op_name) {
+            // Special handling for MeanSelQ - expects 5 arguments (expr, cond, window, low, high)
+            if op == PairRollingOpType::MeanSelQ {
+                if args.len() != 5 {
+                    return Err(format!(
+                        "TS_MeanSelQ expects 5 arguments (expr, cond, window, low, high), got {}",
+                        args.len()
+                    ));
+                }
+
+                let mut iter = args.into_iter();
+                let left = iter.next().ok_or("Missing expr argument")?;
+                let right = iter.next().ok_or("Missing cond argument")?;
+                let window_expr = iter.next().ok_or("Missing window argument")?;
+                let low_expr = iter.next().ok_or("Missing low argument")?;
+                let high_expr = iter.next().ok_or("Missing high argument")?;
+
+                let window = match window_expr {
+                    Expr::NumNode(n) if n > 0.0 => n as usize,
+                    _ => return Err("Window must be a positive number".to_string()),
+                };
+
+                let low_phi = match low_expr {
+                    Expr::NumNode(p) if p >= 0.0 && p <= 1.0 => p,
+                    _ => return Err("Low quantile must be a number between 0 and 1".to_string()),
+                };
+
+                let high_phi = match high_expr {
+                    Expr::NumNode(p) if p >= 0.0 && p <= 1.0 => p,
+                    _ => return Err("High quantile must be a number between 0 and 1".to_string()),
+                };
+
+                if low_phi > high_phi {
+                    return Err("Low quantile must be <= high quantile".to_string());
+                }
+
+                let mut params = HashMap::new();
+                params.insert("low_phi".to_string(), low_phi);
+                params.insert("high_phi".to_string(), high_phi);
+
+                return Ok(Expr::PairRollingNode {
+                    op,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    window,
+                    params,
+                });
+            }
+
+            // Standard pair rolling operators - 3 arguments
             if args.len() != 3 {
                 return Err(format!(
                     "TS_{} expects 3 arguments, got {}",
@@ -603,6 +655,7 @@ impl Parser {
                 left: Box::new(left),
                 right: Box::new(right),
                 window,
+                params: HashMap::new(),
             });
         }
 
@@ -741,6 +794,7 @@ impl Parser {
             "Corr" => Ok(PairRollingOpType::Corr),
             "Cov" => Ok(PairRollingOpType::Cov),
             "Beta" => Ok(PairRollingOpType::Beta),
+            "MeanSelQ" => Ok(PairRollingOpType::MeanSelQ),
             _ => Err(format!("Unknown pair rolling operator: {}", name)),
         }
     }
@@ -900,15 +954,22 @@ pub fn convert_to_expr_node(expr: Expr) -> ExprNode {
             left,
             right,
             window,
+            params: extra_params,
         } => {
             let op_name = match op {
                 PairRollingOpType::Corr => "TS_Corr",
                 PairRollingOpType::Cov => "TS_Cov",
                 PairRollingOpType::Beta => "TS_Beta",
+                PairRollingOpType::MeanSelQ => "TS_MeanSelQ",
             };
 
             let mut params = HashMap::new();
             params.insert("window".to_string(), window as f64);
+
+            // Add any extra parameters (e.g., low_phi, high_phi for MeanSelQ)
+            for (key, value) in extra_params {
+                params.insert(key, value);
+            }
 
             ExprNode::Operator {
                 name: op_name.to_string(),
@@ -1063,6 +1124,7 @@ mod tests {
                 left,
                 right,
                 window: 30,
+                params,
             } => {
                 if let Expr::VarNode(name) = left.as_ref() {
                     assert_eq!(name, "close");
@@ -1074,8 +1136,41 @@ mod tests {
                 } else {
                     panic!("Expected right Var");
                 }
+                // Standard operators should have no extra params
+                assert!(params.is_empty());
             }
             _ => panic!("Expected TS_Corr operation"),
+        }
+    }
+
+    #[test]
+    fn test_parse_mean_selq() {
+        let mut parser = Parser::new("TS_MeanSelQ($close, $volume, 100, 0.25, 0.75)");
+        let expr = parser.parse().unwrap();
+
+        match expr {
+            Expr::PairRollingNode {
+                op: PairRollingOpType::MeanSelQ,
+                left,
+                right,
+                window: 100,
+                params,
+            } => {
+                if let Expr::VarNode(name) = left.as_ref() {
+                    assert_eq!(name, "close");
+                } else {
+                    panic!("Expected left Var");
+                }
+                if let Expr::VarNode(name) = right.as_ref() {
+                    assert_eq!(name, "volume");
+                } else {
+                    panic!("Expected right Var");
+                }
+                // Check that low_phi and high_phi parameters were stored correctly
+                assert_eq!(params.get("low_phi"), Some(&0.25));
+                assert_eq!(params.get("high_phi"), Some(&0.75));
+            }
+            _ => panic!("Expected TS_MeanSelQ operation"),
         }
     }
 

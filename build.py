@@ -159,6 +159,66 @@ def _load_extended_bar_fields() -> list[dict[str, object]]:
     return normalized
 
 
+# Field aggregation rules for BarBuilder and BarAggregator code generation
+FIELD_AGGREGATION_RULES: dict[str, dict[str, str]] = {
+    "amt": {
+        # State declaration (in BarBuilder class body)
+        "state_decl": """
+    cdef double _ext_amt_accum
+    cdef double _ext_amt_multiplier
+""",
+        # Initialization (in __init__ method)
+        "init": """
+        self._ext_amt_accum = 0.0
+        self._ext_amt_multiplier = 1.0
+        if instrument is not None and hasattr(instrument, 'multiplier'):
+            self._ext_amt_multiplier = (<Quantity>instrument.multiplier).as_double()
+""",
+        # Trade update (in update() method with parameters: price, size, ts_event)
+        "on_trade": """
+        # Accumulate amt: price * size * multiplier
+        self._ext_amt_accum += price.as_double() * size.as_double() * self._ext_amt_multiplier
+""",
+        # Bar update (in update_bar() method with parameters: bar, volume, ts_init)
+        "on_bar": """
+        # Accumulate amt from child bar - fail fast if missing
+        if not hasattr(bar, 'amt'):
+            raise ValueError(
+                f"Child bar at {bar.ts_event} is missing required 'amt' field. "
+                "All child bars must have amt field when building extended bars."
+            )
+        cdef double bar_amt_value = bar.amt.as_double()
+        self._ext_amt_accum += bar_amt_value
+""",
+        # Finalize (in build() method, after bar object creation)
+        "finalize": """
+        # Write accumulated amt to bar
+        bar.amt = Quantity(self._ext_amt_accum, self.size_precision)
+""",
+        # Reset (in reset() method)
+        "reset": """
+        self._ext_amt_accum = 0.0
+""",
+        # Set partial (in set_partial() method with parameter: partial_bar)
+        "set_partial": """
+        # Restore amt accumulator from partial bar
+        if partial_bar is not None:
+            if not hasattr(partial_bar, 'amt'):
+                raise ValueError(
+                    f"Partial bar at {partial_bar.ts_event} is missing required 'amt' field. "
+                    "Partial bars must have amt field when using extended bar builder."
+                )
+            self._ext_amt_accum = partial_bar.amt.as_double()
+""",
+        # ValueBarAggregator special case (reuse value_update variable)
+        "on_trade_value_bar": """
+        # Reuse value_update variable (already computed as price * size_update)
+        self._builder._ext_amt_accum += value_update * self._builder._ext_amt_multiplier
+""",
+    }
+}
+
+
 def _format_bool_default(value: str | None) -> str:
     if value is None:
         return "False"
@@ -742,6 +802,310 @@ def _generate_extended_bar_cython_files() -> None:
 
     # Generate extended Bar class signature for data.pxd
     _generate_extended_bar_signature(fields)
+
+    # Generate extended bar aggregation files (BarBuilder, etc.)
+    _generate_extended_bar_aggregation_files(fields)
+
+
+#################################################################################
+# Extended Bar Aggregation Code Generation
+#################################################################################
+
+
+def _generate_aggregator_config_file(output_dir: Path, fields: list[dict]) -> None:
+    """Generate configuration file for aggregator code generation."""
+    has_fields = len(fields) > 0
+    content = f"DEF HAS_EXTENDED_BAR_FIELDS = {1 if has_fields else 0}\n"
+    (output_dir / "extended_bar_aggregator_config.pxi").write_text(content, encoding="utf-8")
+
+
+def _collect_field_fragments(fields: list[dict]) -> dict[str, list[str]]:
+    """Collect code fragments for all registered fields."""
+    fragments = {
+        "state_decls": [],
+        "inits": [],
+        "on_trades": [],
+        "on_bars": [],
+        "finalizes": [],
+        "resets": [],
+        "set_partials": [],
+    }
+
+    for field in fields:
+        field_ident = field.get("ident")
+        if field_ident in FIELD_AGGREGATION_RULES:
+            rules = FIELD_AGGREGATION_RULES[field_ident]
+            fragments["state_decls"].append(rules.get("state_decl", ""))
+            fragments["inits"].append(rules.get("init", ""))
+            fragments["on_trades"].append(rules.get("on_trade", ""))
+            fragments["on_bars"].append(rules.get("on_bar", ""))
+            fragments["finalizes"].append(rules.get("finalize", ""))
+            fragments["resets"].append(rules.get("reset", ""))
+            fragments["set_partials"].append(rules.get("set_partial", ""))
+
+    return fragments
+
+
+def _generate_extended_bar_builder_pxd(output_dir: Path, fields: list[dict]) -> None:
+    """Generate extended BarBuilder declaration (.pxd) with custom field attributes."""
+    frags = _collect_field_fragments(fields)
+
+    # Generate BarBuilder declaration with extended fields
+    pxd_code = f'''# @generated - Extended BarBuilder declaration with custom field support
+# This file is auto-generated by build.py
+
+from libc.stdint cimport uint8_t, uint64_t
+
+from nautilus_trader.model.data cimport Bar, BarType
+from nautilus_trader.model.objects cimport Price, Quantity
+
+
+cdef class BarBuilder:
+    cdef BarType _bar_type
+
+    cdef readonly uint8_t price_precision
+    cdef readonly uint8_t size_precision
+    cdef readonly bint initialized
+    cdef readonly uint64_t ts_last
+    cdef readonly int count
+
+    cdef bint _partial_set
+    cdef Price _last_close
+    cdef Price _open
+    cdef Price _high
+    cdef Price _low
+    cdef Price _close
+    cdef Quantity volume
+{"".join(frags["state_decls"])}
+
+    cpdef void set_partial(self, Bar partial_bar)
+    cpdef void update(self, Price price, Quantity size, uint64_t ts_event)
+    cpdef void update_bar(self, Bar bar, Quantity volume, uint64_t ts_init)
+    cpdef void reset(self)
+    cpdef Bar build_now(self)
+    cpdef Bar build(self, uint64_t ts_event, uint64_t ts_init)
+'''
+
+    output_path = output_dir / "_extended_bar_builder.pxd"
+    output_path.write_text(pxd_code, encoding="utf-8")
+    print(f"Generated: {output_path}")
+
+
+def _generate_extended_bar_builder(output_dir: Path, fields: list[dict]) -> None:
+    """Generate extended BarBuilder with field accumulation logic."""
+    frags = _collect_field_fragments(fields)
+
+    # Generate BarBuilder implementation (attributes are declared in .pxd)
+    builder_code = f'''# @generated - Extended BarBuilder with custom field support
+# This file is auto-generated by build.py
+
+from decimal import Decimal
+from typing import Callable
+
+from libc.stdint cimport uint64_t, uint8_t
+
+from nautilus_trader.core.correctness cimport Condition
+from nautilus_trader.model.data cimport Bar, BarType
+from nautilus_trader.model.instruments.base cimport Instrument
+from nautilus_trader.model.objects cimport Price, Quantity
+
+
+cdef class BarBuilder:
+    """
+    Extended BarBuilder with custom field accumulation support.
+    """
+
+    def __init__(
+        self,
+        Instrument instrument not None,
+        BarType bar_type not None,
+    ) -> None:
+        Condition.equal(instrument.id, bar_type.instrument_id, "instrument.id", "bar_type.instrument_id")
+
+        self._bar_type = bar_type
+        self.price_precision = instrument.price_precision
+        self.size_precision = instrument.size_precision
+        self.initialized = False
+        self.ts_last = 0
+        self.count = 0
+
+        self._partial_set = False
+        self._last_close = None
+        self._open = None
+        self._high = None
+        self._low = None
+        self._close = None
+        self.volume = Quantity.zero_c(precision=self.size_precision)
+{"".join(frags["inits"])}
+
+    def __repr__(self) -> str:
+        return (
+            f"{{type(self).__name__}}("
+            f"{{self._bar_type}},"
+            f"{{self._open}},"
+            f"{{self._high}},"
+            f"{{self._low}},"
+            f"{{self._close}},"
+            f"{{self.volume}})"
+        )
+
+    cpdef void set_partial(self, Bar partial_bar):
+        """
+        Set the initial values for a partially completed bar.
+        """
+        if self._partial_set:
+            return  # Already updated
+
+        self._open = partial_bar.open
+
+        if self._high is None or partial_bar.high > self._high:
+            self._high = partial_bar.high
+
+        if self._low is None or partial_bar.low < self._low:
+            self._low = partial_bar.low
+
+        if self._close is None:
+            self._close = partial_bar.close
+
+        self.volume = partial_bar.volume
+
+        if self.ts_last == 0:
+            self.ts_last = partial_bar.ts_init
+
+        self._partial_set = True
+        self.initialized = True
+{"".join(frags["set_partials"])}
+
+    cpdef void update(self, Price price, Quantity size, uint64_t ts_event):
+        """
+        Update the bar builder with a trade.
+        """
+        Condition.not_none(price, "price")
+        Condition.not_none(size, "size")
+
+        if ts_event < self.ts_last:
+            return  # Not applicable
+
+        if self._open is None:
+            # Initialize builder
+            self._open = price
+            self._high = price
+            self._low = price
+            self.initialized = True
+        elif price._mem.raw > self._high._mem.raw:
+            self._high = price
+        elif price._mem.raw < self._low._mem.raw:
+            self._low = price
+
+        self._close = price
+        self.volume._mem.raw += size._mem.raw
+        self.count += 1
+        self.ts_last = ts_event
+{"".join(frags["on_trades"])}
+
+    cpdef void update_bar(self, Bar bar, Quantity volume, uint64_t ts_init):
+        """
+        Update the bar builder with a child bar.
+        """
+        Condition.not_none(bar, "bar")
+
+        if ts_init < self.ts_last:
+            return  # Not applicable
+
+        if self._open is None:
+            # Initialize builder
+            self._open = bar.open
+            self._high = bar.high
+            self._low = bar.low
+            self.initialized = True
+        else:
+            if bar.high > self._high:
+                self._high = bar.high
+
+            if bar.low < self._low:
+                self._low = bar.low
+
+        self._close = bar.close
+        self.volume._mem.raw += volume._mem.raw
+        self.count += 1
+        self.ts_last = ts_init
+{"".join(frags["on_bars"])}
+
+    cpdef void reset(self):
+        """
+        Reset the bar builder.
+        """
+        self._open = None
+        self._high = None
+        self._low = None
+
+        self.volume = Quantity.zero_c(precision=self.size_precision)
+        self.count = 0
+{"".join(frags["resets"])}
+
+    cpdef Bar build_now(self):
+        """
+        Return the aggregated bar and reset.
+        """
+        return self.build(self.ts_last, self.ts_last)
+
+    cpdef Bar build(self, uint64_t ts_event, uint64_t ts_init):
+        """
+        Return the aggregated bar with the given closing timestamp, and reset.
+        """
+        if self._open is None:  # No tick was received
+            self._open = self._last_close
+            self._high = self._last_close
+            self._low = self._last_close
+            self._close = self._last_close
+
+        self._low._mem.raw = min(self._close._mem.raw, self._low._mem.raw)
+        self._high._mem.raw = max(self._close._mem.raw, self._high._mem.raw)
+
+        cdef Bar bar = Bar(
+            bar_type=self._bar_type,
+            open=self._open,
+            high=self._high,
+            low=self._low,
+            close=self._close,
+            volume=Quantity(self.volume, self.size_precision),
+            ts_event=ts_event,
+            ts_init=ts_init,
+        )
+{"".join(frags["finalizes"])}
+
+        self._last_close = self._close
+        self.reset()
+        return bar
+'''
+
+    (output_dir / "_extended_bar_builder.pxi").write_text(builder_code, encoding="utf-8")
+
+
+def _generate_extended_bar_aggregation_files(fields: list[dict]) -> None:
+    """Generate all extended bar aggregation files."""
+    output_dir = Path("nautilus_trader/data/_generated")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate config file
+    _generate_aggregator_config_file(output_dir, fields)
+
+    if not fields:
+        # Generate empty stubs
+        (output_dir / "_extended_bar_builder.pxd").write_text("# @generated (empty - no extended fields)\n", encoding="utf-8")
+        (output_dir / "_extended_bar_builder.pxi").write_text("# @generated (empty - no extended fields)\n", encoding="utf-8")
+        print(f"✅ Generated empty extended bar aggregation files (no extended fields configured)")
+        return
+
+    # Generate BarBuilder declaration (.pxd) and implementation (.pxi)
+    _generate_extended_bar_builder_pxd(output_dir, fields)
+    _generate_extended_bar_builder(output_dir, fields)
+
+    # Note: Aggregator classes (TickBarAggregator, etc.) don't need special extended versions
+    # They delegate all work to BarBuilder, which we've extended above.
+    # The IF HAS_EXTENDED_BAR_FIELDS branch in aggregation.pyx will use the extended BarBuilder.
+
+    print(f"✅ Generated extended bar aggregation files in {output_dir}")
 
 
 def _generate_extended_bar_signature(fields: list[dict[str, object]]) -> None:

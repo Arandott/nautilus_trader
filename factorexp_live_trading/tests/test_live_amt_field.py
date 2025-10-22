@@ -193,8 +193,11 @@ async def test_live_amt_accumulation_btcusdt():
     )
 
     try:
+        # Cache kernel reference to avoid repeated attribute access
+        kernel = node.kernel
+
         # Start node kernel (async startup)
-        await node.kernel.start_async()
+        await kernel.start_async()
         print("✅ TradingNode kernel started")
         print()
 
@@ -205,7 +208,7 @@ async def test_live_amt_accumulation_btcusdt():
         instrument = None
 
         for attempt in range(max_retries):
-            instrument = node.cache.instrument(instrument_id)
+            instrument = kernel.cache.instrument(instrument_id)
             if instrument is not None:
                 break
             print(f"  Attempt {attempt + 1}/{max_retries}: Instrument not yet cached, retrying...")
@@ -239,11 +242,11 @@ async def test_live_amt_accumulation_btcusdt():
 
         # Subscribe to message bus
         topic = f"data.trades.{instrument_id.venue}.{instrument_id.symbol}"
-        node.msgbus.subscribe(topic=topic, handler=trade_handler)
-        node.msgbus.subscribe(topic=topic, handler=aggregator_handler)
+        kernel.msgbus.subscribe(topic=topic, handler=trade_handler)
+        kernel.msgbus.subscribe(topic=topic, handler=aggregator_handler)
 
         # Subscribe to trade ticks via data engine
-        node.data_engine.subscribe_trade_ticks(instrument_id)
+        kernel.data_engine.subscribe_trade_ticks(instrument_id)
 
         print("✅ Subscribed to live data stream")
         print()
@@ -261,13 +264,13 @@ async def test_live_amt_accumulation_btcusdt():
 
         # Unsubscribe
         try:
-            node.data_engine.unsubscribe_trade_ticks(instrument_id)
+            kernel.data_engine.unsubscribe_trade_ticks(instrument_id)
         except Exception as e:
             print(f"⚠️  Warning: Failed to unsubscribe: {e}")
 
         try:
-            node.msgbus.unsubscribe(topic, trade_handler)
-            node.msgbus.unsubscribe(topic, aggregator_handler)
+            kernel.msgbus.unsubscribe(topic, trade_handler)
+            kernel.msgbus.unsubscribe(topic, aggregator_handler)
         except Exception as e:
             print(f"⚠️  Warning: Failed to unsubscribe handlers: {e}")
 
@@ -278,7 +281,7 @@ async def test_live_amt_accumulation_btcusdt():
 
     finally:
         # Always stop node kernel (let pytest manage the event loop)
-        await node.kernel.stop_async()
+        await kernel.stop_async()
         print("✅ TradingNode kernel stopped")
         print()
 

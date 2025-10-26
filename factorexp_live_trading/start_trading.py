@@ -26,12 +26,16 @@ def check_environment():
 
     checks = []
 
+    failures = []
+
     # Check environment file
     env_file = project_root / ".env"
     if env_file.exists():
         checks.append(("✅", "Environment file found"))
     else:
-        checks.append(("⚠️", "Environment file missing (.env) - will use defaults"))
+        warning_msg = "Environment file missing (.env) - will use defaults"
+        checks.append(("⚠️", warning_msg))
+        failures.append(("⚠️", warning_msg))
         # Not a failure anymore since we have typed configurations
 
     # Check essential environment variables (only critical ones)
@@ -44,8 +48,9 @@ def check_environment():
         if os.getenv(var):
             checks.append(("✅", f"API credential {var} configured"))
         else:
-            checks.append(("❌", f"Critical API credential {var} missing"))
-            return False
+            msg = f"Critical API credential {var} missing"
+            checks.append(("❌", msg))
+            failures.append(("❌", msg))
 
     # Check optional environment variables
     optional_vars = {
@@ -64,38 +69,48 @@ def check_environment():
     if sys.version_info >= (3, 9):
         checks.append(("✅", f"Python version {sys.version_info.major}.{sys.version_info.minor} OK"))
     else:
-        checks.append(("❌", f"Python version {sys.version_info.major}.{sys.version_info.minor} too old (need 3.9+)"))
-        return False
+        msg = f"Python version {sys.version_info.major}.{sys.version_info.minor} too old (need 3.9+)"
+        checks.append(("❌", msg))
+        failures.append(("❌", msg))
 
     # Check nautilus_trader import
     try:
         import nautilus_trader
         checks.append(("✅", f"Nautilus Trader {nautilus_trader.__version__} imported"))
     except ImportError:
-        checks.append(("❌", "Nautilus Trader not installed"))
-        return False
+        msg = "Nautilus Trader not installed"
+        checks.append(("❌", msg))
+        failures.append(("❌", msg))
 
     # Check factorexp availability
     try:
         from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
         checks.append(("✅", "FactorExp indicators available"))
     except ImportError:
-        checks.append(("❌", "FactorExp indicators not available"))
-        return False
+        msg = "FactorExp indicators not available"
+        checks.append(("❌", msg))
+        failures.append(("❌", msg))
 
     # Check new configuration system
     try:
         from config.strategy_config import FactorExpLiveStrategyConfig
         checks.append(("✅", "New StrategyConfig architecture available"))
     except ImportError:
-        checks.append(("❌", "StrategyConfig system not available"))
-        return False
+        msg = "StrategyConfig system not available"
+        checks.append(("❌", msg))
+        failures.append(("❌", msg))
 
     # Print all checks
     for status, message in checks:
         print(f"  {status} {message}")
 
-    return all(status in ["✅", "ℹ️", "⚠️"] for status, _ in checks)
+    if failures:
+        print("\n❌ Pre-flight checks detected issues:")
+        for status, message in failures:
+            print(f"  {status} {message}")
+        return False
+
+    return True
 
 
 def load_environment():

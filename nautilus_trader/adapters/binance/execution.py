@@ -222,6 +222,7 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
 
         # Hot caches
         self._instrument_ids: dict[str, InstrumentId] = {}
+        self._unsupported_symbols: set[str] = set()
         self._generate_order_status_retries: dict[ClientOrderId, int] = {}
 
         self._retry_manager_pool = RetryManagerPool[None](
@@ -491,9 +492,12 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
             )
             return None
 
+        instrument_id = self._get_cached_instrument_id(binance_order.symbol)
+        if instrument_id is None:
+            return None
         report: OrderStatusReport = binance_order.parse_to_order_status_report(
             account_id=self.account_id,
-            instrument_id=self._get_cached_instrument_id(binance_order.symbol),
+            instrument_id=instrument_id,
             report_id=UUID4(),
             enum_parser=self._enum_parser,
             treat_expired_as_canceled=self._treat_expired_as_canceled,
@@ -578,9 +582,12 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
                 continue  # Filter end on the Nautilus side
             if order.origQty and Decimal(order.origQty) == 0:
                 continue  # Cannot parse zero quantity order (filter for Binance)
+            instrument_id = self._get_cached_instrument_id(order.symbol)
+            if instrument_id is None:
+                continue
             report = order.parse_to_order_status_report(
                 account_id=self.account_id,
-                instrument_id=self._get_cached_instrument_id(order.symbol),
+                instrument_id=instrument_id,
                 report_id=UUID4(),
                 enum_parser=self._enum_parser,
                 treat_expired_as_canceled=self._treat_expired_as_canceled,
@@ -637,9 +644,12 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
             if trade.symbol is None:
                 self._log.warning(f"No symbol for trade {trade}")
                 continue
+            instrument_id = self._get_cached_instrument_id(trade.symbol)
+            if instrument_id is None:
+                continue
             report = trade.parse_to_fill_report(
                 account_id=self.account_id,
-                instrument_id=self._get_cached_instrument_id(trade.symbol),
+                instrument_id=instrument_id,
                 report_id=UUID4(),
                 ts_init=self._clock.timestamp_ns(),
                 use_position_ids=self._use_position_ids,
@@ -1032,10 +1042,19 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
             position_side=position_side,
         )
 
-    def _get_cached_instrument_id(self, symbol: str) -> InstrumentId:
+    def _get_cached_instrument_id(self, symbol: str) -> InstrumentId | None:
         nautilus_symbol: str = BinanceSymbol(symbol).parse_as_nautilus(
             self._binance_account_type,
         )
+        if not nautilus_symbol.isascii():
+            if nautilus_symbol not in self._unsupported_symbols:
+                self._unsupported_symbols.add(nautilus_symbol)
+                self._log.warning(
+                    "Skipped non-ASCII Binance symbol %s; merge latest dev for unicode support",
+                    symbol,
+                )
+                # TODO: Remove once unicode symbol support from dev branch is merged.
+            return None
         instrument_id: InstrumentId | None = self._instrument_ids.get(nautilus_symbol)
         if not instrument_id:
             instrument_id = InstrumentId(Symbol(nautilus_symbol), self.venue)

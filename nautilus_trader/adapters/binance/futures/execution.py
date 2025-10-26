@@ -203,7 +203,9 @@ class BinanceFuturesExecutionClient(BinanceCommonExecutionClient):
         account: MarginAccount = self.get_account()
         position_risks = await self._futures_http_account.query_futures_position_risk()
         for position in position_risks:
-            instrument_id: InstrumentId = self._get_cached_instrument_id(position.symbol)
+            instrument_id = self._get_cached_instrument_id(position.symbol)
+            if instrument_id is None:
+                continue
             leverage = Decimal(position.leverage)
             account.set_leverage(instrument_id, leverage)
             self._log.debug(f"Set leverage {position.symbol} {leverage}X")
@@ -234,9 +236,12 @@ class BinanceFuturesExecutionClient(BinanceCommonExecutionClient):
         for position in binance_positions:
             if Decimal(position.positionAmt) == 0:
                 continue  # Flat position
+            instrument_id = self._get_cached_instrument_id(position.symbol)
+            if instrument_id is None:
+                continue
             report = position.parse_to_position_status_report(
                 account_id=self.account_id,
-                instrument_id=self._get_cached_instrument_id(position.symbol),
+                instrument_id=instrument_id,
                 report_id=UUID4(),
                 enum_parser=self._futures_enum_parser,
                 ts_init=self._clock.timestamp_ns(),
@@ -256,6 +261,8 @@ class BinanceFuturesExecutionClient(BinanceCommonExecutionClient):
         for position in binance_positions:
             if Decimal(position.positionAmt) == 0:
                 continue  # Flat position
+            if self._get_cached_instrument_id(position.symbol) is None:
+                continue
             # Add active symbol
             active_symbols.add(position.symbol)
         return active_symbols

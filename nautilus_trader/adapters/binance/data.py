@@ -232,6 +232,9 @@ class BinanceCommonDataClient(LiveMarketDataClient):
             BinanceErrorCode.ME_RECVWINDOW_REJECT,
         }
 
+        # Track unsupported symbols until unicode support lands.
+        self._unsupported_symbols: set[str] = set()
+
     async def _connect(self) -> None:
         await self._instrument_provider.initialize()
         self._send_all_instruments_to_data_engine()
@@ -922,12 +925,21 @@ class BinanceCommonDataClient(LiveMarketDataClient):
         for currency in self._instrument_provider.currencies().values():
             self._cache.add_currency(currency)
 
-    def _get_cached_instrument_id(self, symbol: str) -> InstrumentId:
+    def _get_cached_instrument_id(self, symbol: str) -> InstrumentId | None:
         # Parse instrument ID
         binance_symbol = BinanceSymbol(symbol)
         nautilus_symbol: str = binance_symbol.parse_as_nautilus(
             self._binance_account_type,
         )
+        if not nautilus_symbol.isascii():
+            if nautilus_symbol not in self._unsupported_symbols:
+                self._unsupported_symbols.add(nautilus_symbol)
+                self._log.warning(
+                    "Skipped non-ASCII Binance symbol %s; merge latest dev for unicode support",
+                    symbol,
+                )
+                # TODO: Remove once unicode symbol support from dev branch is merged.
+            return None
         instrument_id: InstrumentId | None = self._instrument_ids.get(nautilus_symbol)
         if not instrument_id:
             instrument_id = InstrumentId(Symbol(nautilus_symbol), self.venue)
@@ -956,7 +968,9 @@ class BinanceCommonDataClient(LiveMarketDataClient):
 
     def _handle_book_diff_update(self, raw: bytes) -> None:
         msg = self._decoder_order_book_msg.decode(raw)
-        instrument_id: InstrumentId = self._get_cached_instrument_id(msg.data.s)
+        instrument_id = self._get_cached_instrument_id(msg.data.s)
+        if instrument_id is None:
+            return
         book_deltas: OrderBookDeltas = msg.data.parse_to_order_book_deltas(
             instrument_id=instrument_id,
             ts_init=self._clock.timestamp_ns(),
@@ -972,7 +986,9 @@ class BinanceCommonDataClient(LiveMarketDataClient):
 
     def _handle_book_ticker(self, raw: bytes) -> None:
         msg = self._decoder_quote_msg.decode(raw)
-        instrument_id: InstrumentId = self._get_cached_instrument_id(msg.data.s)
+        instrument_id = self._get_cached_instrument_id(msg.data.s)
+        if instrument_id is None:
+            return
         quote_tick: QuoteTick = msg.data.parse_to_quote_tick(
             instrument_id=instrument_id,
             ts_init=self._clock.timestamp_ns(),
@@ -981,7 +997,9 @@ class BinanceCommonDataClient(LiveMarketDataClient):
 
     def _handle_ticker(self, raw: bytes) -> None:
         msg = self._decoder_ticker_msg.decode(raw)
-        instrument_id: InstrumentId = self._get_cached_instrument_id(msg.data.s)
+        instrument_id = self._get_cached_instrument_id(msg.data.s)
+        if instrument_id is None:
+            return
         ticker: BinanceTicker = msg.data.parse_to_binance_ticker(
             instrument_id=instrument_id,
             ts_init=self._clock.timestamp_ns(),
@@ -998,6 +1016,8 @@ class BinanceCommonDataClient(LiveMarketDataClient):
         if not msg.data.k.x:
             return  # Not closed yet
         instrument_id = self._get_cached_instrument_id(msg.data.s)
+        if instrument_id is None:
+            return
         bar: BinanceBar = msg.data.k.parse_to_binance_bar(
             instrument_id=instrument_id,
             enum_parser=self._enum_parser,
@@ -1013,7 +1033,9 @@ class BinanceCommonDataClient(LiveMarketDataClient):
 
     def _handle_agg_trade(self, raw: bytes) -> None:
         msg = self._decoder_agg_trade_msg.decode(raw)
-        instrument_id: InstrumentId = self._get_cached_instrument_id(msg.data.s)
+        instrument_id = self._get_cached_instrument_id(msg.data.s)
+        if instrument_id is None:
+            return
         trade_tick: TradeTick = msg.data.parse_to_trade_tick(
             instrument_id=instrument_id,
             ts_init=self._clock.timestamp_ns(),

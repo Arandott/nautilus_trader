@@ -7,16 +7,18 @@ This strategy uses ONLY FactorExp expressions - no native Nautilus indicators.
 All FactorExp operators have been verified against the actual implementation.
 """
 
+from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
+from typing import Dict
+from typing import Optional
 
-# Professional commission management
-from components.commission_manager import CommissionManager
+from factorexp_backtest.configs.config_loader import FactorConfigLoader
 
 # Official strategy configuration
 from config.strategy_config import FactorExpLiveStrategyConfig
 
 from nautilus_trader.common.enums import LogColor
-from nautilus_trader.core.message import Event
 
 # FactorExp imports - VERIFIED to exist
 from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
@@ -24,22 +26,35 @@ from nautilus_trader.model.data import Bar
 from nautilus_trader.model.data import QuoteTick
 from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.enums import OrderSide
-from nautilus_trader.model.enums import TrailingOffsetType
-from nautilus_trader.model.enums import TriggerType
 from nautilus_trader.model.events import OrderFilled
 from nautilus_trader.model.events import PositionChanged
 from nautilus_trader.model.events import PositionClosed
 from nautilus_trader.model.events import PositionOpened
 from nautilus_trader.model.identifiers import PositionId
-from nautilus_trader.model.objects import Money
-from nautilus_trader.model.objects import Price
-from nautilus_trader.model.objects import Quantity
-from nautilus_trader.model.orders import TrailingStopMarketOrder
-from nautilus_trader.model.position import Position
 
 # Native risk management components
-from nautilus_trader.risk.sizing import FixedRiskSizer
 from nautilus_trader.trading.strategy import Strategy
+
+
+@dataclass
+class SegmentState:
+    """State tracking for a single segment during live trading."""
+
+    idx: int
+    current_qty: float
+    avg_entry_price: float
+    current_equity: float
+    initial_equity: float
+    peak_equity: float
+    cumulative_realized_pnl: float = 0.0
+    frozen_until_ns: int = 0
+    is_depleted: bool = False
+    pending_target_qty: float = 0.0
+    pending_timestamp_ns: int = 0
+
+    def has_inventory(self) -> bool:
+        """Return True if the segment currently holds exposure."""
+        return abs(self.current_qty) > 0
 
 
 class FactorExpLiveStrategy(Strategy):
@@ -68,31 +83,45 @@ class FactorExpLiveStrategy(Strategy):
 
         # Configuration is now available as self.config from parent Strategy class
 
-        # Dynamic commission management (replaces hardcoded rates)
-        self._commission_manager: CommissionManager | None = None
-        self._cached_commission_rate: Decimal | None = None
+        # Shared factor configuration (loaded from research YAML)
+        self._factor_config_path = self._resolve_config_path(config.factor_config_path)
+        self._factor_id = config.factor_id
+        self._factor_loader: FactorConfigLoader | None = None
+        self._factor_config = None
+        self._factor_defaults: dict | None = None
+        self._risk_config = None
+        self._execution_config = None
+        self._position_scale = Decimal("1.0")
+        self._factor_indicator: FactorExpIndicator | None = None
+        self._factor_expression: str | None = None
+        self._factor_requires_extended = False
+        self._warmup_bars = 0  # Will be set after indicator creation based on required_history
+        self._latest_factor_value: float | None = None
 
-        # Native risk sizer - will be initialized in on_start
-        self._position_sizer: FixedRiskSizer | None = None
+        # Copy factor overrides from config (will be validated against defaults)
+        self._clip_min = float(config.clip_min)
+        self._clip_max = float(config.clip_max)
+        self._zscore_period = int(config.zscore_period)
+        self._min_signal_magnitude = float(config.min_signal_magnitude)
 
-        # FactorExp indicators - using ONLY verified operators
-        self._ema_ratio_indicator: FactorExpIndicator | None = None
-        self._volatility_indicator: FactorExpIndicator | None = None
-        self._momentum_indicator: FactorExpIndicator | None = None
-        self._mean_reversion_indicator: FactorExpIndicator | None = None
+        # Segment ledger (Phase 3 parity)
+        self._segment_count = 96
+        self._segment_states: list[SegmentState] = []
+        self._segment_index = 0
+        self._bar_duration_ns = 0
+        self._freeze_duration_bars = 96
+        self._long_position_id: Optional[PositionId] = None
+        self._short_position_id: Optional[PositionId] = None
+        self._order_to_segment: Dict[str, SegmentState] = {}
+        self._order_pending_delta: Dict[str, float] = {}
+        self._segment_rotation_counter = 0
+        self._last_bar_close: float | None = None
+        self._instrument = None
+        self._max_leverage = 2.0
+        self._segment_stop_loss_pct = 0.05
+        self._min_order_size = 0.001
 
-        # Strategy state
-        self._last_signal = None
-        self._signal_count = 0
-        self._entry_price = None
-        self._last_bar_close = None
-
-        # Trailing stop management
-        self._entry_order = None
-        self._trailing_stop = None
-        self._position_id = None
-
-        # Bar counter for periodic portfolio monitoring
+        # Strategy monitoring counters
         self._bar_count = 0
 
         # Data request coordination flag (set by trading system)
@@ -112,18 +141,14 @@ class FactorExpLiveStrategy(Strategy):
         self.log.info("🔍 [TEST] on_start() method called")
         self.log.info(f"FactorExpLiveStrategy starting for {self.config.instrument_id}")
 
-        # Initialize instrument for position sizing
-        if self.cache.instrument(self.config.instrument_id) is None:
-            self.log.error(f"Could not find instrument for {self.config.instrument_id}")
+        instrument = self.cache.instrument(self.config.instrument_id)
+        if instrument is None:
+            self.log.error(f"Could not find instrument {self.config.instrument_id}")
             self.stop()
             return
-
-        # Initialize native position sizer
-        instrument = self.cache.instrument(self.config.instrument_id)
-        self._position_sizer = FixedRiskSizer(instrument)
-
-        # Initialize commission rate (synchronous for now, will be enhanced later)
-        self._initialize_commission_rate_sync()
+        self._instrument = instrument
+        self._long_position_id = PositionId(f"{self.config.instrument_id}-FACTOREXP-LONG")
+        self._short_position_id = PositionId(f"{self.config.instrument_id}-FACTOREXP-SHORT")
 
         # Log capital management configuration
         self.log.info(
@@ -132,739 +157,786 @@ class FactorExpLiveStrategy(Strategy):
             f"position_risk={self.config.position_risk_pct:.1%}"
         )
 
-        # Subscribe to data - ONLY bar data is needed for FactorExp strategy
-        # Removed quote_tick and trade_tick subscriptions to fix StreamingFeatherWriter warnings
-        # since the handlers are empty and the strategy only uses bar data for indicators
-        self.subscribe_bars(self.config.bar_type)
+        # Load shared factor definition
+        if not self._load_factor_definition():
+            self.stop()
+            return
 
-        # Create FactorExp indicators with VERIFIED expressions only
-        self._create_factorexp_indicators()
+        # Verify extended bar support if required by the factor
+        if self._factor_requires_extended and not self._supports_extended_bars():
+            self.log.error(
+                f"Factor '{self._factor_config.name}' requires extended bar fields "
+                "but the current build does not expose them."
+            )
+            self.stop()
+            return
 
-        # CRITICAL: Register all FactorExp indicators for automatic bar updates
-        # This was missing and causing indicators to never receive data!
-        # Note: Historical data request coordination is handled by the trading system
-        self._register_factorexp_indicators(self._should_request_historical_data)
+        # Build and register the FactorExp indicator graph
+        try:
+            self._setup_factor_graph()
+        except Exception:
+            self.stop()
+            return
 
-        self.log.info("FactorExp indicators and native risk management initialized")
+        self.log.info(
+            f"Factor graph ready | factor_id={self._factor_id}, "
+            f"warmup={self._warmup_bars} bars, clip=({self._clip_min}, {self._clip_max})"
+        )
+
+        if not self._initialize_segments():
+            self.stop()
+            return
 
         # Show initial portfolio state (following official patterns)
         self.show_portfolio_info("Portfolio state (Strategy started):")
 
-    def _initialize_commission_rate_sync(self):
+    def _resolve_config_path(self, config_path: str) -> Path:
         """
-        Initialize commission rate synchronously for immediate use.
-        Sets initial rate based on order type preference.
-        """
-        try:
-            self.log.info("Initializing commission rate management...")
+        Resolve factor config path relative to repository root.
 
-            # Set initial rate based on order type preference
-            # Most retail accounts: VIP 0 with 0.04% taker, 0.02% maker
-            if self.config.use_market_orders:
-                initial_rate = Decimal("0.0004")  # Taker rate
-                rate_type = "taker"
-            else:
-                initial_rate = Decimal("0.0002")  # Maker rate
-                rate_type = "maker"
-
-            self._cached_commission_rate = initial_rate
-
-            self.log.info(
-                f"Initialized {rate_type} commission rate for {self.config.instrument_id}: "
-                f"{self._cached_commission_rate:.4%}"
-            )
-
-        except Exception as e:
-            self.log.error(f"Failed to initialize commission rate: {e}")
-            # Emergency fallback
-            self._cached_commission_rate = Decimal("0.0004")
-            self.log.warning(f"Using emergency fallback commission rate: {self._cached_commission_rate:.4%}")
-
-    async def _initialize_commission_manager_async(self):
-        """
-        Initialize dynamic commission management system asynchronously.
-        This can be called later to upgrade to real-time API queries.
-        """
-        try:
-            # Get Binance wallet API from the trading node
-            # Note: In a complete implementation, this would be injected
-
-            self.log.info("Upgrading to dynamic commission rate management...")
-
-            # TODO: Integrate with actual Binance wallet API from trading node
-            # For now, fetch an updated commission rate
-            await self._fetch_initial_commission_rate()
-
-            self.log.info("Commission manager upgraded successfully")
-
-        except Exception as e:
-            self.log.error(f"Failed to upgrade commission manager: {e}")
-            self.log.warning(f"Continuing with cached rate: {self._cached_commission_rate:.4%}")
-
-    async def _fetch_initial_commission_rate(self):
-        """
-        Fetch initial commission rate for the strategy's instrument.
-        """
-        try:
-            # Placeholder for actual API integration
-            # In a full implementation, this would call:
-            # commission_rate = await self._commission_manager.get_commission_rate(
-            #     self.config.instrument_id,
-            #     is_maker=not self._use_market_orders
-            # )
-
-            # For now, simulate fetching a realistic rate based on VIP level
-            # Most retail accounts have VIP 0 with 0.04% taker, 0.02% maker
-            if self.config.use_market_orders:
-                simulated_rate = Decimal("0.0004")  # Taker rate
-                rate_type = "taker"
-            else:
-                simulated_rate = Decimal("0.0002")  # Maker rate
-                rate_type = "maker"
-
-            self._cached_commission_rate = simulated_rate
-
-            self.log.info(
-                f"Fetched {rate_type} commission rate for {self.config.instrument_id}: "
-                f"{self._cached_commission_rate:.4%}"
-            )
-
-        except Exception as e:
-            self.log.error(f"Failed to fetch commission rate: {e}")
-            # Emergency fallback
-            self._cached_commission_rate = Decimal("0.0004")
-
-    def _get_current_commission_rate(self) -> Decimal:
-        """
-        Get current commission rate with caching and fallback.
-        
-        Returns
-        -------
-        Decimal
-            Current commission rate
-        """
-        if self._cached_commission_rate is None:
-            # Initialize with fallback if not set
-            self._initialize_commission_rate_sync()
-
-        return self._cached_commission_rate or Decimal("0.0004")
-
-    def _create_factorexp_indicators(self):
-        """Create FactorExp indicators using ONLY verified operators and syntax."""
-        # EMA Ratio: Fast EMA / Slow EMA for trend detection
-        # CORRECTED: Using TS_EMA for true exponential moving average
-        ema_ratio_expression = f"TS_EMA($close, {self.config.ema_fast_period}) / TS_EMA($close, {self.config.ema_slow_period})"
-        self._ema_ratio_indicator = FactorExpIndicator(
-            expression=ema_ratio_expression,
-            period=max(self.config.ema_fast_period, self.config.ema_slow_period),
-            name=f"EMA_RATIO_{self.config.ema_fast_period}_{self.config.ema_slow_period}"
-        )
-
-        # Volatility: Rolling standard deviation normalized by EMA
-        # CORRECTED: Using TS_EMA for consistency
-        volatility_expression = f"TS_Std($close, {self.config.volatility_period}) / TS_EMA($close, {self.config.volatility_period})"
-        self._volatility_indicator = FactorExpIndicator(
-            expression=volatility_expression,
-            period=self.config.volatility_period,
-            name=f"VOLATILITY_{self.config.volatility_period}"
-        )
-
-        # Momentum: Price change relative to previous value
-        # VERIFIED: TS_Ref operator exists and uses syntax TS_Ref($close, lag_periods)
-        momentum_expression = f"($close - TS_Ref($close, {self.config.momentum_period})) / TS_Ref($close, {self.config.momentum_period})"
-        self._momentum_indicator = FactorExpIndicator(
-            expression=momentum_expression,
-            period=self.config.momentum_period + 1,  # +1 because TS_Ref needs extra period
-            name=f"MOMENTUM_{self.config.momentum_period}"
-        )
-
-        # Mean Reversion: Z-Score (deviation from EMA in standard deviations)
-        # CORRECTED: Using TS_EMA for consistency
-        mean_reversion_expression = f"($close - TS_EMA($close, {self.config.volatility_period})) / TS_Std($close, {self.config.volatility_period})"
-        self._mean_reversion_indicator = FactorExpIndicator(
-            expression=mean_reversion_expression,
-            period=self.config.volatility_period,
-            name=f"MEAN_REVERSION_{self.config.volatility_period}"
-        )
-
-    def _register_factorexp_indicators(self, request_historical_data: bool = True):
-        """
-        Register all FactorExp indicators for automatic bar updates.
-        
         Parameters
         ----------
-        request_historical_data : bool, default True
-            Whether this strategy should request historical data for warmup.
-            Set to False if another strategy has already requested the same bar type.
+        config_path : str
+            Path provided in the strategy configuration.
+
+        Returns
+        -------
+        Path
+            Absolute path to the factor YAML file.
         """
-        # Register all FactorExp indicators following the official pattern
-        self.register_indicator_for_bars(self.config.bar_type, self._ema_ratio_indicator)
-        self.register_indicator_for_bars(self.config.bar_type, self._volatility_indicator)
-        self.register_indicator_for_bars(self.config.bar_type, self._momentum_indicator)
-        self.register_indicator_for_bars(self.config.bar_type, self._mean_reversion_indicator)
+        path = Path(config_path)
+        if path.is_absolute():
+            return path
+        repo_root = Path(__file__).resolve().parents[2]
+        return (repo_root / path).resolve()
 
-        # Request minimal historical bars to warm up indicators (only if not already requested)
-        if request_historical_data:
-            # Calculate minimum bars needed for indicator warmup
-            max_period = max(
-                max(self.config.ema_fast_period, self.config.ema_slow_period),
-                self.config.volatility_period,
-                self.config.momentum_period + 1  # +1 for TS_Ref
+    def _load_factor_definition(self) -> bool:
+        """Load FactorExp definition shared with the backtest."""
+        try:
+            self._factor_loader = FactorConfigLoader(self._factor_config_path)
+        except Exception as exc:
+            self.log.error(
+                f"Failed to load factor catalog '{self._factor_config_path}': {exc}"
             )
-            # Request 1.5x the max period for safety, but cap at reasonable limit
-            warmup_bars = min(int(max_period * 1.5), 100)  # Max 100 bars for warmup
+            return False
 
-            # CRITICAL FIX: Use time-based limiting instead of broken limit parameter
-            # The limit parameter is ignored by Binance adapter - use proven start parameter approach
-            from datetime import timedelta
-
-            # Calculate start time based on bar frequency (following Nautilus Trader patterns)
-            if "1-MINUTE" in str(self.config.bar_type):
-                start_time = self._clock.utc_now() - timedelta(minutes=warmup_bars)
-            elif "5-MINUTE" in str(self.config.bar_type):
-                start_time = self._clock.utc_now() - timedelta(minutes=warmup_bars * 5)
-            elif "1-HOUR" in str(self.config.bar_type):
-                start_time = self._clock.utc_now() - timedelta(hours=warmup_bars)
-            else:
-                # Default: assume 1-minute bars
-                start_time = self._clock.utc_now() - timedelta(minutes=warmup_bars)
-
-            # Use proven time-based approach (from official Nautilus Trader examples)
-            self.request_bars(
-                bar_type=self.config.bar_type,
-                start=start_time  # Time-based limiting works reliably with Binance adapter
+        try:
+            self._factor_config = self._factor_loader.get_factor(self._factor_id)
+        except KeyError:
+            available = ", ".join(self._factor_loader.list_factors())
+            self.log.error(
+                f"Factor '{self._factor_id}' not found in "
+                f"{self._factor_config_path}. Available factors: {available}"
             )
-            self.log.info(f"Requested {warmup_bars} historical bars for indicator warmup: {self.config.bar_type}")
+            return False
+
+        self._factor_defaults = self._factor_loader.get_defaults() or {}
+        defaults = self._factor_defaults
+
+        # Shared risk/execution characteristics from backtest catalog
+        self._risk_config = getattr(self._factor_loader, "risk_config", None)
+        self._execution_config = getattr(self._factor_loader, "execution_config", None)
+        if self._execution_config:
+            self._min_order_size = float(self._execution_config.min_order_size)
+
+        # Synchronise shared parameters with backtest defaults (allow overrides)
+        default_zscore = int(defaults.get("zscore_period", self._zscore_period))
+        if self._zscore_period != default_zscore:
+            self.log.warning(
+                f"Using live z-score period override ({self._zscore_period}) "
+                f"instead of catalog default ({default_zscore})."
+            )
         else:
-            self.log.info(f"Skipping historical bar request (already requested by another strategy): {self.config.bar_type}")
+            self._zscore_period = default_zscore
 
-        # Subscribe to live bar updates (always subscribe for each strategy)
+        default_clip_min = float(defaults.get("clip_min", self._clip_min))
+        default_clip_max = float(defaults.get("clip_max", self._clip_max))
+        if self._clip_min != default_clip_min or self._clip_max != default_clip_max:
+            self.log.warning(
+                "Clip bounds overridden by live configuration: "
+                f"({self._clip_min}, {self._clip_max}) vs catalog "
+                f"({default_clip_min}, {default_clip_max})."
+            )
+        else:
+            self._clip_min = default_clip_min
+            self._clip_max = default_clip_max
+
+        if self._clip_min >= self._clip_max:
+            self.log.warning(
+                f"Invalid clip bounds ({self._clip_min}, {self._clip_max}); "
+                f"reverting to catalog defaults ({default_clip_min}, {default_clip_max})."
+            )
+            self._clip_min = default_clip_min
+            self._clip_max = default_clip_max
+
+        # Note: _warmup_bars will be set after indicator creation based on required_history
+        # This ensures we get the true warmup requirement accounting for nested windows
+        self._factor_expression = self._factor_config.expression
+        self._factor_requires_extended = bool(self._factor_config.requires_extended)
+
+        expression_preview = (
+            self._factor_expression.replace(" ", "")[:120] + "..."
+            if self._factor_expression and len(self._factor_expression) > 120
+            else self._factor_expression
+        )
+        self.log.info(
+            f"Loaded factor '{self._factor_config.name}' "
+            f"(requires_extended={self._factor_requires_extended}) | "
+            f"expression={expression_preview}"
+        )
+
+        return True
+
+    def _supports_extended_bars(self) -> bool:
+        """Check whether the runtime exposes FactorExp extended bar fields."""
+        try:
+            from nautilus_trader.model.data import EXTENDED_BAR_FIELD_SPECS
+
+            if EXTENDED_BAR_FIELD_SPECS:
+                return True
+        except Exception:
+            pass
+
+        # Fallback check for amt field presence (most common extended requirement)
+        return hasattr(Bar, "amt")
+
+    def _setup_factor_graph(self):
+        """Instantiate and register the FactorExp indicator based on YAML config."""
+        try:
+            # Create indicator without period parameter - it will be auto-detected
+            # from the expression tree accounting for nested windows
+            self._factor_indicator = FactorExpIndicator(
+                expression=self._factor_expression,
+                name=f"{self._factor_config.factor_id.upper()}",
+            )
+
+            # Get the true warmup requirement from the indicator
+            # This accounts for nested window operators correctly
+            self._warmup_bars = self._factor_indicator.required_history
+
+            self.log.info(
+                f"Indicator created | required_history={self._warmup_bars} bars "
+                f"(auto-detected from expression tree)"
+            )
+        except Exception as exc:
+            self.log.error(
+                f"Failed to instantiate FactorExp indicator for factor "
+                f"'{self._factor_id}': {exc}"
+            )
+            raise
+
+        try:
+            self.register_indicator_for_bars(self.config.bar_type, self._factor_indicator)
+        except Exception as exc:
+            self.log.error(
+                f"Failed to register FactorExp indicator for {self.config.bar_type}: {exc}"
+            )
+            raise
+
+        if self._should_request_historical_data:
+            try:
+                self._request_factor_warmup()
+            except Exception:
+                # Error already logged in _request_factor_warmup
+                raise
+        else:
+            self.log.info(
+                f"Skipping historical warmup for {self.config.bar_type} "
+                "(already requested by another strategy)."
+            )
+
         self.subscribe_bars(self.config.bar_type)
 
+    def _request_factor_warmup(self):
+        """Request historical bars to warm up the factor indicator."""
+        if self._warmup_bars <= 0:
+            return
+
+        from datetime import timedelta
+
+        # TODO: Binance adapter 应补充批量/回退机制以保障大窗口 warmup，此处暂依赖上游改进
+        bar_type = self.config.bar_type
+        bar_type_str = str(bar_type)
+        is_internal = bar_type.is_internally_aggregated()
+
+        if "15-MINUTE" in bar_type_str:
+            delta = timedelta(minutes=self._warmup_bars * 15)
+        elif "5-MINUTE" in bar_type_str:
+            delta = timedelta(minutes=self._warmup_bars * 5)
+        elif "1-HOUR" in bar_type_str:
+            delta = timedelta(hours=self._warmup_bars)
+        elif "1-DAY" in bar_type_str or "DAILY" in bar_type_str:
+            delta = timedelta(days=self._warmup_bars)
+        else:
+            delta = timedelta(minutes=self._warmup_bars)
+
+        start_time = self._clock.utc_now() - delta
+
+        request_msg = (
+            f"Requesting {self._warmup_bars} historical bars for "
+            f"{bar_type} warmup (start={start_time.isoformat()} UTC)."
+        )
+        if is_internal:
+            request_msg += " (aggregated)"
+        self.log.info(request_msg)
+
+        try:
+            if is_internal:
+                self.request_aggregated_bars(
+                    [bar_type],
+                    start=start_time,
+                    update_subscriptions=True,
+                )
+            else:
+                self.request_bars(
+                    bar_type=bar_type,
+                    start=start_time,
+                )
+        except Exception as exc:
+            self.log.error(
+                f"Historical warmup request failed for {bar_type}: {exc}"
+            )
+            raise
+
+    def _initialize_segments(self) -> bool:
+        """Create 96 SegmentState entries mirroring the backtest ledger."""
+        account = self.cache.account_for_venue(self.config.instrument_id.venue)
+        if account is None:
+            self.log.error(
+                f"Cannot create segment ledger without account on venue {self.config.instrument_id.venue}"
+            )
+            return False
+
+        instrument = self._instrument
+        if instrument is None:
+            self.log.error("Instrument not cached during segment initialization")
+            return False
+
+        quote_currency = instrument.quote_currency
+        balance_total = account.balance_total(quote_currency)
+        if not balance_total:
+            self.log.error(f"Unable to determine total balance for {quote_currency}")
+            return False
+
+        total_equity = float(balance_total)
+        if total_equity <= 0:
+            self.log.error(f"Account equity for {quote_currency} is non-positive: {total_equity}")
+            return False
+
+        equity_per_segment = total_equity / self._segment_count
+        self._segment_states = [
+            SegmentState(
+                idx=idx,
+                current_qty=0.0,
+                avg_entry_price=0.0,
+                current_equity=equity_per_segment,
+                initial_equity=equity_per_segment,
+                peak_equity=equity_per_segment,
+            )
+            for idx in range(self._segment_count)
+        ]
+        self._segment_index = 0
+        self._segment_rotation_counter = 0
+
+        if self._risk_config:
+            self._max_leverage = float(self._risk_config.max_position_size)
+            self._segment_stop_loss_pct = float(self._risk_config.stop_loss)
+            self._freeze_duration_bars = int(
+                self._risk_config.max_rebalance_interval or self._freeze_duration_bars
+            )
+        else:
+            self._max_leverage = 2.0
+            self._segment_stop_loss_pct = 0.05
+
+        if self._execution_config:
+            self._min_order_size = float(self._execution_config.min_order_size)
+
+        self._bar_duration_ns = self._calculate_bar_duration_ns()
         self.log.info(
-            f"Registered {len([self._ema_ratio_indicator, self._volatility_indicator, self._momentum_indicator, self._mean_reversion_indicator])} "
-            f"FactorExp indicators for bar type: {self.config.bar_type}"
+            f"Initialized {self._segment_count} segments | equity per segment={equity_per_segment:.2f}, "
+            f"max_leverage={self._max_leverage:.2f}, stop_loss={self._segment_stop_loss_pct:.2%}, "
+            f"freeze={self._freeze_duration_bars} bars"
+        )
+        return True
+
+    def _calculate_bar_duration_ns(self) -> int:
+        """Derive bar duration in nanoseconds to align freeze timers."""
+        from nautilus_trader.model.enums import BarAggregation
+
+        try:
+            bar_spec = self.config.bar_type.spec
+        except AttributeError:
+            # Fallback: assume 15-minute bars if spec unavailable
+            fifteen_minutes_ns = 15 * 60 * 1_000_000_000
+            return fifteen_minutes_ns
+
+        if bar_spec.aggregation == BarAggregation.MINUTE:
+            return bar_spec.step * 60 * 1_000_000_000
+        if bar_spec.aggregation == BarAggregation.HOUR:
+            return bar_spec.step * 60 * 60 * 1_000_000_000
+        if bar_spec.aggregation == BarAggregation.SECOND:
+            return bar_spec.step * 1_000_000_000
+
+        # Default to 15-minute cadence when aggregation is unknown
+        return 15 * 60 * 1_000_000_000
+
+    def _get_segment_equity(self, state: SegmentState, price: float) -> float:
+        """
+        Compute TRUE equity = cash (realized) + unrealized PnL for a segment.
+
+        Parameters
+        ----------
+        state : SegmentState
+            Segment to evaluate.
+        price : float
+            Current market price.
+        """
+        if not state.has_inventory():
+            return state.current_equity
+
+        unrealized = (price - state.avg_entry_price) * state.current_qty
+        return state.current_equity + unrealized
+
+    def _submit_segment_target(self, state: SegmentState, target_qty: float) -> bool:
+        """
+        Route orders so the segment converges to target quantity.
+
+        The Binance hedge-mode adapter only exposes two positions (LONG/SHORT).
+        We therefore split adjustments into:
+        - Reduce existing exposure on one side (reduce_only=True)
+        - Open/extend exposure on the other side
+        """
+        if self._instrument is None:
+            self.log.error("Cannot submit orders without cached instrument")
+            return False
+
+        current_qty = state.current_qty
+        delta = target_qty - current_qty
+        if abs(delta) < self._min_order_size:
+            self.log.debug(
+                f"Seg{state.idx}: delta {delta:.6f} below min order {self._min_order_size}, skipping"
+            )
+            return False
+
+        operations: list[tuple[OrderSide, float, PositionId, bool]] = []
+
+        if delta > 0:
+            remaining = delta
+            if current_qty < 0:
+                cover_qty = min(abs(current_qty), remaining)
+                if cover_qty >= self._min_order_size:
+                    operations.append((OrderSide.BUY, cover_qty, self._short_position_id, True))
+                remaining -= cover_qty
+            if remaining >= self._min_order_size:
+                operations.append((OrderSide.BUY, remaining, self._long_position_id, False))
+        else:
+            remaining = abs(delta)
+            if current_qty > 0:
+                reduce_qty = min(current_qty, remaining)
+                if reduce_qty >= self._min_order_size:
+                    operations.append((OrderSide.SELL, reduce_qty, self._long_position_id, True))
+                remaining -= reduce_qty
+            if remaining >= self._min_order_size:
+                operations.append((OrderSide.SELL, remaining, self._short_position_id, False))
+
+        if not operations:
+            return False
+
+        submitted = False
+        timestamp_ns = self._clock.timestamp_ns()
+
+        for side, qty, position_id, reduce_only in operations:
+            if qty <= 0 or position_id is None:
+                continue
+
+            qty_obj = self._instrument.make_qty(Decimal(str(qty)))
+            order = self.order_factory.market(
+                instrument_id=self.config.instrument_id,
+                order_side=side,
+                quantity=qty_obj,
+                reduce_only=reduce_only,
+            )
+
+            self.submit_order(order, position_id=position_id)
+
+            client_id = str(order.client_order_id)
+            self._order_to_segment[client_id] = state
+            signed_delta = qty if side == OrderSide.BUY else -qty
+            self._order_pending_delta[client_id] = signed_delta
+
+            submitted = True
+
+            self.log.info(
+                f"Seg{state.idx}: submit {side.name} qty={qty:.6f} reduce_only={reduce_only} "
+                f"target={target_qty:.6f} current={current_qty:.6f}"
+            )
+
+        if submitted:
+            state.pending_target_qty = target_qty
+            state.pending_timestamp_ns = timestamp_ns
+
+        return submitted
+
+    def _apply_fill_to_segment(self, state: SegmentState, event: OrderFilled) -> None:
+        """Update segment ledger with fill information."""
+        price = float(event.last_px.as_decimal())
+        qty = float(event.last_qty.as_decimal())
+        if qty <= 0:
+            return
+
+        if event.order_side == OrderSide.BUY:
+            self._apply_buy_fill(state, qty, price)
+        else:
+            self._apply_sell_fill(state, qty, price)
+
+        self._apply_commission_to_segment(state, event.commission)
+
+    def _apply_buy_fill(self, state: SegmentState, qty: float, price: float) -> None:
+        """Handle BUY fills for a segment."""
+        remaining = qty
+
+        if state.current_qty < 0:
+            cover_qty = min(abs(state.current_qty), remaining)
+            realized = (state.avg_entry_price - price) * cover_qty
+            state.current_qty += cover_qty
+            state.current_equity += realized
+            state.cumulative_realized_pnl += realized
+            remaining -= cover_qty
+
+            if abs(state.current_qty) < 1e-9:
+                state.current_qty = 0.0
+                state.avg_entry_price = 0.0
+
+        if remaining <= 0:
+            return
+
+        if state.current_qty <= 0:
+            # Opening fresh long exposure
+            state.current_qty = remaining
+            state.avg_entry_price = price
+        else:
+            new_qty = state.current_qty + remaining
+            state.avg_entry_price = (
+                (state.current_qty * state.avg_entry_price) + (remaining * price)
+            ) / new_qty
+            state.current_qty = new_qty
+
+    def _apply_sell_fill(self, state: SegmentState, qty: float, price: float) -> None:
+        """Handle SELL fills for a segment."""
+        remaining = qty
+
+        if state.current_qty > 0:
+            reduce_qty = min(state.current_qty, remaining)
+            realized = (price - state.avg_entry_price) * reduce_qty
+            state.current_qty -= reduce_qty
+            state.current_equity += realized
+            state.cumulative_realized_pnl += realized
+            remaining -= reduce_qty
+
+            if abs(state.current_qty) < 1e-9:
+                state.current_qty = 0.0
+                state.avg_entry_price = 0.0
+
+        if remaining <= 0:
+            return
+
+        if state.current_qty >= 0:
+            # Opening fresh short exposure
+            state.current_qty = -remaining
+            state.avg_entry_price = price
+        else:
+            total_short = abs(state.current_qty) + remaining
+            state.avg_entry_price = (
+                (abs(state.current_qty) * state.avg_entry_price) + (remaining * price)
+            ) / total_short
+            state.current_qty = -total_short
+
+    def _apply_commission_to_segment(self, state: SegmentState, commission) -> None:
+        """Adjust segment equity and PnL for fill commission."""
+        if commission is None:
+            return
+
+        try:
+            fee = float(commission.as_decimal())
+        except Exception:
+            self.log.warning("Unable to parse commission from fill event")
+            return
+
+        if fee == 0.0:
+            return
+
+        state.current_equity -= fee
+        state.cumulative_realized_pnl -= fee
+
+    def _check_segment_risk(self, state: SegmentState, price: float) -> bool:
+        """
+        Evaluate trailing drawdown risk on a segment.
+
+        Returns True if action was taken (segment forced flat / frozen).
+        """
+        if state.is_depleted:
+            return False
+
+        total_equity = self._get_segment_equity(state, price)
+
+        if total_equity > state.peak_equity:
+            state.peak_equity = total_equity
+
+        drawdown = state.peak_equity - total_equity
+        threshold = state.peak_equity * self._segment_stop_loss_pct
+
+        if drawdown > threshold:
+            self.log.warning(
+                f"Seg{state.idx}: stop-loss triggered | drawdown={drawdown:.2f} "
+                f"threshold={threshold:.2f} peak={state.peak_equity:.2f} equity={total_equity:.2f}"
+            )
+            self._force_flat(state)
+            state.frozen_until_ns = self._clock.timestamp_ns() + (
+                self._freeze_duration_bars * self._bar_duration_ns
+            )
+            state.peak_equity = max(total_equity, state.current_equity)
+            state.pending_target_qty = 0.0
+            state.pending_timestamp_ns = 0
+            return True
+
+        if total_equity <= 0:
+            self.log.error(
+                f"Seg{state.idx}: equity depleted ({total_equity:.2f}), forcing flat and marking depleted"
+            )
+            self._force_flat(state)
+            state.is_depleted = True
+            state.frozen_until_ns = self._clock.timestamp_ns() + (
+                self._freeze_duration_bars * self._bar_duration_ns
+            )
+            return True
+
+        return False
+
+    def _force_flat(self, state: SegmentState) -> None:
+        """Issue orders to fully flatten a segment."""
+        if not state.has_inventory():
+            return
+
+        self.log.warning(f"Seg{state.idx}: forcing flat | qty={state.current_qty:.6f}")
+        self._submit_segment_target(state, 0.0)
+
+    def _rebalance_segment(self, state: SegmentState, price: float, factor_value: float) -> None:
+        """
+        Rebalance a single segment based on FactorExp signal.
+
+        Parameters
+        ----------
+        state : SegmentState
+            Segment to rebalance.
+        price : float
+            Current market price.
+        factor_value : float
+            Clip(ZScore(...)) reading shared with backtest.
+        """
+        if state.is_depleted:
+            return
+
+        now_ns = self._clock.timestamp_ns()
+        if state.frozen_until_ns and now_ns < state.frozen_until_ns:
+            return
+        if state.frozen_until_ns and now_ns >= state.frozen_until_ns:
+            state.frozen_until_ns = 0
+            self.log.info(f"Seg{state.idx}: unfreezed | equity={state.current_equity:.2f}")
+
+        if price <= 0:
+            self.log.error("Price is non-positive, skipping rebalance")
+            return
+
+        segment_equity = self._get_segment_equity(state, price)
+        if segment_equity <= 0:
+            self.log.error(
+                f"Seg{state.idx}: non-positive equity ({segment_equity:.2f}), freezing segment"
+            )
+            state.is_depleted = True
+            self._force_flat(state)
+            return
+
+        target_weight = factor_value * float(self._position_scale)
+        target_notional = target_weight * segment_equity
+        max_notional = abs(segment_equity) * self._max_leverage
+
+        if target_notional > max_notional:
+            target_notional = max_notional
+        elif target_notional < -max_notional:
+            target_notional = -max_notional
+
+        target_qty = target_notional / price
+
+        if segment_equity > state.peak_equity:
+            state.peak_equity = segment_equity
+
+        submitted = self._submit_segment_target(state, target_qty)
+        if submitted:
+            self.log.debug(
+                f"Seg{state.idx}: factor={factor_value:.4f} equity={segment_equity:.2f} "
+                f"current={state.current_qty:.6f} target={target_qty:.6f}"
+            )
+
+    def _log_segment_rotation(self, price: float) -> None:
+        """Summarize ledger health at rotation boundaries."""
+        active = sum(1 for s in self._segment_states if s.has_inventory())
+        frozen = sum(
+            1 for s in self._segment_states if s.frozen_until_ns > self._clock.timestamp_ns()
+        )
+        depleted = sum(1 for s in self._segment_states if s.is_depleted)
+
+        total_equity = sum(self._get_segment_equity(s, price) for s in self._segment_states)
+
+        self.log.info(
+            f"Segment rotation #{self._segment_rotation_counter}: active={active}, "
+            f"frozen={frozen}, depleted={depleted}, total_equity={total_equity:.2f}"
         )
 
     def on_quote_tick(self, tick: QuoteTick):
         """Handle quote tick data."""
-        # Not used for this strategy
+        # TODO: 恢复 quote tick 订阅，并在此实现逐笔风控检查
 
     def on_trade_tick(self, tick: TradeTick):
         """Handle trade tick data."""
-        # Using bar data primarily
+        # TODO: 恢复 trade tick 订阅，并在此实现逐笔风控检查
 
     def on_bar(self, bar: Bar):
         """
-        Handle bar data and execute trading logic.
-        
+        Handle bar data with 96-segment ledger logic.
+
         Parameters
         ----------
         bar : Bar
             The received bar data
         """
-        # IMMEDIATE TEST: Verify bar reception
-        print(f"🔍 [TEST] on_bar() called - received bar for {bar.bar_type}")
-        self.log.debug(f"Received bar: {bar}")
+        if not self._segment_states:
+            self.log.debug("Segments not initialized yet")
+            return
 
-        # Check if indicators are ready (framework handles update automatically)
         if not self._indicators_ready():
             self.log.debug("Indicators not ready yet")
             return
 
-        # Periodic portfolio monitoring (every 10 bars to avoid spam)
         self._bar_count += 1
-        if self._bar_count % 10 == 0:  # Show portfolio info every 10 bars
-            self.show_portfolio_info(f"Portfolio state (Bar {self._bar_count}):")
+        price = float(bar.close.as_decimal())
+        self._last_bar_close = price
 
-        # Check risk conditions
-        if not self._check_risk_conditions():
-            return
+        raw_value = float(self._factor_indicator.value)
+        if self._clip_min < self._clip_max:
+            factor_value = max(self._clip_min, min(self._clip_max, raw_value))
+        else:
+            factor_value = raw_value
 
-        # Generate trading signals
-        signal = self._generate_signal()
+        if abs(factor_value) < self._min_signal_magnitude:
+            factor_value = 0.0
 
-        # Execute trading logic
-        if signal and signal != self._last_signal:
-            self._execute_signal(signal, bar.close)
-            self._last_signal = signal
-            self._signal_count += 1
+        self._latest_factor_value = factor_value
 
-        # Update strategy state
-        self._last_bar_close = float(bar.close)
+        # Periodic portfolio monitoring (every 10 bars to avoid noise)
+        if self._bar_count % 10 == 0:
+            self.show_portfolio_info(f"Portfolio state (Bar {self._bar_count})")
+
+        # Run risk checks on all segments with inventory
+        risk_triggered = 0
+        for state in self._segment_states:
+            if state.has_inventory() and self._check_segment_risk(state, price):
+                risk_triggered += 1
+
+        if risk_triggered:
+            self.log.warning(f"Risk engine flattened {risk_triggered} segment(s) this bar")
+
+        # Rebalance current segment according to rotation
+        segment = self._segment_states[self._segment_index]
+        self._rebalance_segment(segment, price, factor_value)
+
+        # Rotate to next segment (96 bar cadence)
+        self._segment_index = (self._segment_index + 1) % self._segment_count
+        if self._segment_index == 0:
+            self._segment_rotation_counter += 1
+            self._log_segment_rotation(price)
 
     def _indicators_ready(self) -> bool:
-        """Check if all indicators have sufficient data."""
-        indicators = [self._ema_ratio_indicator, self._volatility_indicator,
-                     self._momentum_indicator, self._mean_reversion_indicator]
-
-        return all(
-            indicator and indicator.initialized and indicator.count >= indicator.period
-            for indicator in indicators
+        """Check if the FactorExp indicator has sufficient data."""
+        indicator = self._factor_indicator
+        return bool(
+            indicator
+            and indicator.initialized
+            and indicator.count >= indicator.required_history
         )
-
-    def _check_risk_conditions(self) -> bool:
-        """Check risk conditions before trading using professional risk management."""
-        # Check volatility filter
-        if self._volatility_indicator and self._volatility_indicator.initialized:
-            current_volatility = self._volatility_indicator.value
-            if current_volatility < self.config.volatility_threshold:
-                self.log.debug(f"Volatility too low: {current_volatility:.6f} < {self.config.volatility_threshold}")
-                return False
-
-        # Professional account balance and exposure checks
-        account = self.cache.account_for_venue(self.config.instrument_id.venue)
-        if not account:
-            self.log.warning(f"No account found for venue {self.config.instrument_id.venue}")
-            return False
-
-        # Get current account balance
-        instrument = self.cache.instrument(self.config.instrument_id)
-        if not instrument:
-            self.log.warning(f"Instrument {self.config.instrument_id} not found")
-            return False
-
-        # Get quote currency balance (USDT for futures)
-        quote_currency = instrument.quote_currency
-        balance_total = account.balance_total(quote_currency)
-        balance_free = account.balance_free(quote_currency)
-
-        if not balance_total or not balance_free:
-            self.log.warning(f"Cannot determine balances for {quote_currency}")
-            return False
-
-        # CORRECTED LOGIC: Use user's trading limit directly
-        max_usable = self.config.max_absolute_exposure  # User's desired trading limit
-
-        # Check if account has sufficient balance
-        if float(balance_total) < max_usable:
-            self.log.warning(
-                f"Account balance (${float(balance_total):.2f}) < trading limit (${max_usable:.2f}). "
-                f"Adjusting to use {float(self.config.max_account_usage_pct):.0%} of available balance."
-            )
-            max_usable = float(balance_total) * float(self.config.max_account_usage_pct)
-
-        # Check if we have enough free balance
-        if float(balance_free) < max_usable * 0.1:  # Keep 10% buffer
-            self.log.warning(
-                f"Insufficient free balance: {float(balance_free):.2f} < {max_usable * 0.1:.2f} "
-                f"(10% of max usable {max_usable:.2f})"
-            )
-            return False
-
-        # Check current exposure vs limits
-        current_notional = self._get_current_notional_exposure()
-        if current_notional and current_notional >= max_usable:
-            self.log.debug(f"At maximum exposure: {current_notional:.2f} >= {max_usable:.2f}")
-            return False
-
-        # Native risk check: ensure we don't exceed position limits
-        current_positions = self.cache.positions(instrument_id=self.config.instrument_id)
-        if current_positions:
-            total_position_value = sum(
-                abs(float(pos.quantity)) * (self._last_bar_close or 0)
-                for pos in current_positions if pos.is_open
-            )
-            if total_position_value >= max_usable * 0.5:  # Don't exceed 50% of max usable in single position
-                self.log.warning(f"Position limit reached: ${total_position_value:.2f} >= 50% of ${max_usable:.2f}")
-                return False
-
-        return True
-
-    def _generate_signal(self) -> str | None:
-        """
-        Generate trading signal based on FactorExp indicators.
-        
-        Returns
-        -------
-        Optional[str]
-            Trading signal: "LONG", "SHORT", or None
-        """
-        if not self._indicators_ready():
-            return None
-
-        # Get indicator values
-        ema_ratio = self._ema_ratio_indicator.value
-        volatility = self._volatility_indicator.value
-        momentum = self._momentum_indicator.value
-        mean_reversion = self._mean_reversion_indicator.value
-
-        # Enhanced debug logging with thresholds and signal conditions
-        self.log.debug(
-            f"[FACTORS] EMA_Ratio: {ema_ratio:.6f} (L>{self.config.ema_ratio_long_threshold:.3f}, S<{self.config.ema_ratio_short_threshold:.3f}), "
-            f"Volatility: {volatility:.6f} (min>{self.config.volatility_threshold:.3f}), "
-            f"Momentum: {momentum:.6f} (min>{self.config.momentum_threshold:.3f}), "
-            f"Mean_Reversion: {mean_reversion:.6f}"
-        )
-
-        # Log detailed signal analysis
-        long_trend_ok = ema_ratio > self.config.ema_ratio_long_threshold
-        short_trend_ok = ema_ratio < self.config.ema_ratio_short_threshold
-        volatility_ok = volatility > self.config.volatility_threshold
-        momentum_long_ok = momentum > self.config.momentum_threshold
-        momentum_short_ok = momentum < -self.config.momentum_threshold
-
-        self.log.debug(
-            f"[SIGNAL_CHECK] Long_Trend: {long_trend_ok}, Short_Trend: {short_trend_ok}, "
-            f"Volatility: {volatility_ok}, Momentum_Long: {momentum_long_ok}, Momentum_Short: {momentum_short_ok}"
-        )
-
-        # Signal generation logic
-        signal = None
-
-        # Long signal conditions
-        if (ema_ratio > self.config.ema_ratio_long_threshold and
-            momentum > self.config.momentum_threshold and
-            volatility > self.config.volatility_threshold):
-            signal = "LONG"
-
-        # Short signal conditions
-        elif (ema_ratio < self.config.ema_ratio_short_threshold and
-              momentum < -self.config.momentum_threshold and
-              volatility > self.config.volatility_threshold):
-            signal = "SHORT"
-
-        if signal:
-            self.log.info(f"Generated {signal} signal - EMA Ratio: {ema_ratio:.6f}, Momentum: {momentum:.6f}")
-
-        return signal
-
-    def _execute_signal(self, signal: str, current_price: float):
-        """
-        Execute trading signal.
-        
-        Parameters
-        ----------
-        signal : str
-            Trading signal ("LONG" or "SHORT")
-        current_price : float
-            Current market price
-        """
-        # Close existing positions if switching direction
-        if not self.portfolio.is_flat(self.config.instrument_id):
-            current_side = "LONG" if self.portfolio.is_net_long(self.config.instrument_id) else "SHORT"
-            if signal != current_side:
-                self.log.info(f"Closing {current_side} position to switch to {signal}")
-                self.close_all_positions(self.config.instrument_id)
-                return  # Wait for next bar to enter new position
-
-        # Enter new position
-        if signal == "LONG" and not self.portfolio.is_net_long(self.config.instrument_id):
-            self._enter_long_position(current_price)
-        elif signal == "SHORT" and not self.portfolio.is_net_short(self.config.instrument_id):
-            self._enter_short_position(current_price)
-
-    def _enter_long_position(self, current_price: float):
-        """Enter long position using professional position sizing."""
-        # Calculate position size using native FixedRiskSizer
-        position_size = self._calculate_position_size(current_price, is_long=True)
-
-        if position_size is None or position_size <= 0:
-            self.log.warning("Cannot calculate valid position size for LONG entry")
-            return
-
-        order = self.order_factory.market(
-            instrument_id=self.config.instrument_id,
-            order_side=OrderSide.BUY,
-            quantity=position_size
-        )
-
-        self.submit_order(order)
-        self._entry_price = current_price
-
-        self.log.info(
-            f"Entering LONG position: size={position_size}, price={current_price:.4f}, "
-            f"notional=${float(position_size) * current_price:,.2f}"
-        )
-
-        # Log trade for monitoring
-        self.log.info(f"Trade recorded for {self.config.instrument_id}")
-
-        # Store entry order for trailing stop management
-        self._entry_order = order
-
-    def _enter_short_position(self, current_price: float):
-        """Enter short position using professional position sizing."""
-        # Calculate position size using native FixedRiskSizer
-        position_size = self._calculate_position_size(current_price, is_long=False)
-
-        if position_size is None or position_size <= 0:
-            self.log.warning("Cannot calculate valid position size for SHORT entry")
-            return
-
-        order = self.order_factory.market(
-            instrument_id=self.config.instrument_id,
-            order_side=OrderSide.SELL,
-            quantity=position_size
-        )
-
-        self.submit_order(order)
-        self._entry_price = current_price
-
-        self.log.info(
-            f"Entering SHORT position: size={position_size}, price={current_price:.4f}, "
-            f"notional=${float(position_size) * current_price:,.2f}"
-        )
-
-        # Log trade for monitoring
-        self.log.info(f"Trade recorded for {self.config.instrument_id}")
-
-        # Store entry order for trailing stop management
-        self._entry_order = order
-
-    def on_position_opened(self, position: Position):
-        """Handle position opened event."""
-        self.log.info(f"Position opened: {position}")
-
-        # Native portfolio monitoring (following official patterns)
-        self.show_portfolio_info("Portfolio state (Position opened):")
-
-    def on_position_changed(self, position: Position):
-        """Handle position changed event."""
-        self.log.debug(f"Position changed: {position}")
-
-    def on_position_closed(self, position: Position):
-        """Handle position closed event."""
-        self.log.info(f"Position closed: {position}")
-
-        # Reset entry price
-        self._entry_price = None
-
-        # Native portfolio monitoring (following official patterns)
-        self.show_portfolio_info("Portfolio state (Position closed):")
-
-    def on_event(self, event: Event):
-        """
-        Handle generic events including trailing stop management.
-        Based on official Nautilus Trader trailing stop example.
-        """
-        # Handle order fills to manage trailing stops
-        if isinstance(event, OrderFilled):
-            if self._trailing_stop and event.client_order_id == self._trailing_stop.client_order_id:
-                self.log.info(f"Trailing stop filled: {event}")
-                self._trailing_stop = None
-
-        # Handle position events for trailing stop creation
-        elif isinstance(event, (PositionOpened, PositionChanged)):
-            if self._trailing_stop:
-                return  # Already have a trailing stop
-
-            # Check if this event is from our entry order
-            if self._entry_order and event.opening_order_id == self._entry_order.client_order_id:
-                self._position_id = event.position_id
-
-                # Create appropriate trailing stop based on position side
-                if event.entry == OrderSide.BUY:
-                    # Long position: create trailing stop sell
-                    self.log.info(f"Creating trailing stop SELL for LONG position {event.position_id}")
-                    self._trailing_stop_sell()
-                elif event.entry == OrderSide.SELL:
-                    # Short position: create trailing stop buy
-                    self.log.info(f"Creating trailing stop BUY for SHORT position {event.position_id}")
-                    self._trailing_stop_buy()
-
-        # Handle position closure
-        elif isinstance(event, PositionClosed):
-            self.log.info(f"Position closed: {event}")
-            self._position_id = None
-            self._entry_order = None
-            self._trailing_stop = None
 
     def on_stop(self):
-        """Actions to be performed when the strategy is stopped."""
+        """Stop hook ensuring segment ledger is flattened."""
         self.log.info("FactorExpLiveStrategy stopped")
+        self.show_portfolio_info("Portfolio state (Strategy stopped)")
 
-        # Show final portfolio state (following official patterns)
-        self.show_portfolio_info("Portfolio state (Strategy stopped):")
+        for state in self._segment_states:
+            if state.has_inventory():
+                self._force_flat(state)
 
-        # Close all positions
+        self._order_to_segment.clear()
+        self._order_pending_delta.clear()
+
         if not self.portfolio.is_completely_flat():
             self.log.info("Closing all positions on strategy stop")
             self.close_all_positions(self.config.instrument_id)
 
     def on_reset(self):
-        """Actions to be performed when the strategy is reset."""
-        self._last_signal = None
-        self._signal_count = 0
-        self._entry_price = None
+        """Reset strategy state and clear segment ledger caches."""
+        self._order_to_segment.clear()
+        self._order_pending_delta.clear()
+        self._segment_index = 0
+        self._segment_rotation_counter = 0
+        self._latest_factor_value = None
         self._last_bar_close = None
 
-        # Reset trailing stop state
-        self._entry_order = None
-        self._trailing_stop = None
-        self._position_id = None
+        for state in self._segment_states:
+            state.current_qty = 0.0
+            state.avg_entry_price = 0.0
+            state.current_equity = state.initial_equity
+            state.peak_equity = state.initial_equity
+            state.cumulative_realized_pnl = 0.0
+            state.frozen_until_ns = 0
+            state.is_depleted = False
+            state.pending_target_qty = 0.0
+            state.pending_timestamp_ns = 0
 
     def on_save(self) -> dict:
-        """Save strategy state including trailing stop state."""
+        """Persist ledger state for warm restarts."""
         return {
-            "last_signal": self._last_signal,
-            "signal_count": self._signal_count,
-            "entry_price": self._entry_price,
             "last_bar_close": self._last_bar_close,
-            "position_id": str(self._position_id) if self._position_id else None,
-            "has_trailing_stop": self._trailing_stop is not None,
+            "latest_factor_value": self._latest_factor_value,
+            "segments": [
+                {
+                    "idx": state.idx,
+                    "current_qty": state.current_qty,
+                    "avg_entry_price": state.avg_entry_price,
+                    "current_equity": state.current_equity,
+                    "peak_equity": state.peak_equity,
+                    "cumulative_realized_pnl": state.cumulative_realized_pnl,
+                    "frozen_until_ns": state.frozen_until_ns,
+                    "is_depleted": state.is_depleted,
+                }
+                for state in self._segment_states
+            ],
         }
 
     def on_load(self, state: dict):
-        """Load strategy state including trailing stop state."""
-        self._last_signal = state.get("last_signal")
-        self._signal_count = state.get("signal_count", 0)
-        self._entry_price = state.get("entry_price")
+        """Restore ledger state after serialization."""
         self._last_bar_close = state.get("last_bar_close")
+        self._latest_factor_value = state.get("latest_factor_value")
 
-        # Load trailing stop state (positions and orders will be restored by framework)
-        position_id_str = state.get("position_id")
-        if position_id_str:
-            self._position_id = PositionId(position_id_str)
-        else:
-            self._position_id = None
-
-        # Trailing stop order will be restored by framework if it exists
-        self._entry_order = None
-        self._trailing_stop = None
-
-
-    def _calculate_position_size(self, entry_price: float, is_long: bool) -> object | None:
-        """
-        Calculate position size using native FixedRiskSizer with professional risk management.
-        
-        Parameters
-        ----------
-        entry_price : float
-            Entry price for the position
-        is_long : bool
-            True for long position, False for short position
-            
-        Returns
-        -------
-        Quantity or None
-            Calculated position size or None if calculation fails
-        """
-        if not self._position_sizer:
-            self.log.error("Position sizer not initialized")
-            return None
-
-        # Get account and instrument info
-        account = self.cache.account_for_venue(self.config.instrument_id.venue)
-        instrument = self.cache.instrument(self.config.instrument_id)
-
-        if not account or not instrument:
-            self.log.error("Cannot access account or instrument for position sizing")
-            return None
-
-        # Get current equity (total balance)
-        quote_currency = instrument.quote_currency
-        balance_total = account.balance_total(quote_currency)
-
-        if not balance_total:
-            self.log.error(f"Cannot determine total balance for {quote_currency}")
-            return None
-
-        # Calculate effective equity based on user's trading limit
-        total_equity = float(balance_total)
-
-        # CORRECTED LOGIC: ACCOUNT_SIZE_USD is the maximum amount user wants to trade with
-        # Not a comparison with account balance, but a direct trading limit
-        effective_equity = self.config.max_absolute_exposure  # This is ACCOUNT_SIZE_USD
-
-        # Check if account has sufficient balance to support the trading limit
-        if total_equity < effective_equity:
-            self.log.warning(
-                f"Account balance (${total_equity:.2f}) is less than desired trading limit (${effective_equity:.2f}). "
-                f"Using account balance as effective equity."
-            )
-            effective_equity = total_equity * float(self.config.max_account_usage_pct)  # Use 80% of available
-
-        self.log.debug(
-            f"Trading Capital: Account=${total_equity:.2f}, "
-            f"User_Limit=${self.config.max_absolute_exposure:.2f}, "
-            f"Effective=${effective_equity:.2f}"
-        )
-
-        # Calculate stop loss price based on direction
-        if is_long:
-            stop_loss_price = entry_price * (1 - self.config.stop_loss_pct)
-        else:
-            stop_loss_price = entry_price * (1 + self.config.stop_loss_pct)
-
-        # Use native FixedRiskSizer for professional position sizing
-        try:
-            equity_money = Money(effective_equity, quote_currency)
-            entry_price_obj = Price.from_str(f"{entry_price:.{instrument.price_precision}f}")
-            stop_loss_price_obj = Price.from_str(f"{stop_loss_price:.{instrument.price_precision}f}")
-
-            position_size = self._position_sizer.calculate(
-                entry=entry_price_obj,
-                stop_loss=stop_loss_price_obj,
-                equity=equity_money,
-                risk=self.config.position_risk_pct,
-                commission_rate=self._get_current_commission_rate(),
-                exchange_rate=Decimal(1),  # USDT futures, no conversion needed
-                hard_limit=None,  # We handle limits above
-                unit_batch_size=Decimal(1),  # Minimum trade size
-                units=1
-            )
-
-            if position_size and float(position_size) > 0:
-                notional_value = float(position_size) * entry_price
-
-                # CRITICAL FIX: Validate notional value doesn't exceed available capital
-                if notional_value > effective_equity:
-                    # Scale down position size to fit available capital
-                    max_position_size = effective_equity / entry_price
-                    # Apply instrument precision
-                    position_size = instrument.make_qty(max_position_size)
-                    new_notional = float(position_size) * entry_price
-
-                    self.log.warning(
-                        f"Position size reduced to fit capital constraints: "
-                        f"${notional_value:,.2f} -> ${new_notional:,.2f} "
-                        f"(available: ${effective_equity:,.2f})"
-                    )
-                    notional_value = new_notional
-
-                # Validate against instrument minimum trade size
-                if instrument.min_quantity and position_size < instrument.min_quantity:
-                    self.log.warning(
-                        f"Calculated position size {position_size} below minimum {instrument.min_quantity}, "
-                        f"using minimum size"
-                    )
-                    position_size = instrument.min_quantity
-                    notional_value = float(position_size) * entry_price
-
-                    # Final check: if minimum size exceeds our capital, can't trade
-                    if notional_value > effective_equity:
-                        self.log.error(
-                            f"Minimum trade size (${notional_value:,.2f}) exceeds available capital "
-                            f"(${effective_equity:,.2f}). Cannot trade this instrument with current account size."
-                        )
-                        return None
-
-                commission_rate = self._get_current_commission_rate()
-
-                # Enhanced position sizing debug logging
-                self.log.debug(
-                    f"[POSITION_CALC] Account_Equity: ${total_equity:,.2f}, "
-                    f"Effective_Equity: ${effective_equity:,.2f}, "
-                    f"Entry_Price: ${entry_price:.4f}, Stop_Price: ${stop_loss_price:.4f}, "
-                    f"Risk_Amount: ${effective_equity * float(self.config.position_risk_pct):,.2f}, "
-                    f"Commission_Rate: {float(commission_rate):.4%}"
-                )
-
-                self.log.info(
-                    f"[POSITION_SIZE] Calculated: {position_size} BTC, "
-                    f"Notional: ${notional_value:,.2f}, "
-                    f"Risk: {self.config.position_risk_pct:.1%} (${effective_equity * float(self.config.position_risk_pct):,.2f}), "
-                    f"Stop_Loss: {stop_loss_price:.4f} ({self.config.stop_loss_pct:.1%})"
-                )
-                return position_size
-            else:
-                self.log.warning("Position sizer returned zero or invalid size")
-                return None
-
-        except Exception as e:
-            self.log.error(f"Error calculating position size: {e}")
-            return None
+        segments_data = state.get("segments", [])
+        if segments_data and len(segments_data) == len(self._segment_states):
+            for saved, current in zip(segments_data, self._segment_states):
+                current.current_qty = saved.get("current_qty", 0.0)
+                current.avg_entry_price = saved.get("avg_entry_price", 0.0)
+                current.current_equity = saved.get("current_equity", current.initial_equity)
+                current.peak_equity = saved.get("peak_equity", current.initial_equity)
+                current.cumulative_realized_pnl = saved.get("cumulative_realized_pnl", 0.0)
+                current.frozen_until_ns = saved.get("frozen_until_ns", 0)
+                current.is_depleted = saved.get("is_depleted", False)
+                current.pending_target_qty = current.current_qty
+                current.pending_timestamp_ns = 0
 
     def _get_current_notional_exposure(self) -> float | None:
         """
@@ -904,116 +976,6 @@ class FactorExpLiveStrategy(Strategy):
             self.log.error(f"Error calculating current exposure: {e}")
             return None
 
-    def _trailing_stop_buy(self) -> None:
-        """
-        Create trailing stop BUY order for SHORT positions (close short).
-        Based on official Nautilus Trader trailing stop example.
-        """
-        if not self.cache.instrument(self.config.instrument_id):
-            self.log.error("No instrument loaded for trailing stop")
-            return
-
-        last_quote = self.cache.quote_tick(self.config.instrument_id)
-        if not last_quote:
-            self.log.warning("Cannot submit trailing stop: no quotes yet")
-            return
-
-        instrument = self.cache.instrument(self.config.instrument_id)
-
-        # Calculate trailing offset based on stop loss percentage
-        # For SHORT positions, we trail above the market (protect against price rises)
-        current_price = float(last_quote.ask_price)  # Use ask for buying to close short
-        offset_amount = current_price * self.config.stop_loss_pct
-
-        trailing_offset = Price.from_str(f"{offset_amount:.{instrument.price_precision}f}")
-        position_size = self._get_current_position_size()
-
-        if not position_size:
-            self.log.warning("Cannot create trailing stop: no position size")
-            return
-
-        order: TrailingStopMarketOrder = self.order_factory.trailing_stop_market(
-            instrument_id=self.config.instrument_id,
-            order_side=OrderSide.BUY,  # Buy to close short position
-            quantity=position_size,
-            trailing_offset=trailing_offset.as_decimal(),
-            trailing_offset_type=TrailingOffsetType.PRICE,
-            trigger_type=TriggerType.DEFAULT,
-            # reduce_only removed - incompatible with Binance Hedge Mode
-        )
-
-        self._trailing_stop = order
-        self.submit_order(order, position_id=self._position_id)
-
-        self.log.info(
-            f"Submitted trailing stop BUY: offset=${offset_amount:.2f}, "
-            f"size={position_size}, position_id={self._position_id}"
-        )
-
-    def _trailing_stop_sell(self) -> None:
-        """
-        Create trailing stop SELL order for LONG positions (close long).
-        Based on official Nautilus Trader trailing stop example.
-        """
-        if not self.cache.instrument(self.config.instrument_id):
-            self.log.error("No instrument loaded for trailing stop")
-            return
-
-        last_quote = self.cache.quote_tick(self.config.instrument_id)
-        if not last_quote:
-            self.log.warning("Cannot submit trailing stop: no quotes yet")
-            return
-
-        instrument = self.cache.instrument(self.config.instrument_id)
-
-        # Calculate trailing offset based on stop loss percentage
-        # For LONG positions, we trail below the market (protect against price falls)
-        current_price = float(last_quote.bid_price)  # Use bid for selling to close long
-        offset_amount = current_price * self.config.stop_loss_pct
-
-        trailing_offset = Price.from_str(f"{offset_amount:.{instrument.price_precision}f}")
-        position_size = self._get_current_position_size()
-
-        if not position_size:
-            self.log.warning("Cannot create trailing stop: no position size")
-            return
-
-        order: TrailingStopMarketOrder = self.order_factory.trailing_stop_market(
-            instrument_id=self.config.instrument_id,
-            order_side=OrderSide.SELL,  # Sell to close long position
-            quantity=position_size,
-            trailing_offset=trailing_offset.as_decimal(),
-            trailing_offset_type=TrailingOffsetType.PRICE,
-            trigger_type=TriggerType.DEFAULT,
-            # reduce_only removed - incompatible with Binance Hedge Mode
-        )
-
-        self._trailing_stop = order
-        self.submit_order(order, position_id=self._position_id)
-
-        self.log.info(
-            f"Submitted trailing stop SELL: offset=${offset_amount:.2f}, "
-            f"size={position_size}, position_id={self._position_id}"
-        )
-
-    def _get_current_position_size(self) -> Quantity | None:
-        """
-        Get current position size for trailing stop orders.
-        
-        Returns
-        -------
-        Quantity or None
-            Current position size or None if no position
-        """
-        if self.portfolio.is_flat(self.config.instrument_id):
-            return None
-
-        position = self.portfolio.position(self.config.instrument_id)
-        if not position:
-            return None
-
-        return position.quantity
-
     def show_portfolio_info(self, intro_message: str = ""):
         """
         Display current portfolio information using native Nautilus Trader patterns.
@@ -1032,6 +994,28 @@ class FactorExpLiveStrategy(Strategy):
 
         net_exposure = self.portfolio.net_exposure(self.config.instrument_id)
         self.log.info(f"Net exposure: {net_exposure}", color=LogColor.BLUE)
+
+        active_segments = sum(1 for s in self._segment_states if s.has_inventory())
+        frozen_segments = sum(
+            1 for s in self._segment_states if s.frozen_until_ns > self._clock.timestamp_ns()
+        )
+        depleted_segments = sum(1 for s in self._segment_states if s.is_depleted)
+        self.log.info(
+            f"Segments -> active={active_segments}, frozen={frozen_segments}, depleted={depleted_segments}",
+            color=LogColor.BLUE,
+        )
+
+        if self._latest_factor_value is not None:
+            self.log.info(
+                f"Factor {self._factor_id}: {self._latest_factor_value:.6f} "
+                f"(min_signal {self._min_signal_magnitude:.3f})",
+                color=LogColor.GREEN,
+            )
+        else:
+            self.log.info(
+                f"Factor {self._factor_id}: warming up...",
+                color=LogColor.GREEN,
+            )
 
         # -----------------------------------------------------
 
@@ -1072,22 +1056,77 @@ class FactorExpLiveStrategy(Strategy):
         else:
             balance_used_pct = 0.0
 
+        active_segments = sum(1 for s in self._segment_states if s.has_inventory())
+        frozen_segments = sum(
+            1 for s in self._segment_states if s.frozen_until_ns > self._clock.timestamp_ns()
+        )
+        depleted_segments = sum(1 for s in self._segment_states if s.is_depleted)
+
         return {
             "instrument": str(self.config.instrument_id),
-            "signal_count": self._signal_count,
-            "last_signal": self._last_signal,
-            "current_position": "FLAT" if self.portfolio.is_flat(self.config.instrument_id)
-                              else ("LONG" if self.portfolio.is_net_long(self.config.instrument_id) else "SHORT"),
-            "indicators_ready": self._indicators_ready(),
             "last_bar_close": self._last_bar_close,
             "current_exposure_usd": current_exposure,
             "balance_used_pct": balance_used_pct,
-            "trailing_stop_active": self._trailing_stop is not None,
-            "position_id": str(self._position_id) if self._position_id else None,
+            "active_segments": active_segments,
+            "frozen_segments": frozen_segments,
+            "depleted_segments": depleted_segments,
+            "factor": {
+                "id": self._factor_id,
+                "value": self._latest_factor_value,
+                "min_signal": self._min_signal_magnitude,
+                "clip_min": self._clip_min,
+                "clip_max": self._clip_max,
+                "required_history": self._warmup_bars,
+                "indicator_ready": self._indicators_ready(),
+            },
             "risk_config": {
                 "max_account_usage_pct": float(self.config.max_account_usage_pct),
                 "max_absolute_exposure": self.config.max_absolute_exposure,
                 "position_risk_pct": float(self.config.position_risk_pct),
                 "stop_loss_pct": self.config.stop_loss_pct,
-            }
+            },
         }
+    def on_order_filled(self, event: OrderFilled):
+        """Handle fill reconciliation and basic position logging."""
+        client_id = str(event.client_order_id)
+        state = self._order_to_segment.get(client_id)
+        if state is None:
+            self.log.debug(f"OrderFilled {client_id} not mapped to segment")
+            return
+
+        self._apply_fill_to_segment(state, event)
+
+        signed_fill = float(event.last_qty.as_decimal())
+        if event.order_side == OrderSide.SELL:
+            signed_fill *= -1
+
+        pending_delta = self._order_pending_delta.get(client_id, 0.0)
+        remaining = pending_delta - signed_fill
+
+        if abs(remaining) <= self._min_order_size / 10:
+            self._order_pending_delta.pop(client_id, None)
+            self._order_to_segment.pop(client_id, None)
+        else:
+            self._order_pending_delta[client_id] = remaining
+
+        if abs(state.pending_target_qty - state.current_qty) <= self._min_order_size:
+            state.pending_target_qty = state.current_qty
+            state.pending_timestamp_ns = 0
+
+        self.log.debug(
+            f"Seg{state.idx}: filled {signed_fill:+.6f} "
+            f"current={state.current_qty:.6f} "
+            f"pending_target={state.pending_target_qty:.6f}"
+        )
+
+    def on_position_opened(self, event: PositionOpened):
+        """Log position open events."""
+        self.log.info(f"Position opened: {event.position_id} qty={event.quantity}")
+
+    def on_position_changed(self, event: PositionChanged):
+        """Log position change events."""
+        self.log.debug(f"Position changed: {event.position_id} qty={event.quantity}")
+
+    def on_position_closed(self, event: PositionClosed):
+        """Log position close events."""
+        self.log.info(f"Position closed: {event.position_id}")

@@ -200,9 +200,9 @@ class SingleFactorStrategy(Strategy):
                 return
 
         # Initialize the single factor indicator
+        # Period is auto-detected from the expression tree
         self.factor_indicator = FactorExpIndicator(
-            expression=self.factor_config.expression,
-            period=self.zscore_period
+            expression=self.factor_config.expression
         )
 
         # Register indicator for automatic updates - 以复用现有为荣

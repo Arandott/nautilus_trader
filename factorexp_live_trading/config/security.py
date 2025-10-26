@@ -120,11 +120,15 @@ class SecureConfigManager:
             "portfolio_update_interval": int(os.getenv("PORTFOLIO_UPDATE_INTERVAL_SEC", 5)),
         }
 
-    def get_factorexp_parameters(self) -> dict[str, float]:
+    def get_factorexp_parameters(self) -> dict[str, float | int | str]:
         """Get FactorExp strategy parameters from environment."""
         return {
-            "momentum_period": int(os.getenv("MOMENTUM_PERIOD", 20)),
-            "volatility_period": int(os.getenv("VOLATILITY_PERIOD", 20)),
-            "volatility_threshold": float(os.getenv("VOLATILITY_THRESHOLD", 0.02)),
-            "signal_strength_threshold": float(os.getenv("SIGNAL_STRENGTH_THRESHOLD", 0.01)),
+            "factor_config_path": os.getenv(
+                "FACTOREXP_CONFIG_PATH", "../factorexp_backtest/configs/factors.yaml"
+            ),
+            "factor_id": os.getenv("FACTOREXP_FACTOR_ID", "vwap_return_std"),
+            "zscore_period": int(os.getenv("FACTOREXP_ZSCORE_PERIOD", 5760)),
+            "clip_min": float(os.getenv("FACTOREXP_CLIP_MIN", -2.0)),
+            "clip_max": float(os.getenv("FACTOREXP_CLIP_MAX", 2.0)),
+            "min_signal_magnitude": float(os.getenv("FACTOREXP_MIN_SIGNAL", 0.05)),
         }

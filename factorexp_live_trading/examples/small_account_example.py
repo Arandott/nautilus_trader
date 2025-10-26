@@ -24,7 +24,7 @@ def create_small_account_strategy_example():
     """
     # Define trading instrument and timeframe
     instrument_id = InstrumentId.from_str("BTCUSDT-PERP.BINANCE")
-    bar_type = BarType.from_str("BTCUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL")
+    bar_type = BarType.from_str("BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-INTERNAL")
 
     # Create small account optimized configuration
     small_account_config = FactorExpLiveStrategyConfig.create_small_account_config(
@@ -43,6 +43,10 @@ def create_small_account_strategy_example():
     print(f"  Daily Loss Limit: ${small_account_config.max_daily_loss_usd:.0f}")
     print(f"  Max Daily Trades: {small_account_config.max_daily_trades}")
     print(f"  Max Drawdown: {small_account_config.max_drawdown_pct:.1%}")
+    print(f"  Factor Catalog: {small_account_config.factor_config_path}")
+    print(f"  Factor ID: {small_account_config.factor_id}")
+    print(f"  Z-Score Period: {small_account_config.zscore_period}")
+    print(f"  Min Signal Magnitude: {small_account_config.min_signal_magnitude}")
 
     # Example position sizing calculation
     account_balance = 200.0
@@ -84,7 +88,7 @@ def create_small_account_strategy_example():
 def compare_configurations():
     """Compare standard vs. small account configurations."""
     instrument_id = InstrumentId.from_str("BTCUSDT-PERP.BINANCE")
-    bar_type = BarType.from_str("BTCUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL")
+    bar_type = BarType.from_str("BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-INTERNAL")
 
     # Standard configuration
     standard_config = FactorExpLiveStrategyConfig(
@@ -111,6 +115,9 @@ def compare_configurations():
         ("Daily Trades", f"{standard_config.max_daily_trades}", f"{small_config.max_daily_trades}"),
         ("Daily Loss", f"${standard_config.max_daily_loss_usd:.0f}", f"${small_config.max_daily_loss_usd:.0f}"),
         ("Max Drawdown", f"{standard_config.max_drawdown_pct:.1%}", f"{small_config.max_drawdown_pct:.1%}"),
+        ("Factor ID", standard_config.factor_id, small_config.factor_id),
+        ("Z-Score Period", standard_config.zscore_period, small_config.zscore_period),
+        ("Min Signal", f"{standard_config.min_signal_magnitude:.3f}", f"{small_config.min_signal_magnitude:.3f}"),
     ]
 
     for param, standard, small in comparisons:

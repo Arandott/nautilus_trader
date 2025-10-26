@@ -154,6 +154,20 @@ def show_configuration():
     print("    • Stop Loss: 1.5% (1.2% for small accounts)")
     print("    • Max Daily Trades: 20 (10 for small accounts)")
 
+    factor_config_path = os.getenv("FACTOREXP_CONFIG_PATH", "../factorexp_backtest/configs/factors.yaml")
+    factor_id = os.getenv("FACTOREXP_FACTOR_ID", "vwap_return_std")
+    zscore_period = os.getenv("FACTOREXP_ZSCORE_PERIOD", "5760")
+    clip_min = os.getenv("FACTOREXP_CLIP_MIN", "-2.0")
+    clip_max = os.getenv("FACTOREXP_CLIP_MAX", "2.0")
+    min_signal = os.getenv("FACTOREXP_MIN_SIGNAL", "0.05")
+
+    print("\n  🧮 FactorExp Alignment:")
+    print(f"    • Factor Catalog: {factor_config_path}")
+    print(f"    • Factor ID: {factor_id}")
+    print(f"    • Z-Score Period: {zscore_period}")
+    print(f"    • Clip Bounds: [{clip_min}, {clip_max}]")
+    print(f"    • Min Signal Magnitude: {min_signal}")
+
     # Alert settings
     print("\n  🔔 Alert Configuration:")
     print(f"    • Email Alerts: {'Enabled' if os.getenv('ENABLE_EMAIL_ALERTS', 'false').lower() == 'true' else 'Disabled'}")

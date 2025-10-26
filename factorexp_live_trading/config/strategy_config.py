@@ -14,63 +14,63 @@ from nautilus_trader.model.identifiers import InstrumentId
 
 class FactorExpLiveStrategyConfig(StrategyConfig, frozen=True):
     """
-    Official Nautilus Trader configuration for FactorExp live trading strategy.
-    
-    Follows official StrategyConfig pattern for framework compatibility
-    and maintainability. All parameters are validated using Nautilus types.
-    
+    Official Nautilus Trader configuration for the FactorExp live trading strategy.
+
+    Live trading now consumes the exact same factor catalog used by the backtest
+    (Clip(ZScore(...)) expressions loaded from YAML). The configuration exposes
+    the factor selection and optional overrides while keeping the capital and
+    risk controls which are still strategy-specific.
+
     Parameters
     ----------
     instrument_id : InstrumentId
-        The instrument ID for the strategy
+        The instrument ID for the strategy.
     bar_type : BarType
-        The bar type for the strategy (e.g., 1-MINUTE-LAST-EXTERNAL)
-    ema_fast_period : PositiveInt, default 12
-        Fast EMA period for trend detection
-    ema_slow_period : PositiveInt, default 26
-        Slow EMA period for trend detection
-    volatility_period : PositiveInt, default 20
-        Period for volatility calculation
-    momentum_period : PositiveInt, default 14
-        Period for momentum calculation
+        The bar type for the strategy (e.g., 15-MINUTE-LAST-INTERNAL).
+    factor_config_path : str, default "../factorexp_backtest/configs/factors.yaml"
+        Path to the shared factor definition YAML.
+    factor_id : str, default "vwap_return_std"
+        Factor identifier to load from the YAML file.
+    zscore_period : PositiveInt, default 5760
+        Rolling window used by the FactorExp Clip(ZScore(...)) expression.
+    clip_min : float, default -2.0
+        Minimum clip bound applied to the factor output.
+    clip_max : float, default 2.0
+        Maximum clip bound applied to the factor output.
+    min_signal_magnitude : PositiveFloat, default 0.05
+        Absolute factor magnitude required before generating a trading signal
+        (prevents noise around zero).
     max_account_usage_pct : PositiveFloat, default 0.8
-        Maximum percentage of account equity to use (80%)
+        Maximum percentage of account equity to use (80%).
     max_absolute_exposure : PositiveFloat, default 5000.0
-        Maximum trading capital to use in USD (set via ACCOUNT_SIZE_USD env var)
-        This is the amount YOU want to allocate for trading, not your total account balance
+        Maximum trading capital to allocate in USD (set via ACCOUNT_SIZE_USD env var).
     position_risk_pct : PositiveFloat, default 0.02
-        Risk percentage per position (2%)
+        Risk percentage per position (2%).
     stop_loss_pct : PositiveFloat, default 0.015
-        Stop loss percentage (1.5%)
+        Stop loss percentage (1.5%).
     take_profit_pct : PositiveFloat, default 0.03
-        Take profit percentage (3%)
-    volatility_threshold : PositiveFloat, default 0.001
-        Minimum volatility threshold for trading
-    ema_ratio_long_threshold : PositiveFloat, default 1.005
-        EMA ratio threshold for long signals
-    ema_ratio_short_threshold : PositiveFloat, default 0.995
-        EMA ratio threshold for short signals
-    momentum_threshold : PositiveFloat, default 0.001
-        Momentum threshold for signal confirmation
+        Take profit percentage (3%).
     use_market_orders : bool, default True
-        Whether to use market orders (True) or limit orders (False)
+        Whether to use market orders (True) or limit orders (False).
     max_daily_trades : PositiveInt, default 20
-        Maximum number of daily trades
+        Maximum number of daily trades.
     max_daily_loss_usd : PositiveFloat, default 200.0
-        Maximum daily loss in USD
+        Maximum daily loss in USD.
     max_drawdown_pct : PositiveFloat, default 0.05
-        Maximum drawdown percentage (5%)
+        Maximum drawdown percentage (5%).
     """
 
     # Required parameters
     instrument_id: InstrumentId
     bar_type: BarType
 
-    # FactorExp indicator parameters
-    ema_fast_period: PositiveInt = 12
-    ema_slow_period: PositiveInt = 26
-    volatility_period: PositiveInt = 20
-    momentum_period: PositiveInt = 14
+    # Shared factor configuration
+    factor_config_path: str = "../factorexp_backtest/configs/factors.yaml"
+    factor_id: str = "vwap_return_std"
+    zscore_period: PositiveInt = 5760
+    clip_min: float = -2.0
+    clip_max: float = 2.0
+    min_signal_magnitude: PositiveFloat = 0.05
 
     # Professional capital management
     max_account_usage_pct: PositiveFloat = 0.8
@@ -80,12 +80,6 @@ class FactorExpLiveStrategyConfig(StrategyConfig, frozen=True):
     # Risk management parameters
     stop_loss_pct: PositiveFloat = 0.015
     take_profit_pct: PositiveFloat = 0.03
-    volatility_threshold: PositiveFloat = 0.001
-
-    # Signal thresholds
-    ema_ratio_long_threshold: PositiveFloat = 1.005
-    ema_ratio_short_threshold: PositiveFloat = 0.995
-    momentum_threshold: PositiveFloat = 0.001
 
     # Trading parameters
     use_market_orders: bool = True
@@ -145,6 +139,9 @@ class FactorExpLiveStrategyConfig(StrategyConfig, frozen=True):
 
             # Conservative absolute exposure (should not be reached for small accounts)
             "max_absolute_exposure": max(account_size_usd * 2, 500.0),
+
+            # Require a slightly higher factor magnitude to trade very small accounts
+            "min_signal_magnitude": 0.1,
         }
 
         # Merge with any user overrides

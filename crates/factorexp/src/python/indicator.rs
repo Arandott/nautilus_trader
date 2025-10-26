@@ -42,13 +42,14 @@ pub struct PyFactorExpIndicator {
 
 #[pymethods]
 impl PyFactorExpIndicator {
-    /// Creates a new FactorExpIndicator from an expression string or compiled AST.
+    /// Creates a new FactorExpIndicator from an expression string.
+    ///
+    /// The period (warmup requirement) is automatically calculated from the expression tree,
+    /// accounting for nested window operators correctly.
     #[new]
-    #[pyo3(signature = (expression, period=None, price_type=None))]
+    #[pyo3(signature = (expression, price_type=None))]
     fn py_new(
-        py: Python,
         expression: &str,
-        period: Option<usize>,
         price_type: Option<&str>,
     ) -> PyResult<Self> {
         // Parse expression directly in Rust using the full parser
@@ -64,8 +65,8 @@ impl PyFactorExpIndicator {
         let expr_node = crate::parser::convert_to_expr_node(parsed_expr);
         let compiled = CompiledExpression::new(expr_node);
 
-        // Auto-detect period if not provided
-        let period = period.unwrap_or(compiled.metadata.max_window.max(1));
+        // Auto-detect period from expression metadata (accounts for nested windows)
+        let period = compiled.metadata.max_window.max(1);
 
         // Parse price_type string to PriceType enum
         let price_type = if let Some(price_type_str) = price_type {
@@ -89,6 +90,22 @@ impl PyFactorExpIndicator {
     /// Returns the lookback period.
     #[getter]
     fn period(&self) -> usize {
+        self.inner.period
+    }
+
+    /// Returns the maximum window size required by the expression.
+    /// This is the true warmup requirement calculated from the expression tree.
+    #[getter]
+    fn max_window(&self) -> usize {
+        // The period already reflects max_window from line 68 initialization
+        // But we expose this explicitly for clarity
+        self.inner.period
+    }
+
+    /// Returns the required history count for full indicator initialization.
+    /// Alias for max_window for better API semantics.
+    #[getter]
+    fn required_history(&self) -> usize {
         self.inner.period
     }
 

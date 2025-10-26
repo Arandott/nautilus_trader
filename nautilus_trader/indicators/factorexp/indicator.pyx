@@ -52,12 +52,16 @@ cdef class FactorExpIndicator(Indicator):
     ----------
     expression : str
         The FactorExp expression to evaluate (e.g., "TS_Mean($close, 20)")
-    period : int, optional
-        The maximum lookback period required by the expression (auto-detected if not provided)
     price_type : PriceType, default=PriceType.LAST
         The price type to use for quote tick data
     name : str, optional
         Custom name for the indicator (defaults to the expression)
+
+    Notes
+    -----
+    The warmup period (required history) is automatically calculated from the
+    expression tree, accounting for nested window operators. Use the `required_history`
+    property to query how many bars are needed before the indicator is fully initialized.
     
     Raises
     ------
@@ -86,7 +90,6 @@ cdef class FactorExpIndicator(Indicator):
     cdef object _rust_indicator
     cdef str _expression
     cdef str _name
-    cdef readonly int period
     cdef readonly double value
     cdef readonly uint64_t count
     cdef readonly bint initialized
@@ -94,41 +97,38 @@ cdef class FactorExpIndicator(Indicator):
     def __init__(
         self,
         str expression not None,
-        int period = 0,
         PriceType price_type = PriceType.LAST,
         str name = None,
     ):
-        """Initialize the FactorExpIndicator."""
+        """
+        Initialize the FactorExpIndicator.
+
+        The warmup period is automatically calculated from the expression tree.
+        """
         Condition.not_none(expression, "expression")
         Condition.not_empty(expression.strip(), "expression")
-        
+
         if RustFactorExpIndicator is None:
             raise RuntimeError(
                 "FactorExp Rust module not available. "
                 "Please ensure the crate is compiled with 'make build' or 'make install'."
             )
-        
+
         # Create Rust indicator - directly pass expression string
-        # Rust handles all parsing internally
+        # Rust handles all parsing and warmup calculation internally
         # Convert Cython PriceType to string for PyO3 compatibility
         price_type_str = self._price_type_to_string(price_type)
 
-        # Create indicator - Rust will parse and compile internally
-        if period > 0:
-            self._rust_indicator = RustFactorExpIndicator(expression, period, price_type_str)
-        else:
-            self._rust_indicator = RustFactorExpIndicator(expression, price_type=price_type_str)
-        
-        # Get actual period from Rust
-        self.period = self._rust_indicator.period
-        
-        # Initialize base class
-        super().__init__(params=[expression, self.period])
-        
+        # Create indicator - Rust will auto-detect warmup from expression tree
+        self._rust_indicator = RustFactorExpIndicator(expression, price_type=price_type_str)
+
+        # Initialize base class with expression and auto-detected warmup
+        super().__init__(params=[expression, self._rust_indicator.required_history])
+
         # Store properties
         self._expression = expression
         self._name = name or self._generate_name(expression)
-        
+
         # Initialize state
         self.value = 0.0
         self.count = 0
@@ -171,13 +171,46 @@ cdef class FactorExpIndicator(Indicator):
     def name(self) -> str:
         """
         Return the indicator name.
-        
+
         Returns
         -------
         str
-        
+
         """
         return self._name
+
+    @property
+    def max_window(self) -> int:
+        """
+        Return the maximum window size required by the expression.
+
+        This is the true warmup requirement calculated from the expression tree,
+        accounting for nested window operators. For example,
+        TS_Mean(TS_Mean($close, 5), 5) requires 9 bars, not 5.
+
+        Returns
+        -------
+        int
+            The maximum number of bars needed to warm up the indicator
+
+        """
+        return self._rust_indicator.max_window
+
+    @property
+    def required_history(self) -> int:
+        """
+        Return the required history count for full indicator initialization.
+
+        This is an alias for max_window with clearer semantics for warmup purposes.
+        Use this property when requesting historical data for indicator warmup.
+
+        Returns
+        -------
+        int
+            The number of historical bars needed before the indicator is fully initialized
+
+        """
+        return self._rust_indicator.required_history
     
     cpdef void handle_quote_tick(self, QuoteTick tick):
         """
@@ -252,37 +285,35 @@ cdef class FactorExpIndicator(Indicator):
         self._set_initialized(False)
     
     def __repr__(self) -> str:
-        return f"{self._name}(period={self.period})"
+        return f"{self._name}(required_history={self.required_history})"
 
 
 # Factory function for creating indicators from expressions
 cpdef FactorExpIndicator create_factor_indicator(
     str expression,
-    int period = 0,
     PriceType price_type = PriceType.LAST,
     str name = None,
 ):
     """
     Create a FactorExpIndicator from an expression.
-    
+
     This is a convenience function that creates and returns a new
-    FactorExpIndicator instance.
-    
+    FactorExpIndicator instance. The warmup period is automatically
+    calculated from the expression tree.
+
     Parameters
     ----------
     expression : str
         The FactorExp expression to evaluate
-    period : int, optional
-        The lookback period (auto-detected if not provided)
     price_type : PriceType, default=PriceType.LAST
         The price type for quote ticks
     name : str, optional
         Custom name for the indicator
-    
+
     Returns
     -------
     FactorExpIndicator
-    
+
     Examples
     --------
     >>> indicator = create_factor_indicator("TS_Mean($close, 20)")
@@ -290,6 +321,6 @@ cpdef FactorExpIndicator create_factor_indicator(
     ...     "TS_Mean($close, 10) / TS_Mean($close, 30)",
     ...     name="Momentum"
     ... )
-    
+
     """
-    return FactorExpIndicator(expression, period, price_type, name)
+    return FactorExpIndicator(expression, price_type, name)

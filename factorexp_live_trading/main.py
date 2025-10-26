@@ -14,7 +14,9 @@ from pathlib import Path
 
 # Add project root to Python path
 project_root = Path(__file__).parent
+repo_root = project_root.parent
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(repo_root))
 
 # Local imports
 from config.security import SecureConfigManager
@@ -64,6 +66,8 @@ class FactorExpTradingSystem:
         # System state
         self.is_running = False
         self.api_credentials: dict = {}
+        self._config_manager: SecureConfigManager | None = None
+        self._factor_params: dict | None = None
 
         # Data request tracking to prevent duplicate API calls
         self._requested_bar_types: set = set()
@@ -160,11 +164,18 @@ class FactorExpTradingSystem:
         try:
             # Use SecureConfigManager to load credentials
             project_root = Path(__file__).parent
-            config_manager = SecureConfigManager(project_root)
-            self.api_credentials = config_manager.get_api_credentials(use_encrypted=False)
+            self._config_manager = SecureConfigManager(project_root)
+            self.api_credentials = self._config_manager.get_api_credentials(use_encrypted=False)
 
             # Validate credentials using the config manager
-            config_manager.validate_credentials(self.api_credentials)
+            self._config_manager.validate_credentials(self.api_credentials)
+
+            # Cache factor configuration parameters for strategy initialization
+            try:
+                self._factor_params = self._config_manager.get_factorexp_parameters()
+            except Exception as exc:
+                print(f"⚠️  Failed to load FactorExp configuration parameters: {exc}")
+                self._factor_params = None
 
             trading_mode = "TESTNET" if self.api_credentials["testnet"] else "LIVE"
             print(f"✅ API credentials loaded - Mode: {trading_mode}")
@@ -182,9 +193,20 @@ class FactorExpTradingSystem:
         # Import FactorExpLiveStrategyConfig locally to avoid dependency issues
         from config.strategy_config import FactorExpLiveStrategyConfig
 
+        factor_params = self._factor_params or {}
+        if not factor_params:
+            factor_params = {
+                "factor_config_path": "../factorexp_backtest/configs/factors.yaml",
+                "factor_id": "vwap_return_std",
+                "zscore_period": 5760,
+                "clip_min": -2.0,
+                "clip_max": 2.0,
+                "min_signal_magnitude": 0.05,
+            }
+
         for instrument_str in self.instruments:
             instrument_id = InstrumentId.from_str(instrument_str)
-            bar_type = BarType.from_str(f"{instrument_str}-1-MINUTE-LAST-EXTERNAL")
+            bar_type = BarType.from_str(f"{instrument_str}-15-MINUTE-LAST-INTERNAL")
 
             # Create strategy configuration using official FactorExpLiveStrategyConfig
             if self.account_size_usd and self.account_size_usd <= 500:
@@ -193,6 +215,7 @@ class FactorExpTradingSystem:
                     instrument_id=instrument_id,
                     bar_type=bar_type,
                     account_size_usd=self.account_size_usd,
+                    **factor_params,
                 )
                 print(f"📊 Small account config for {instrument_str} (${self.account_size_usd:.0f}):")
             else:
@@ -200,6 +223,7 @@ class FactorExpTradingSystem:
                 strategy_config = FactorExpLiveStrategyConfig(
                     instrument_id=instrument_id,
                     bar_type=bar_type,
+                    **factor_params,
                 )
                 print(f"📊 Standard config for {instrument_str}:")
 
@@ -208,6 +232,13 @@ class FactorExpTradingSystem:
             print(f"  Max absolute exposure: ${strategy_config.max_absolute_exposure:,.0f}")
             print(f"  Position risk: {strategy_config.position_risk_pct:.1%}")
             print(f"  Stop loss: {strategy_config.stop_loss_pct:.1%}")
+            print(
+                f"  Factor: {strategy_config.factor_id} | "
+                f"ZScore={strategy_config.zscore_period} | "
+                f"Clip=({strategy_config.clip_min}, {strategy_config.clip_max}) | "
+                f"MinSignal={strategy_config.min_signal_magnitude}"
+            )
+            print(f"  Factor config path: {strategy_config.factor_config_path}")
 
             # Create strategy instance
             strategy = FactorExpLiveStrategy(strategy_config)

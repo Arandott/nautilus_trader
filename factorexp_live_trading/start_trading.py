@@ -93,10 +93,10 @@ def check_environment():
 
     # Check new configuration system
     try:
-        from config.strategy_config import FactorExpLiveStrategyConfig
+        from factorexp_live_trading.config.strategy_config import FactorExpLiveStrategyConfig  # noqa: F401
         checks.append(("✅", "New StrategyConfig architecture available"))
-    except ImportError:
-        msg = "StrategyConfig system not available"
+    except ImportError as exc:
+        msg = f"StrategyConfig system not available ({exc})"
         checks.append(("❌", msg))
         failures.append(("❌", msg))
 
@@ -317,7 +317,7 @@ async def main():
 
     try:
         # Import and run main system
-        from main import main as run_trading_system
+        from factorexp_live_trading.main import main as run_trading_system
         await run_trading_system()
 
     except KeyboardInterrupt:

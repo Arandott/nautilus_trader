@@ -16,7 +16,7 @@ from typing import Optional
 from factorexp_backtest.configs.config_loader import FactorConfigLoader
 
 # Official strategy configuration
-from config.strategy_config import FactorExpLiveStrategyConfig
+from factorexp_live_trading.config.strategy_config import FactorExpLiveStrategyConfig
 
 from nautilus_trader.common.enums import LogColor
 

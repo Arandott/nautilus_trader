@@ -19,8 +19,8 @@ sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(repo_root))
 
 # Local imports
-from config.security import SecureConfigManager
-from strategies.factorexp_live_strategy import FactorExpLiveStrategy
+from factorexp_live_trading.config.security import SecureConfigManager
+from factorexp_live_trading.strategies.factorexp_live_strategy import FactorExpLiveStrategy
 
 from nautilus_trader.adapters.binance.factories import BinanceLiveDataClientFactory
 from nautilus_trader.adapters.binance.factories import BinanceLiveExecClientFactory
@@ -122,7 +122,7 @@ class FactorExpTradingSystem:
                 return False
 
             # Step 2: Create trading node configuration with precision instrument loading
-            from config.trading_config import create_trading_node_config
+            from factorexp_live_trading.config.trading_config import create_trading_node_config
             node_config = create_trading_node_config(self.api_credentials, self.instruments)
 
             # Step 3: Create and configure trading node
@@ -191,7 +191,7 @@ class FactorExpTradingSystem:
         print("🧠 Initializing FactorExp strategies with StrategyConfig architecture...")
 
         # Import FactorExpLiveStrategyConfig locally to avoid dependency issues
-        from config.strategy_config import FactorExpLiveStrategyConfig
+        from factorexp_live_trading.config.strategy_config import FactorExpLiveStrategyConfig
 
         factor_params = self._factor_params or {}
         if not factor_params:

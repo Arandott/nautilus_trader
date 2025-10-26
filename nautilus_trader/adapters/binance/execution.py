@@ -1050,8 +1050,7 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
             if nautilus_symbol not in self._unsupported_symbols:
                 self._unsupported_symbols.add(nautilus_symbol)
                 self._log.warning(
-                    "Skipped non-ASCII Binance symbol %s; merge latest dev for unicode support",
-                    symbol,
+                    f"Skipped non-ASCII Binance symbol {symbol}; merge latest dev for unicode support",
                 )
                 # TODO: Remove once unicode symbol support from dev branch is merged.
             return None

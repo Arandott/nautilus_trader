@@ -288,7 +288,17 @@ class FactorExpTradingSystem:
             print("\n📊 Strategy Status:")
             for instrument, strategy in self.strategies.items():
                 summary = strategy.get_strategy_summary()
-                print(f"  • {instrument}: {summary['current_position']} - Indicators Ready: {summary['indicators_ready']}")
+                exposure = summary.get("current_exposure_usd")
+                balance_used = summary.get("balance_used_pct")
+                indicator_ready = summary.get("factor", {}).get("indicator_ready", False)
+
+                exposure_str = f"{exposure:.2f} USD" if isinstance(exposure, (int, float)) else str(exposure)
+                balance_str = f"{balance_used:.2f}%" if isinstance(balance_used, (int, float)) else str(balance_used)
+
+                print(
+                    f"  • {instrument}: exposure={exposure_str}, "
+                    f"balance_used={balance_str} | Indicator Ready: {indicator_ready}"
+                )
 
             return True
 

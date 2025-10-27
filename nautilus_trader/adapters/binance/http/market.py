@@ -52,9 +52,6 @@ from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.identifiers import InstrumentId
 
 
-_logger = logging.getLogger(__name__)
-
-
 class BinancePingHttp(BinanceHttpEndpoint):
     """
     Endpoint for testing connectivity to the REST API.
@@ -638,12 +635,14 @@ class BinanceMarketHttpAPI:
         *,
         use_vision_bars: bool = False,
         use_vision_trades: bool = False,
+        logger: logging.Logger | None = None,
     ):
         PyCondition.not_none(client, "client")
         self.client = client
         self._account_type = account_type
         self._use_vision_bars = use_vision_bars
         self._use_vision_trades = use_vision_trades
+        self._log = logger or logging.getLogger(__name__)
 
         if account_type.is_spot_or_margin:
             self.base_endpoint = "/api/v3/"
@@ -667,6 +666,10 @@ class BinanceMarketHttpAPI:
         self._endpoint_ticker_24hr = BinanceTicker24hrHttp(client, self.base_endpoint)
         self._endpoint_ticker_price = BinanceTickerPriceHttp(client, self.base_endpoint)
         self._endpoint_ticker_book = BinanceTickerBookHttp(client, self.base_endpoint)
+
+    def set_logger(self, logger: logging.Logger | None) -> None:
+        if logger is not None:
+            self._log = logger
 
     async def ping(self) -> dict:
         """
@@ -809,16 +812,16 @@ class BinanceMarketHttpAPI:
                     ts_init=ts_init,
                     start_ms=current_start,
                     end_ms=final_end_ms if end_time != sys.maxsize else None,
-                    progress_logger=_logger,
+                    progress_logger=self._log,
                 )
             except BinanceVisionNotFound:
-                _logger.debug(
+                self._log.debug(
                     "Vision aggTrades unavailable for %s from %s",
                     instrument_id,
                     current_start,
                 )
             except Exception:  # pragma: no cover - network/runtime errors
-                _logger.warning(
+                self._log.warning(
                     "Vision aggTrades download failed for %s", instrument_id, exc_info=True
                 )
             else:
@@ -994,14 +997,14 @@ class BinanceMarketHttpAPI:
                     ts_init=ts_init,
                     start_ms=current_start,
                     end_ms=end_time_ms if end_time is not None else None,
-                    progress_logger=_logger,
+                    progress_logger=self._log,
                 )
             except BinanceVisionNotFound:
-                _logger.debug(
+                self._log.debug(
                     "Vision klines unavailable for %s from %s", request_symbol, current_start
                 )
             except Exception:  # pragma: no cover - network/runtime errors
-                _logger.warning(
+                self._log.warning(
                     "Vision klines download failed for %s", request_symbol, exc_info=True
                 )
             else:
@@ -1009,7 +1012,7 @@ class BinanceMarketHttpAPI:
                     all_bars.extend(vision_result.bars)
                     first_ts = vision_result.bars[0].ts_event
                     last_ts = vision_result.bars[-1].ts_event
-                    _logger.info(
+                    self._log.info(
                         "Vision klines downloaded %s bars for %s covering %s to %s",
                         len(vision_result.bars),
                         request_symbol,

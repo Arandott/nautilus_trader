@@ -181,6 +181,9 @@ class BinanceCommonDataClient(LiveMarketDataClient):
         self._http_client = client
         self._http_market = market
 
+        if hasattr(self._http_market, "set_logger"):
+            self._http_market.set_logger(self._log)
+
         # Enum parser
         self._enum_parser = enum_parser
 

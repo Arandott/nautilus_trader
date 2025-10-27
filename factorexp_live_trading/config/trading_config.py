@@ -18,6 +18,7 @@ from nautilus_trader.config import TradingNodeConfig
 from nautilus_trader.live.config import LiveRiskEngineConfig
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import TraderId
+from nautilus_trader.persistence.config import DataCatalogConfig
 from nautilus_trader.persistence.config import StreamingConfig
 
 
@@ -43,7 +44,9 @@ class TradingConfig:
         self.enable_structured_logging = os.getenv("ENABLE_STRUCTURED_LOGGING", "true").lower() == "true"
 
         # Catalog persistence controls
-        self.catalog_path = Path(os.getenv("FACTOREXP_CATALOG_PATH", "./data/catalog")).expanduser()
+        default_catalog_root = Path(__file__).resolve().parent.parent / "data" / "catalog"
+        env_catalog = os.getenv("FACTOREXP_CATALOG_PATH")
+        self.catalog_path = Path(env_catalog).expanduser() if env_catalog else default_catalog_root
         self.catalog_path.mkdir(parents=True, exist_ok=True)
         self.update_warmup_catalog = os.getenv("WARMUP_UPDATE_CATALOG", "true").lower() in {"1", "true", "yes", "on"}
 
@@ -162,6 +165,13 @@ def create_trading_node_config(api_credentials: dict[str, str | None], instrumen
             timestamps_as_iso8601=True,
             flush_on_start=False,
         ),
+
+        catalogs=[
+            DataCatalogConfig(
+                path=str(config.catalog_path),
+                name="warmup_catalog",
+            ),
+        ],
 
         # Streaming configuration - lightweight to avoid API rate limits
         streaming=StreamingConfig(

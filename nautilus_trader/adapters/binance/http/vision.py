@@ -122,6 +122,22 @@ def _read_csv_rows(zf: ZipFile) -> Sequence[list[str]]:
     return rows
 
 
+def _render_progress_bar(current: int, total: int, width: int = 20) -> str:
+    if total <= 0:
+        return "[####################] 100.0% (0/0)"
+    fraction = min(max(current / total, 0.0), 1.0)
+    filled = min(width, max(0, int(round(fraction * width))))
+    if filled == 0 and current > 0:
+        filled = 1
+    bar = "#" * filled + "." * (width - filled)
+    return f"[{bar}] {fraction * 100:5.1f}% ({current}/{total})"
+
+
+def _log_vision_progress(kind: str, symbol: str, current: int, total: int) -> None:
+    progress = _render_progress_bar(current, total)
+    logger.info("Vision %s download progress for %s %s", kind, symbol, progress)
+
+
 async def download_vision_bars(
     *,
     account_type: BinanceAccountType,
@@ -149,6 +165,8 @@ async def download_vision_bars(
 
     bars: list[BinanceBar] = []
     last_open_time_ms: int | None = None
+    total_days = max((end_date - start_date).days + 1, 1)
+    processed_days = 0
 
     async with aiohttp.ClientSession(timeout=_VISION_SESSION_TIMEOUT) as session:
         async def _download_day(day: datetime) -> None:
@@ -191,7 +209,10 @@ async def download_vision_bars(
                 last_open_time_ms = open_time
 
         try:
-            for day in _date_range(datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc), datetime.combine(end_date, datetime.min.time(), tzinfo=timezone.utc)):
+            for day in _date_range(
+                datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc),
+                datetime.combine(end_date, datetime.min.time(), tzinfo=timezone.utc),
+            ):
                 try:
                     await _download_day(day)
                 except BinanceVisionNotFound:
@@ -199,6 +220,14 @@ async def download_vision_bars(
                         raise
                     logger.info("Vision klines missing from %s onwards for %s, stopping.", day.date(), vision_symbol)
                     break
+                else:
+                    processed_days += 1
+                    _log_vision_progress(
+                        kind=f"klines {interval.value}",
+                        symbol=vision_symbol,
+                        current=processed_days,
+                        total=total_days,
+                    )
         except BinanceVisionNotFound:
             # Surface to caller so REST fallback can kick in immediately
             raise
@@ -238,6 +267,8 @@ async def download_vision_agg_trade_ticks(
     ticks: list[TradeTick] = []
     last_trade_id: int | None = None
     last_timestamp_ms: int | None = None
+    total_days = max((end_date - start_date).days + 1, 1)
+    processed_days = 0
 
     async with aiohttp.ClientSession(timeout=_VISION_SESSION_TIMEOUT) as session:
         async def _download_day(day: datetime) -> None:
@@ -280,7 +311,10 @@ async def download_vision_agg_trade_ticks(
                 last_timestamp_ms = agg_trade.T
 
         try:
-            for day in _date_range(datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc), datetime.combine(end_date, datetime.min.time(), tzinfo=timezone.utc)):
+            for day in _date_range(
+                datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc),
+                datetime.combine(end_date, datetime.min.time(), tzinfo=timezone.utc),
+            ):
                 try:
                     await _download_day(day)
                 except BinanceVisionNotFound:
@@ -288,6 +322,14 @@ async def download_vision_agg_trade_ticks(
                         raise
                     logger.info("Vision aggTrades missing from %s onwards for %s, stopping.", day.date(), vision_symbol)
                     break
+                else:
+                    processed_days += 1
+                    _log_vision_progress(
+                        kind="aggTrades",
+                        symbol=vision_symbol,
+                        current=processed_days,
+                        total=total_days,
+                    )
         except BinanceVisionNotFound:
             raise
 

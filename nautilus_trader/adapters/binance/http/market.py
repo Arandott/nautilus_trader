@@ -16,6 +16,7 @@
 import logging
 import sys
 import time
+from datetime import datetime, timezone
 
 import msgspec
 
@@ -1004,6 +1005,19 @@ class BinanceMarketHttpAPI:
             else:
                 if vision_result.bars:
                     all_bars.extend(vision_result.bars)
+                    first_ts = vision_result.bars[0].ts_event
+                    last_ts = vision_result.bars[-1].ts_event
+                    _logger.info(
+                        "Vision klines downloaded %s bars for %s covering %s to %s",
+                        len(vision_result.bars),
+                        request_symbol,
+                        datetime.fromtimestamp(
+                            first_ts / 1_000_000_000, tz=timezone.utc
+                        ).isoformat(),
+                        datetime.fromtimestamp(
+                            last_ts / 1_000_000_000, tz=timezone.utc
+                        ).isoformat(),
+                    )
                 if vision_result.last_open_time_ms is not None:
                     current_start = max(vision_result.last_open_time_ms + 1, current_start)
                     if vision_result.last_open_time_ms >= end_time_ms:

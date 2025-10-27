@@ -138,6 +138,7 @@ class FactorExpLiveStrategy(Strategy):
         self._trade_count_in_window = 0
         self._trade_count_window_start_ns: int | None = None
         self._trade_count_last_flush_ns: int | None = None
+        self._indicator_progress_timer_name: str | None = None
 
         # Data request coordination flag (set by trading system)
         self._should_request_historical_data = True
@@ -225,6 +226,20 @@ class FactorExpLiveStrategy(Strategy):
         except Exception as exc:
             self._trade_count_timer_name = None
             self.log.warning(f"Unable to start trade tick monitor: {exc}")
+
+        indicator_timer_name = f"{self.id.value}-indicator-progress"
+        try:
+            self.clock.set_timer(
+                name=indicator_timer_name,
+                interval=timedelta(minutes=1),
+                callback=self._on_indicator_progress_timer,
+                fire_immediately=False,
+            )
+            self._indicator_progress_timer_name = indicator_timer_name
+            self.log.info("Indicator warmup monitor started (60s interval).")
+        except Exception as exc:
+            self._indicator_progress_timer_name = None
+            self.log.warning(f"Unable to start indicator warmup monitor: {exc}")
 
         # Ensure trade ticks feed into on_trade_tick for monitoring
         try:
@@ -922,6 +937,9 @@ class FactorExpLiveStrategy(Strategy):
     def _on_trade_count_timer(self, event: TimeEvent) -> None:
         self._flush_trade_count(event.ts_event, reason="timer")
 
+    def _on_indicator_progress_timer(self, event: TimeEvent) -> None:
+        self._log_indicator_progress(force=True)
+
     def _flush_trade_count(self, end_ns: int, reason: str) -> None:
         window_start_ns = self._trade_count_window_start_ns
         if window_start_ns is None:
@@ -981,6 +999,12 @@ class FactorExpLiveStrategy(Strategy):
         self.log.info(
             f"Indicator warmup progress: {count}/{required} (remaining {remaining})"
         )
+        if remaining == 0 and self._indicator_progress_timer_name:
+            try:
+                self.clock.cancel_timer(self._indicator_progress_timer_name)
+            except Exception as exc:
+                self.log.warning(f"Unable to cancel indicator warmup monitor: {exc}")
+            self._indicator_progress_timer_name = None
 
     def on_quote_tick(self, tick: QuoteTick):
         """Handle quote tick data."""
@@ -1074,6 +1098,12 @@ class FactorExpLiveStrategy(Strategy):
             except Exception as exc:
                 self.log.warning(f"Unable to cancel trade count timer: {exc}")
             self._trade_count_timer_name = None
+        if self._indicator_progress_timer_name:
+            try:
+                self.clock.cancel_timer(self._indicator_progress_timer_name)
+            except Exception as exc:
+                self.log.warning(f"Unable to cancel indicator warmup monitor: {exc}")
+            self._indicator_progress_timer_name = None
 
         self.log.info("FactorExpLiveStrategy stopped")
         self.show_portfolio_info("Portfolio state (Strategy stopped)")
@@ -1098,6 +1128,12 @@ class FactorExpLiveStrategy(Strategy):
         self._latest_factor_value = None
         self._last_bar_close = None
         self._last_indicator_remaining = None
+        if self._indicator_progress_timer_name:
+            try:
+                self.clock.cancel_timer(self._indicator_progress_timer_name)
+            except Exception:
+                pass
+            self._indicator_progress_timer_name = None
 
         for state in self._segment_states:
             state.current_qty = 0.0

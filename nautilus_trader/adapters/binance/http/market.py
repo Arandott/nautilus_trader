@@ -1031,12 +1031,30 @@ class BinanceMarketHttpAPI:
             if current_start is not None:
                 request_end_time = min(current_start + max_interval, end_time_ms)
 
+            if current_start is not None:
+                chunk_start_iso = datetime.fromtimestamp(
+                    current_start / 1_000, tz=timezone.utc
+                ).isoformat()
+            else:
+                chunk_start_iso = "unspecified"
+
+            if request_end_time != sys.maxsize:
+                chunk_end_iso = datetime.fromtimestamp(
+                    request_end_time / 1_000, tz=timezone.utc
+                ).isoformat()
+            else:
+                chunk_end_iso = "open-ended"
+
             klines = await self.query_klines(
                 symbol=str(request_symbol),
                 interval=interval,
                 limit=limit,
                 start_time=current_start,
                 end_time=request_end_time if request_end_time != sys.maxsize else None,
+            )
+
+            self._log.info(
+                f"REST klines chunk for {request_symbol}: {chunk_start_iso} → {chunk_end_iso} count={len(klines)}"
             )
 
             if not klines:

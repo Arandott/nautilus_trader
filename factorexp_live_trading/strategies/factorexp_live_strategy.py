@@ -14,6 +14,7 @@ from datetime import timedelta
 from datetime import timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from typing import Dict
 from typing import Optional
 
@@ -425,6 +426,7 @@ class FactorExpLiveStrategy(Strategy):
                         f"Warmup catalog missing {len(coverage.missing)} interval(s) "
                         f"for {bar_type}; requesting gap fill.",
                     )
+                self.log.debug(f"Warmup catalog missing intervals: {coverage.missing}")
 
                 warmup_params = {
                     "warmup_catalog_start_ns": coverage.start_ns,
@@ -939,6 +941,30 @@ class FactorExpLiveStrategy(Strategy):
         self._trade_count_window_start_ns = None
         self._trade_count_last_flush_ns = end_ns
 
+    def on_historical_data(self, data: Any) -> None:
+        """Log delivered historical data ranges for diagnostics."""
+        def _log_bar_chunk(chunk: list[Bar]) -> None:
+            if not chunk:
+                return
+            first_iso = datetime.fromtimestamp(
+                chunk[0].ts_event / 1_000_000_000, tz=timezone.utc
+            ).isoformat()
+            last_iso = datetime.fromtimestamp(
+                chunk[-1].ts_event / 1_000_000_000, tz=timezone.utc
+            ).isoformat()
+            self.log.info(
+                f"Historical bars delivered ({chunk[0].bar_type}): "
+                f"first={first_iso} last={last_iso} count={len(chunk)}"
+            )
+
+        if isinstance(data, list):
+            if data and isinstance(data[0], Bar):
+                _log_bar_chunk(data)
+        elif isinstance(data, dict):
+            for value in data.values():
+                if isinstance(value, list) and value and isinstance(value[0], Bar):
+                    _log_bar_chunk(value)
+
     def on_quote_tick(self, tick: QuoteTick):
         """Handle quote tick data."""
         # TODO: 恢复 quote tick 订阅，并在此实现逐笔风控检查
@@ -963,6 +989,11 @@ class FactorExpLiveStrategy(Strategy):
             return
 
         if not self._indicators_ready():
+            if self._factor_indicator is not None:
+                self.log.debug(
+                    f"Indicator warmup progress: "
+                    f"{self._factor_indicator.count}/{self._factor_indicator.required_history}"
+                )
             self.log.debug("Indicators not ready yet")
             return
 

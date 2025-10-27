@@ -143,7 +143,9 @@ def _log_vision_progress(
 ) -> None:
     progress = _render_progress_bar(current, total)
     target_logger = progress_logger or logger
-    target_logger.info("Vision %s download progress for %s %s", kind, symbol, progress)
+    target_logger.info(
+        f"Vision {kind} download progress for {symbol} {progress}"
+    )
 
 
 async def download_vision_bars(

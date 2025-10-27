@@ -816,13 +816,11 @@ class BinanceMarketHttpAPI:
                 )
             except BinanceVisionNotFound:
                 self._log.debug(
-                    "Vision aggTrades unavailable for %s from %s",
-                    instrument_id,
-                    current_start,
+                    f"Vision aggTrades unavailable for {instrument_id} from {current_start}"
                 )
-            except Exception:  # pragma: no cover - network/runtime errors
+            except Exception as exc:  # pragma: no cover - network/runtime errors
                 self._log.warning(
-                    "Vision aggTrades download failed for %s", instrument_id, exc_info=True
+                    f"Vision aggTrades download failed for {instrument_id}: {exc}"
                 )
             else:
                 if vision_result.ticks:
@@ -1001,11 +999,11 @@ class BinanceMarketHttpAPI:
                 )
             except BinanceVisionNotFound:
                 self._log.debug(
-                    "Vision klines unavailable for %s from %s", request_symbol, current_start
+                    f"Vision klines unavailable for {request_symbol} from {current_start}"
                 )
-            except Exception:  # pragma: no cover - network/runtime errors
+            except Exception as exc:  # pragma: no cover - network/runtime errors
                 self._log.warning(
-                    "Vision klines download failed for %s", request_symbol, exc_info=True
+                    f"Vision klines download failed for {request_symbol}: {exc}"
                 )
             else:
                 if vision_result.bars:
@@ -1013,15 +1011,10 @@ class BinanceMarketHttpAPI:
                     first_ts = vision_result.bars[0].ts_event
                     last_ts = vision_result.bars[-1].ts_event
                     self._log.info(
-                        "Vision klines downloaded %s bars for %s covering %s to %s",
-                        len(vision_result.bars),
-                        request_symbol,
-                        datetime.fromtimestamp(
-                            first_ts / 1_000_000_000, tz=timezone.utc
-                        ).isoformat(),
-                        datetime.fromtimestamp(
-                            last_ts / 1_000_000_000, tz=timezone.utc
-                        ).isoformat(),
+                        "Vision klines downloaded "
+                        f"{len(vision_result.bars)} bars for {request_symbol} covering "
+                        f"{datetime.fromtimestamp(first_ts / 1_000_000_000, tz=timezone.utc).isoformat()} to "
+                        f"{datetime.fromtimestamp(last_ts / 1_000_000_000, tz=timezone.utc).isoformat()}"
                     )
                 if vision_result.last_open_time_ms is not None:
                     current_start = max(vision_result.last_open_time_ms + 1, current_start)

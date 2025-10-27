@@ -812,6 +812,7 @@ class BinanceMarketHttpAPI:
                     ts_init=ts_init,
                     start_ms=current_start,
                     end_ms=final_end_ms if end_time != sys.maxsize else None,
+                    display_symbol=instrument_id.value,
                     progress_logger=self._log,
                 )
             except BinanceVisionNotFound:
@@ -995,6 +996,7 @@ class BinanceMarketHttpAPI:
                     ts_init=ts_init,
                     start_ms=current_start,
                     end_ms=end_time_ms if end_time is not None else None,
+                    display_symbol=bar_type.instrument_id.value,
                     progress_logger=self._log,
                 )
             except BinanceVisionNotFound:

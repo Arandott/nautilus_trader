@@ -9,6 +9,9 @@ All FactorExp operators have been verified against the actual implementation.
 
 import os
 from dataclasses import dataclass
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Dict
@@ -22,6 +25,7 @@ from factorexp_live_trading.components.warmup_catalog import WarmupCoverage
 from factorexp_live_trading.config.strategy_config import FactorExpLiveStrategyConfig
 
 from nautilus_trader.common.enums import LogColor
+from nautilus_trader.common.component import TimeEvent
 
 # FactorExp imports - VERIFIED to exist
 from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
@@ -106,8 +110,6 @@ class FactorExpLiveStrategy(Strategy):
         self._latest_factor_value: float | None = None
 
         # Copy factor overrides from config (will be validated against defaults)
-        self._clip_min = float(config.clip_min)
-        self._clip_max = float(config.clip_max)
         self._zscore_period = int(config.zscore_period)
         self._min_signal_magnitude = float(config.min_signal_magnitude)
 
@@ -130,6 +132,11 @@ class FactorExpLiveStrategy(Strategy):
 
         # Strategy monitoring counters
         self._bar_count = 0
+        self._trade_count_timer_name: str | None = None
+        self._trade_count_interval_ns = 30 * 1_000_000_000  # 30 seconds in nanoseconds
+        self._trade_count_in_window = 0
+        self._trade_count_window_start_ns: int | None = None
+        self._trade_count_last_flush_ns: int | None = None
 
         # Data request coordination flag (set by trading system)
         self._should_request_historical_data = True
@@ -189,7 +196,7 @@ class FactorExpLiveStrategy(Strategy):
 
         self.log.info(
             f"Factor graph ready | factor_id={self._factor_id}, "
-            f"warmup={self._warmup_bars} bars, clip=({self._clip_min}, {self._clip_max})"
+            f"warmup={self._warmup_bars} bars"
         )
 
         if not self._initialize_segments():
@@ -198,6 +205,24 @@ class FactorExpLiveStrategy(Strategy):
 
         # Show initial portfolio state (following official patterns)
         self.show_portfolio_info("Portfolio state (Strategy started):")
+
+        # Initialize trade tick counting timer (30-second cadence)
+        self._trade_count_in_window = 0
+        self._trade_count_window_start_ns = None
+        self._trade_count_last_flush_ns = self._clock.timestamp_ns()
+        timer_name = f"{self.id.value}-trade-count"
+        try:
+            self.clock.set_timer(
+                name=timer_name,
+                interval=timedelta(seconds=30),
+                callback=self._on_trade_count_timer,
+                fire_immediately=False,
+            )
+            self._trade_count_timer_name = timer_name
+            self.log.info("Trade tick monitor started (30s interval).")
+        except Exception as exc:
+            self._trade_count_timer_name = None
+            self.log.warning(f"Unable to start trade tick monitor: {exc}")
 
     def _resolve_config_path(self, config_path: str) -> Path:
         """
@@ -257,26 +282,6 @@ class FactorExpLiveStrategy(Strategy):
             )
         else:
             self._zscore_period = default_zscore
-
-        default_clip_min = float(defaults.get("clip_min", self._clip_min))
-        default_clip_max = float(defaults.get("clip_max", self._clip_max))
-        if self._clip_min != default_clip_min or self._clip_max != default_clip_max:
-            self.log.warning(
-                "Clip bounds overridden by live configuration: "
-                f"({self._clip_min}, {self._clip_max}) vs catalog "
-                f"({default_clip_min}, {default_clip_max})."
-            )
-        else:
-            self._clip_min = default_clip_min
-            self._clip_max = default_clip_max
-
-        if self._clip_min >= self._clip_max:
-            self.log.warning(
-                f"Invalid clip bounds ({self._clip_min}, {self._clip_max}); "
-                f"reverting to catalog defaults ({default_clip_min}, {default_clip_max})."
-            )
-            self._clip_min = default_clip_min
-            self._clip_max = default_clip_max
 
         # Note: _warmup_bars will be set after indicator creation based on required_history
         # This ensures we get the true warmup requirement accounting for nested windows
@@ -360,8 +365,6 @@ class FactorExpLiveStrategy(Strategy):
         """Request historical bars to warm up the factor indicator."""
         if self._warmup_bars <= 0:
             return
-
-        from datetime import timedelta
 
         # TODO: Binance adapter 应补充批量/回退机制以保障大窗口 warmup，此处暂依赖上游改进
         bar_type = self.config.bar_type
@@ -906,13 +909,38 @@ class FactorExpLiveStrategy(Strategy):
             f"frozen={frozen}, depleted={depleted}, total_equity={total_equity:.2f}"
         )
 
+    def _on_trade_count_timer(self, event: TimeEvent) -> None:
+        self._flush_trade_count(event.ts_event, reason="timer")
+
+    def _flush_trade_count(self, end_ns: int, reason: str) -> None:
+        window_start_ns = self._trade_count_window_start_ns
+        if window_start_ns is None:
+            window_start_ns = self._trade_count_last_flush_ns
+            if window_start_ns is None:
+                window_start_ns = max(end_ns - self._trade_count_interval_ns, 0)
+
+        start_iso = datetime.fromtimestamp(
+            window_start_ns / 1_000_000_000, tz=timezone.utc
+        ).isoformat()
+        end_iso = datetime.fromtimestamp(end_ns / 1_000_000_000, tz=timezone.utc).isoformat()
+
+        self.log.info(
+            f"Trade ticks [{start_iso} → {end_iso}] count={self._trade_count_in_window} ({reason})"
+        )
+
+        self._trade_count_in_window = 0
+        self._trade_count_window_start_ns = None
+        self._trade_count_last_flush_ns = end_ns
+
     def on_quote_tick(self, tick: QuoteTick):
         """Handle quote tick data."""
         # TODO: 恢复 quote tick 订阅，并在此实现逐笔风控检查
 
     def on_trade_tick(self, tick: TradeTick):
         """Handle trade tick data."""
-        # TODO: 恢复 trade tick 订阅，并在此实现逐笔风控检查
+        if self._trade_count_window_start_ns is None:
+            self._trade_count_window_start_ns = tick.ts_event
+        self._trade_count_in_window += 1
 
     def on_bar(self, bar: Bar):
         """
@@ -936,15 +964,19 @@ class FactorExpLiveStrategy(Strategy):
         self._last_bar_close = price
 
         raw_value = float(self._factor_indicator.value)
-        if self._clip_min < self._clip_max:
-            factor_value = max(self._clip_min, min(self._clip_max, raw_value))
-        else:
-            factor_value = raw_value
+        factor_value = raw_value
 
         if abs(factor_value) < self._min_signal_magnitude:
             factor_value = 0.0
 
         self._latest_factor_value = factor_value
+
+        bar_time = datetime.fromtimestamp(
+            bar.ts_event / 1_000_000_000, tz=timezone.utc
+        ).isoformat()
+        self.log.info(
+            f"Factor value @ {bar_time}: raw={raw_value:.6f}, effective={factor_value:.6f}, close={price:.4f}"
+        )
 
         # Periodic portfolio monitoring (every 10 bars to avoid noise)
         if self._bar_count % 10 == 0:
@@ -980,6 +1012,15 @@ class FactorExpLiveStrategy(Strategy):
 
     def on_stop(self):
         """Stop hook ensuring segment ledger is flattened."""
+        now_ns = self._clock.timestamp_ns()
+        self._flush_trade_count(now_ns, reason="stop")
+        if self._trade_count_timer_name:
+            try:
+                self.clock.cancel_timer(self._trade_count_timer_name)
+            except Exception as exc:
+                self.log.warning(f"Unable to cancel trade count timer: {exc}")
+            self._trade_count_timer_name = None
+
         self.log.info("FactorExpLiveStrategy stopped")
         self.show_portfolio_info("Portfolio state (Strategy stopped)")
 
@@ -1188,8 +1229,6 @@ class FactorExpLiveStrategy(Strategy):
                 "id": self._factor_id,
                 "value": self._latest_factor_value,
                 "min_signal": self._min_signal_magnitude,
-                "clip_min": self._clip_min,
-                "clip_max": self._clip_max,
                 "required_history": self._warmup_bars,
                 "indicator_ready": self._indicators_ready(),
             },

@@ -143,9 +143,14 @@ def _log_vision_progress(
 ) -> None:
     progress = _render_progress_bar(current, total)
     target_logger = progress_logger or logger
-    target_logger.info(
-        f"Vision {kind} download progress for {symbol} {progress}"
-    )
+    if total <= 0:
+        target_logger.info(f"Vision {kind} download progress for {symbol} {progress}")
+        return
+
+    step = max(total // 10, 1)
+    should_emit = current == total or current == 1 or current % step == 0
+    if should_emit:
+        target_logger.info(f"Vision {kind} download progress for {symbol} {progress}")
 
 
 async def download_vision_bars(
@@ -157,6 +162,7 @@ async def download_vision_bars(
     ts_init: int,
     start_ms: int,
     end_ms: int | None,
+    display_symbol: str | None = None,
     progress_logger: logging.Logger | None = None,
 ) -> VisionBarsResult:
     """Download Binance Vision klines and return as `BinanceBar` instances."""
@@ -235,7 +241,7 @@ async def download_vision_bars(
                     processed_days += 1
                     _log_vision_progress(
                         kind=f"klines {interval.value}",
-                        symbol=vision_symbol,
+                        symbol=display_symbol or vision_symbol,
                         current=processed_days,
                         total=total_days,
                         progress_logger=progress_logger,
@@ -260,6 +266,7 @@ async def download_vision_agg_trade_ticks(
     ts_init: int,
     start_ms: int,
     end_ms: int | None,
+    display_symbol: str | None = None,
     progress_logger: logging.Logger | None = None,
 ) -> VisionAggTradesResult:
     """Download Binance Vision aggregate trades and map to `TradeTick`s."""
@@ -339,7 +346,7 @@ async def download_vision_agg_trade_ticks(
                     processed_days += 1
                     _log_vision_progress(
                         kind="aggTrades",
-                        symbol=vision_symbol,
+                        symbol=display_symbol or vision_symbol,
                         current=processed_days,
                         total=total_days,
                         progress_logger=progress_logger,

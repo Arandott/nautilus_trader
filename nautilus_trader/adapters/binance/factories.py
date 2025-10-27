@@ -53,6 +53,9 @@ def get_cached_binance_http_client(
     base_url: str | None = None,
     is_testnet: bool = False,
     is_us: bool = False,
+    http_max_retries: int = 4,
+    http_retry_initial_delay_ms: int = 1_000,
+    http_retry_max_delay_ms: int = 16_000,
 ) -> BinanceHttpClient:
     """
     Cache and return a Binance HTTP client with the given key and secret.
@@ -77,6 +80,12 @@ def get_cached_binance_http_client(
         If the client is connecting to the testnet API.
     is_us : bool, default False
         If the client is connecting to Binance US.
+    http_max_retries : int, default 4
+        Maximum number of retries for HTTP requests.
+    http_retry_initial_delay_ms : int, default 1_000
+        Initial retry delay (milliseconds) used for quadratic backoff.
+    http_retry_max_delay_ms : int, default 16_000
+        Maximum retry delay (milliseconds) for HTTP requests.
 
     Returns
     -------
@@ -127,6 +136,9 @@ def get_cached_binance_http_client(
         base_url=base_url or default_http_base_url,
         ratelimiter_quotas=ratelimiter_quotas,
         ratelimiter_default_quota=ratelimiter_default_quota,
+        max_retries=http_max_retries,
+        retry_initial_delay_ms=http_retry_initial_delay_ms,
+        retry_max_delay_ms=http_retry_max_delay_ms,
     )
 
 
@@ -262,11 +274,14 @@ class BinanceLiveDataClientFactory(LiveDataClientFactory):
             account_type=config.account_type,
             api_key=config.api_key,
             api_secret=config.api_secret,
-            key_type=config.key_type,
-            base_url=config.base_url_http,
-            is_testnet=config.testnet,
-            is_us=config.us,
-        )
+        key_type=config.key_type,
+        base_url=config.base_url_http,
+        is_testnet=config.testnet,
+        is_us=config.us,
+        http_max_retries=config.http_max_retries,
+        http_retry_initial_delay_ms=config.http_retry_initial_delay_ms,
+        http_retry_max_delay_ms=config.http_retry_max_delay_ms,
+    )
 
         default_base_url_ws: str = get_ws_base_url(
             account_type=config.account_type,

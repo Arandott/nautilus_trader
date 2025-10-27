@@ -13,6 +13,8 @@
 #  limitations under the License.
 # -------------------------------------------------------------------------------------------------
 
+import asyncio
+import random
 import urllib.parse
 from typing import Any
 
@@ -22,6 +24,7 @@ import nautilus_trader
 from nautilus_trader.adapters.binance.common.enums import BinanceKeyType
 from nautilus_trader.adapters.binance.http.error import BinanceClientError
 from nautilus_trader.adapters.binance.http.error import BinanceServerError
+from nautilus_trader.adapters.binance.http.error import should_retry
 from nautilus_trader.common.component import LiveClock
 from nautilus_trader.common.component import Logger
 from nautilus_trader.common.enums import LogColor
@@ -58,6 +61,12 @@ class BinanceHttpClient:
         The keyed rate limiter quotas for the client.
     ratelimiter_quota : Quota, optional
         The default rate limiter quota for the client.
+    max_retries : int, default 4
+        Maximum number of retries for REST requests.
+    retry_initial_delay_ms : int, default 1_000
+        Initial backoff delay (milliseconds) applied between retries.
+    retry_max_delay_ms : int, default 16_000
+        Maximum delay (milliseconds) before a retry attempt.
 
     """
 
@@ -72,6 +81,9 @@ class BinanceHttpClient:
         ed25519_private_key: str | None = None,
         ratelimiter_quotas: list[tuple[str, Quota]] | None = None,
         ratelimiter_default_quota: Quota | None = None,
+        max_retries: int = 4,
+        retry_initial_delay_ms: int = 1_000,
+        retry_max_delay_ms: int = 16_000,
     ) -> None:
         self._clock: LiveClock = clock
         self._log: Logger = Logger(type(self).__name__)
@@ -93,6 +105,12 @@ class BinanceHttpClient:
         self._client = HttpClient(
             keyed_quotas=ratelimiter_quotas or [],
             default_quota=ratelimiter_default_quota,
+        )
+        self._max_retries = max(0, int(max_retries))
+        self._retry_initial_delay = max(0.0, retry_initial_delay_ms / 1000.0)
+        self._retry_max_delay = max(
+            self._retry_initial_delay,
+            retry_max_delay_ms / 1000.0,
         )
 
     @property
@@ -130,6 +148,41 @@ class BinanceHttpClient:
 
         """
         return self._headers
+
+    def _parse_retry_after(self, headers: dict[str, str] | None) -> float | None:
+        if not headers:
+            return None
+        for key in ("Retry-After", "retry-after"):
+            value = headers.get(key)
+            if not value:
+                continue
+            try:
+                return max(0.0, float(value))
+            except ValueError:
+                try:
+                    return max(0.0, int(value))
+                except ValueError:
+                    self._log.debug(f"Unable to parse Retry-After header value: {value}")
+        return None
+
+    def _should_retry_error(self, error: Exception, attempt: int) -> bool:
+        if attempt >= self._max_retries:
+            return False
+        if isinstance(error, BinanceServerError):
+            return True
+        if isinstance(error, BinanceClientError):
+            if error.status in (418, 429):
+                return True
+        return should_retry(error)
+    return False
+
+    def _compute_retry_delay(self, headers: dict[str, str] | None, attempt: int) -> float:
+        base_delay = self._retry_initial_delay * ((attempt + 1) ** 2)
+        retry_after = self._parse_retry_after(headers)
+        if retry_after is not None:
+            base_delay = max(base_delay, retry_after)
+        jitter = random.uniform(0.0, self._retry_initial_delay if self._retry_initial_delay else 1.0)
+        return min(self._retry_max_delay, base_delay + jitter)
 
     def _prepare_params(self, params: dict[str, Any]) -> str:
         # Encode a dict into a URL query string
@@ -177,39 +230,55 @@ class BinanceHttpClient:
         payload: dict[str, str] | None = None,
         ratelimiter_keys: list[str] | None = None,
     ) -> bytes:
-        if payload:
-            url_path += "?" + urllib.parse.urlencode(payload)
-            payload = None  # Don't send payload in the body
+        query = urllib.parse.urlencode(payload) if payload else ""
+        request_path = url_path + ("?" + query if query else "")
+        self._log.debug(f"{request_path} {payload}", LogColor.MAGENTA)
 
-        self._log.debug(f"{url_path} {payload}", LogColor.MAGENTA)
+        attempt = 0
+        while True:
+            try:
+                response: HttpResponse = await self._client.request(
+                    http_method,
+                    url=self._base_url + request_path,
+                    headers=self._headers,
+                    body=None,
+                    keys=ratelimiter_keys,
+                )
+            except Exception as error:  # pragma: no cover - network/runtime errors
+                if attempt >= self._max_retries:
+                    raise
+                delay = self._compute_retry_delay(None, attempt)
+                self._log.warning(
+                    f"HTTP {http_method.value} {request_path} raised {type(error).__name__}, "
+                    f"retrying in {delay:.2f}s ({attempt + 1}/{self._max_retries}).",
+                )
+                await asyncio.sleep(delay)
+                attempt += 1
+                continue
 
-        response: HttpResponse = await self._client.request(
-            http_method,
-            url=self._base_url + url_path,
-            headers=self._headers,
-            body=msgspec.json.encode(payload) if payload else None,
-            keys=ratelimiter_keys,
-        )
+            if response.status < 400:
+                return response.body
 
-        response_body = response.body
-
-        if response.status >= 400:
+            response_body = response.body
             try:
                 message = msgspec.json.decode(response_body) if response_body else None
             except msgspec.DecodeError:
                 message = response_body.decode()
 
-            if response.status >= 500:
-                raise BinanceServerError(
-                    status=response.status,
-                    message=message,
-                    headers=response.headers,
-                )
-            else:
-                raise BinanceClientError(
-                    status=response.status,
-                    message=message,
-                    headers=response.headers,
-                )
+            error_cls = BinanceServerError if response.status >= 500 else BinanceClientError
+            error = error_cls(
+                status=response.status,
+                message=message,
+                headers=response.headers,
+            )
 
-        return response.body
+            if not self._should_retry_error(error, attempt):
+                raise error
+
+            delay = self._compute_retry_delay(error.headers, attempt)
+            self._log.warning(
+                f"HTTP {http_method.value} {request_path} failed with status {error.status}, "
+                f"retrying in {delay:.2f}s ({attempt + 1}/{self._max_retries}).",
+            )
+            await asyncio.sleep(delay)
+            attempt += 1

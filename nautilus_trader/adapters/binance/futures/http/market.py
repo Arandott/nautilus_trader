@@ -77,10 +77,15 @@ class BinanceFuturesMarketHttpAPI(BinanceMarketHttpAPI):
         self,
         client: BinanceHttpClient,
         account_type: BinanceAccountType = BinanceAccountType.USDT_FUTURE,
+        *,
+        use_vision_bars: bool = False,
+        use_vision_trades: bool = False,
     ):
         super().__init__(
             client=client,
             account_type=account_type,
+            use_vision_bars=use_vision_bars,
+            use_vision_trades=use_vision_trades,
         )
 
         if not account_type.is_futures:

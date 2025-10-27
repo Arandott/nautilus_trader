@@ -57,6 +57,16 @@ class BinanceDataClientConfig(LiveDataClientConfig, frozen=True):
     use_agg_trade_ticks : bool, default False
         Whether to use aggregated trade tick endpoints instead of raw trades.
         TradeId of ticks will be the Aggregate tradeId returned by Binance.
+    use_vision_bars : bool, default False
+        Whether to download historical bars via Binance Vision archives before REST fallback.
+    use_vision_trades : bool, default False
+        Whether to download historical aggregate trades via Binance Vision archives before REST fallback.
+    http_max_retries : PositiveInt, default 4
+        Maximum number of retries for REST requests made by the shared HTTP client.
+    http_retry_initial_delay_ms : PositiveInt, default 1_000
+        Initial retry delay in milliseconds used for quadratic backoff.
+    http_retry_max_delay_ms : PositiveInt, default 16_000
+        Maximum retry delay in milliseconds when backing off REST calls.
 
     """
 
@@ -71,6 +81,11 @@ class BinanceDataClientConfig(LiveDataClientConfig, frozen=True):
     testnet: bool = False
     update_instruments_interval_mins: PositiveInt | None = 60
     use_agg_trade_ticks: bool = False
+    use_vision_bars: bool = False
+    use_vision_trades: bool = False
+    http_max_retries: PositiveInt = 4
+    http_retry_initial_delay_ms: PositiveInt = 1_000
+    http_retry_max_delay_ms: PositiveInt = 16_000
 
 
 class BinanceExecClientConfig(LiveExecClientConfig, frozen=True):

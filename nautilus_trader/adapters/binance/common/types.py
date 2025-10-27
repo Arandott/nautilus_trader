@@ -98,6 +98,9 @@ class BinanceBar(Bar):
         self.taker_buy_quote_volume = taker_buy_quote_volume
         self.taker_sell_base_volume = self.volume - self.taker_buy_base_volume
         self.taker_sell_quote_volume = self.quote_volume - self.taker_buy_quote_volume
+        if hasattr(self, "amt"):
+            # TODO: 将所有扩展字段的注入逻辑封装成统一函数后在此调用。
+            self.amt = Quantity.from_str(format(self.quote_volume, "f"))
 
     def __getstate__(self):
         return (

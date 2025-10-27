@@ -90,7 +90,12 @@ class BinanceFuturesDataClient(BinanceCommonDataClient):
         )
 
         # Futures HTTP API
-        self._futures_http_market = BinanceFuturesMarketHttpAPI(client, account_type)
+        self._futures_http_market = BinanceFuturesMarketHttpAPI(
+            client,
+            account_type,
+            use_vision_bars=config.use_vision_bars,
+            use_vision_trades=config.use_vision_trades,
+        )
 
         # Futures enum parser
         self._futures_enum_parser = BinanceFuturesEnumParser()

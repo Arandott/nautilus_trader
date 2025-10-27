@@ -84,7 +84,12 @@ class BinanceSpotDataClient(BinanceCommonDataClient):
         )
 
         # Spot HTTP API
-        self._spot_http_market = BinanceSpotMarketHttpAPI(client, account_type)
+        self._spot_http_market = BinanceSpotMarketHttpAPI(
+            client,
+            account_type,
+            use_vision_bars=config.use_vision_bars,
+            use_vision_trades=config.use_vision_trades,
+        )
 
         # Spot enum parser
         self._spot_enum_parser = BinanceSpotEnumParser()

@@ -4,6 +4,7 @@ Configures Nautilus Trader with Binance integration and portfolio monitoring.
 """
 
 import os
+from pathlib import Path
 
 from nautilus_trader.adapters.binance import BINANCE
 from nautilus_trader.adapters.binance import BinanceAccountType
@@ -40,6 +41,11 @@ class TradingConfig:
         self.log_level = os.getenv("LOG_LEVEL", "DEBUG")  # Reduced from DEBUG to avoid excessive logging
         self.log_level_file = os.getenv("LOG_LEVEL_FILE", "DEBUG")
         self.enable_structured_logging = os.getenv("ENABLE_STRUCTURED_LOGGING", "true").lower() == "true"
+
+        # Catalog persistence controls
+        self.catalog_path = Path(os.getenv("FACTOREXP_CATALOG_PATH", "./data/catalog")).expanduser()
+        self.catalog_path.mkdir(parents=True, exist_ok=True)
+        self.update_warmup_catalog = os.getenv("WARMUP_UPDATE_CATALOG", "true").lower() in {"1", "true", "yes", "on"}
 
     def _detect_account_size(self) -> float | None:
         """Detect account size from environment variable."""
@@ -139,6 +145,7 @@ def create_trading_node_config(api_credentials: dict[str, str | None], instrumen
             snapshot_orders=True,
             snapshot_positions=True,
             snapshot_positions_interval_secs=float(config.portfolio_update_interval),
+            debug=True,
         ),
 
         # Dynamic Risk Engine with account-size-appropriate limits
@@ -158,9 +165,9 @@ def create_trading_node_config(api_credentials: dict[str, str | None], instrumen
 
         # Streaming configuration - lightweight to avoid API rate limits
         streaming=StreamingConfig(
-            catalog_path="./data",           # Save data files to ./data directory
-            flush_interval_ms=30000,         # Write data every 30 seconds (less frequent)
-            replace_existing=True,           # Overwrite to avoid accumulation
+            catalog_path=str(config.catalog_path),  # Persist warmup/catalog data under ./data/catalog
+            flush_interval_ms=30000,                # Write data every 30 seconds (less frequent)
+            replace_existing=True,                  # Overwrite to avoid accumulation
         ),
 
         # Binance data client configuration
@@ -172,6 +179,11 @@ def create_trading_node_config(api_credentials: dict[str, str | None], instrumen
                 testnet=api_credentials.get("testnet", True),
                 update_instruments_interval_mins=60,
                 use_agg_trade_ticks=False,  # Use raw trade data for accuracy
+                use_vision_bars=True,
+                use_vision_trades=True,
+                http_max_retries=6,
+                http_retry_initial_delay_ms=1_000,
+                http_retry_max_delay_ms=30_000,
                 instrument_provider=InstrumentProviderConfig(
                     load_all=False,  # Only load specific instruments
                     load_ids=instrument_ids,  # Load only trading instruments

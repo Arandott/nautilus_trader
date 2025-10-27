@@ -158,10 +158,14 @@ class BinanceCommonDataClient(LiveMarketDataClient):
         # Configuration
         self._binance_account_type = account_type
         self._use_agg_trade_ticks = config.use_agg_trade_ticks
+        self._use_vision_bars = config.use_vision_bars
+        self._use_vision_trades = config.use_vision_trades
         self._log.info(f"Key type: {config.key_type.value}", LogColor.BLUE)
         self._log.info(f"Account type: {self._binance_account_type.value}", LogColor.BLUE)
         self._log.info(f"{config.update_instruments_interval_mins=}", LogColor.BLUE)
         self._log.info(f"{config.use_agg_trade_ticks=}", LogColor.BLUE)
+        self._log.info(f"{config.use_vision_bars=}", LogColor.BLUE)
+        self._log.info(f"{config.use_vision_trades=}", LogColor.BLUE)
 
         self._update_instruments_interval_mins: int | None = config.update_instruments_interval_mins
         self._update_instruments_task: asyncio.Task | None = None

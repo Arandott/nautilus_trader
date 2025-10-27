@@ -13,6 +13,7 @@
 #  limitations under the License.
 # -------------------------------------------------------------------------------------------------
 
+import logging
 import sys
 import time
 
@@ -34,6 +35,13 @@ from nautilus_trader.adapters.binance.common.symbol import BinanceSymbols
 from nautilus_trader.adapters.binance.common.types import BinanceBar
 from nautilus_trader.adapters.binance.http.client import BinanceHttpClient
 from nautilus_trader.adapters.binance.http.endpoint import BinanceHttpEndpoint
+from nautilus_trader.adapters.binance.http.vision import (
+    BinanceVisionNotFound,
+    VisionAggTradesResult,
+    VisionBarsResult,
+    download_vision_agg_trade_ticks,
+    download_vision_bars,
+)
 from nautilus_trader.core.correctness import PyCondition
 from nautilus_trader.core.datetime import nanos_to_millis
 from nautilus_trader.core.nautilus_pyo3 import HttpMethod
@@ -41,6 +49,9 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.data import OrderBookDeltas
 from nautilus_trader.model.data import TradeTick
 from nautilus_trader.model.identifiers import InstrumentId
+
+
+_logger = logging.getLogger(__name__)
 
 
 class BinancePingHttp(BinanceHttpEndpoint):
@@ -623,9 +634,15 @@ class BinanceMarketHttpAPI:
         self,
         client: BinanceHttpClient,
         account_type: BinanceAccountType,
+        *,
+        use_vision_bars: bool = False,
+        use_vision_trades: bool = False,
     ):
         PyCondition.not_none(client, "client")
         self.client = client
+        self._account_type = account_type
+        self._use_vision_bars = use_vision_bars
+        self._use_vision_trades = use_vision_trades
 
         if account_type.is_spot_or_margin:
             self.base_endpoint = "/api/v3/"
@@ -764,7 +781,6 @@ class BinanceMarketHttpAPI:
 
         """
         ticks: list[TradeTick] = []
-        next_start_time = start_time
 
         if end_time is None:
             end_time = sys.maxsize
@@ -773,35 +789,71 @@ class BinanceMarketHttpAPI:
             raise RuntimeError(
                 "Cannot specify both fromId and startTime or endTime.",
             )
+        final_end_ms = end_time
+        current_start = start_time
+        current_from_id = from_id
+        last_seen_id: int | None = from_id
+        last_timestamp_ms: int | None = None
 
-        # Only split into separate requests if both start_time and end_time are specified
+        if (
+            self._use_vision_trades
+            and current_start is not None
+            and current_from_id is None
+        ):
+            try:
+                vision_result: VisionAggTradesResult = await download_vision_agg_trade_ticks(
+                    account_type=self._account_type,
+                    instrument_id=instrument_id,
+                    vision_symbol=str(BinanceSymbol(instrument_id.symbol.value)),
+                    ts_init=ts_init,
+                    start_ms=current_start,
+                    end_ms=final_end_ms if end_time != sys.maxsize else None,
+                )
+            except BinanceVisionNotFound:
+                _logger.debug(
+                    "Vision aggTrades unavailable for %s from %s",
+                    instrument_id,
+                    current_start,
+                )
+            except Exception:  # pragma: no cover - network/runtime errors
+                _logger.warning(
+                    "Vision aggTrades download failed for %s", instrument_id, exc_info=True
+                )
+            else:
+                if vision_result.ticks:
+                    ticks.extend(vision_result.ticks)
+                if vision_result.last_trade_id is not None:
+                    last_seen_id = vision_result.last_trade_id
+                if vision_result.last_timestamp_ms is not None:
+                    last_timestamp_ms = vision_result.last_timestamp_ms
+                    current_start = max(
+                        vision_result.last_timestamp_ms + 1,
+                        current_start,
+                    )
+                    if vision_result.last_timestamp_ms >= final_end_ms:
+                        return ticks
+
         max_interval = (1000 * 60 * 60) - 1  # 1ms under an hour, as specified in Futures docs.
-        last_id = 0
-        interval_limited = False
-
-        def _calculate_next_end_time(start_time: int, end_time: int) -> tuple[int, bool]:
-            next_interval = start_time + max_interval
-            interval_limited = next_interval < end_time
-            next_end_time = next_interval if interval_limited is True else end_time
-            return next_end_time, interval_limited
-
-        if start_time is not None and end_time is not None:
-            next_end_time, interval_limited = _calculate_next_end_time(start_time, end_time)
-        else:
-            next_end_time = end_time
+        now_ms = nanos_to_millis(time.time_ns())
 
         while True:
+            request_end_time = final_end_ms
+            if current_start is not None:
+                request_end_time = min(current_start + max_interval, final_end_ms)
+
             response = await self.query_agg_trades(
                 instrument_id.symbol.value,
                 limit,
-                start_time=next_start_time,
-                end_time=next_end_time,
-                from_id=from_id,
+                start_time=current_start,
+                end_time=request_end_time if request_end_time != sys.maxsize else None,
+                from_id=current_from_id,
             )
 
+            if not response:
+                break
+
             for trade in response:
-                if not trade.a > last_id:
-                    # Skip duplicate trades
+                if last_seen_id is not None and trade.a <= last_seen_id:
                     continue
                 ticks.append(
                     trade.parse_to_trade_tick(
@@ -809,27 +861,41 @@ class BinanceMarketHttpAPI:
                         ts_init=ts_init,
                     ),
                 )
+                last_seen_id = trade.a
+                last_timestamp_ms = trade.T
 
-            if limit and len(response) < limit and interval_limited is False:
-                # end loop regardless when limit is not hit
+            if limit and len(response) < limit and current_from_id is not None:
                 break
-            if (
-                start_time is None
-                or end_time is None
-                or next_end_time >= nanos_to_millis(time.time_ns())
-            ):
-                break
-            else:
-                last = response[-1]
-                last_id = last.a
-                next_start_time = last.T
-                next_end_time, interval_limited = _calculate_next_end_time(
-                    next_start_time,
-                    end_time,
-                )
+
+            if current_from_id is not None:
+                if last_seen_id is None:
+                    break
+                current_from_id = last_seen_id
                 continue
 
-        return ticks
+            if last_timestamp_ms is None:
+                break
+
+            if last_timestamp_ms >= final_end_ms:
+                break
+
+            current_start = last_timestamp_ms + 1
+            if current_start >= final_end_ms or current_start >= now_ms:
+                break
+
+        if not ticks:
+            return ticks
+
+        deduped: list[TradeTick] = []
+        seen_ids: set[str] = set()
+        for tick in sorted(ticks, key=lambda item: item.ts_event):
+            trade_id = str(getattr(tick.trade_id, "value", tick.trade_id))
+            if trade_id in seen_ids:
+                continue
+            seen_ids.add(trade_id)
+            deduped.append(tick)
+
+        return deduped
 
     async def query_historical_trades(
         self,
@@ -905,34 +971,79 @@ class BinanceMarketHttpAPI:
         Request Binance Bars from Klines.
         """
         end_time_ms = int(end_time) if end_time is not None else sys.maxsize
+        request_symbol = BinanceSymbol(bar_type.instrument_id.symbol.value)
+
+        def _deduplicate(bars: list[BinanceBar]) -> list[BinanceBar]:
+            unique: dict[int, BinanceBar] = {}
+            for bar in bars:
+                unique[bar.ts_event] = bar
+            return sorted(unique.values(), key=lambda item: item.ts_event)
+
         all_bars: list[BinanceBar] = []
+        current_start = start_time
+
+        if self._use_vision_bars and current_start is not None:
+            try:
+                vision_result: VisionBarsResult = await download_vision_bars(
+                    account_type=self._account_type,
+                    vision_symbol=str(request_symbol),
+                    interval=interval,
+                    bar_type=bar_type,
+                    ts_init=ts_init,
+                    start_ms=current_start,
+                    end_ms=end_time_ms if end_time is not None else None,
+                )
+            except BinanceVisionNotFound:
+                _logger.debug(
+                    "Vision klines unavailable for %s from %s", request_symbol, current_start
+                )
+            except Exception:  # pragma: no cover - network/runtime errors
+                _logger.warning(
+                    "Vision klines download failed for %s", request_symbol, exc_info=True
+                )
+            else:
+                if vision_result.bars:
+                    all_bars.extend(vision_result.bars)
+                if vision_result.last_open_time_ms is not None:
+                    current_start = max(vision_result.last_open_time_ms + 1, current_start)
+                    if vision_result.last_open_time_ms >= end_time_ms:
+                        return _deduplicate(all_bars)
+
+        max_interval = (1000 * 60 * 60) - 1  # 1 hour window in ms
+        now_ms = nanos_to_millis(time.time_ns())
+
         while True:
+            request_end_time = end_time_ms
+            if current_start is not None:
+                request_end_time = min(current_start + max_interval, end_time_ms)
+
             klines = await self.query_klines(
-                symbol=bar_type.instrument_id.symbol.value,
+                symbol=request_symbol,
                 interval=interval,
                 limit=limit,
-                start_time=start_time,
-                end_time=end_time,
+                start_time=current_start,
+                end_time=request_end_time if request_end_time != sys.maxsize else None,
             )
-            bars: list[BinanceBar] = [
+
+            if not klines:
+                break
+
+            all_bars.extend(
                 kline.parse_to_binance_bar(bar_type, ts_init) for kline in klines
-            ]
-            all_bars.extend(bars)
+            )
 
-            # Update the start_time to fetch the next set of bars
-            if klines:
-                next_start_time = klines[-1].open_time + 1
-            else:
-                # Handle the case when klines is empty
+            last_open_time = klines[-1].open_time
+            next_start = last_open_time + 1
+
+            if (limit and len(klines) < limit) or next_start >= end_time_ms:
                 break
 
-            # No more bars to fetch
-            if (limit and len(klines) < limit) or next_start_time >= end_time_ms:
+            if next_start >= now_ms:
                 break
 
-            start_time = next_start_time
+            current_start = next_start
 
-        return all_bars
+        return _deduplicate(all_bars)
 
     async def query_ticker_24hr(
         self,

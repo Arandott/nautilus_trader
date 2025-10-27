@@ -7,6 +7,7 @@ This strategy uses ONLY FactorExp expressions - no native Nautilus indicators.
 All FactorExp operators have been verified against the actual implementation.
 """
 
+import os
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -14,6 +15,8 @@ from typing import Dict
 from typing import Optional
 
 from factorexp_backtest.configs.config_loader import FactorConfigLoader
+from factorexp_live_trading.components.warmup_catalog import WarmupCatalog
+from factorexp_live_trading.components.warmup_catalog import WarmupCoverage
 
 # Official strategy configuration
 from factorexp_live_trading.config.strategy_config import FactorExpLiveStrategyConfig
@@ -23,8 +26,12 @@ from nautilus_trader.common.enums import LogColor
 # FactorExp imports - VERIFIED to exist
 from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
 from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import BarSpecification
+from nautilus_trader.model.data import BarType
 from nautilus_trader.model.data import QuoteTick
 from nautilus_trader.model.data import TradeTick
+from nautilus_trader.model.enums import AggregationSource
+from nautilus_trader.model.enums import BarAggregation
 from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.events import OrderFilled
 from nautilus_trader.model.events import PositionChanged
@@ -126,6 +133,8 @@ class FactorExpLiveStrategy(Strategy):
 
         # Data request coordination flag (set by trading system)
         self._should_request_historical_data = True
+        self._warmup_catalog: WarmupCatalog | None = None
+        self._warmup_catalog_coverage: WarmupCoverage | None = None
 
         # IMMEDIATE TEST: Verify logger works during strategy instantiation
         print(f"🔍 [TEST] FactorExpLiveStrategy.__init__() called for {config.instrument_id}")
@@ -370,7 +379,8 @@ class FactorExpLiveStrategy(Strategy):
         else:
             delta = timedelta(minutes=self._warmup_bars)
 
-        start_time = self._clock.utc_now() - delta
+        now = self._clock.utc_now()
+        start_time = now - delta
 
         request_msg = (
             f"Requesting {self._warmup_bars} historical bars for "
@@ -380,23 +390,127 @@ class FactorExpLiveStrategy(Strategy):
             request_msg += " (aggregated)"
         self.log.info(request_msg)
 
+        catalog_update = os.getenv("WARMUP_UPDATE_CATALOG", "true").lower() in {"1", "true", "yes", "on"}
+        warmup_params: dict[str, object] | None = None
+        coverage = None
+        request_bar_types: list[BarType] = [bar_type]
+
+        catalog = self._get_warmup_catalog()
+        if catalog is not None:
+            try:
+                coverage = catalog.summarize_bar_coverage(
+                    bar_type=bar_type,
+                    start=start_time,
+                    end=now,
+                )
+                self._warmup_catalog_coverage = coverage
+
+                if coverage.covered:
+                    self.log.info(
+                        f"Warmup catalog already covers requested range "
+                        f"({start_time.isoformat()} → {now.isoformat()} UTC).",
+                    )
+                else:
+                    self.log.info(
+                        f"Warmup catalog missing {len(coverage.missing)} interval(s) "
+                        f"for {bar_type}; requesting gap fill.",
+                    )
+
+                warmup_params = {
+                    "warmup_catalog_start_ns": coverage.start_ns,
+                    "warmup_catalog_end_ns": coverage.end_ns,
+                    "warmup_catalog_missing_ns": coverage.missing,
+                }
+            except Exception as exc:
+                self.log.warning(f"Unable to inspect warmup catalog coverage: {exc}")
+                self._warmup_catalog_coverage = None
+
+            catalog_update = catalog.update_enabled
+
+        if is_internal:
+            composite_base = self._build_time_composite_bar_type(bar_type)
+            if composite_base is not None and composite_base != bar_type:
+                request_bar_types = [composite_base, bar_type]
+                self.log.info(
+                    f"Warmup 将优先使用 {composite_base} 作为 EXTERNAL 基础条目，再聚合成 {bar_type}。"
+                )
+
         try:
             if is_internal:
                 self.request_aggregated_bars(
-                    [bar_type],
+                    request_bar_types,
                     start=start_time,
+                    end=now,
                     update_subscriptions=True,
+                    update_catalog=catalog_update,
+                    params=warmup_params,
                 )
             else:
                 self.request_bars(
                     bar_type=bar_type,
                     start=start_time,
+                    end=now,
+                    update_catalog=catalog_update,
+                    params=warmup_params,
                 )
         except Exception as exc:
             self.log.error(
                 f"Historical warmup request failed for {bar_type}: {exc}"
             )
             raise
+
+    def _get_warmup_catalog(self) -> WarmupCatalog | None:
+        if self._warmup_catalog is not None:
+            return self._warmup_catalog
+
+        try:
+            self._warmup_catalog = WarmupCatalog()
+        except Exception as exc:
+            self.log.warning(f"Warmup catalog unavailable ({exc}).")
+            self._warmup_catalog = None
+
+        return self._warmup_catalog
+
+    def _build_time_composite_bar_type(self, bar_type: BarType) -> BarType | None:
+        """
+        为时间聚合的 INTERNAL BarType 构造一个带 EXTERNAL 基线的复合类型，
+        以便 `request_aggregated_bars` 触发 REST/Vision K线下载。
+        """
+        if not bar_type.is_internally_aggregated():
+            return None
+
+        if bar_type.is_composite():
+            return bar_type
+
+        spec = bar_type.spec
+        if spec.aggregation != BarAggregation.MINUTE:
+            # 目前仅对 MINUTE 系列做 Vision 复用，其它聚合（Tick/Volume 等）仍回落到成交路径
+            return None
+
+        base_spec = BarSpecification(
+            step=1,
+            aggregation=BarAggregation.MINUTE,
+            price_type=spec.price_type,
+        )
+
+        try:
+            composite = BarType.new_composite(
+                bar_type.instrument_id,
+                spec,
+                AggregationSource.INTERNAL,
+                base_spec.step,
+                base_spec.aggregation,
+                AggregationSource.EXTERNAL,
+            )
+        except Exception as exc:
+            self.log.warning(
+                "无法构造复合 BarType 以启用 Vision warmup，继续使用成交聚合。原因: %s",
+                exc,
+            )
+            return None
+
+        return composite
+
 
     def _initialize_segments(self) -> bool:
         """Create 96 SegmentState entries mirroring the backtest ledger."""

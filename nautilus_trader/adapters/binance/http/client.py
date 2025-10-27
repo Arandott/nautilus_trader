@@ -174,7 +174,6 @@ class BinanceHttpClient:
             if error.status in (418, 429):
                 return True
         return should_retry(error)
-    return False
 
     def _compute_retry_delay(self, headers: dict[str, str] | None, attempt: int) -> float:
         base_delay = self._retry_initial_delay * ((attempt + 1) ** 2)

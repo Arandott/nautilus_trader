@@ -809,6 +809,7 @@ class BinanceMarketHttpAPI:
                     ts_init=ts_init,
                     start_ms=current_start,
                     end_ms=final_end_ms if end_time != sys.maxsize else None,
+                    progress_logger=_logger,
                 )
             except BinanceVisionNotFound:
                 _logger.debug(
@@ -993,6 +994,7 @@ class BinanceMarketHttpAPI:
                     ts_init=ts_init,
                     start_ms=current_start,
                     end_ms=end_time_ms if end_time is not None else None,
+                    progress_logger=_logger,
                 )
             except BinanceVisionNotFound:
                 _logger.debug(

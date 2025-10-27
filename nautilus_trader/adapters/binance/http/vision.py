@@ -133,9 +133,17 @@ def _render_progress_bar(current: int, total: int, width: int = 20) -> str:
     return f"[{bar}] {fraction * 100:5.1f}% ({current}/{total})"
 
 
-def _log_vision_progress(kind: str, symbol: str, current: int, total: int) -> None:
+def _log_vision_progress(
+    kind: str,
+    symbol: str,
+    current: int,
+    total: int,
+    *,
+    progress_logger: logging.Logger | None = None,
+) -> None:
     progress = _render_progress_bar(current, total)
-    logger.info("Vision %s download progress for %s %s", kind, symbol, progress)
+    target_logger = progress_logger or logger
+    target_logger.info("Vision %s download progress for %s %s", kind, symbol, progress)
 
 
 async def download_vision_bars(
@@ -147,6 +155,7 @@ async def download_vision_bars(
     ts_init: int,
     start_ms: int,
     end_ms: int | None,
+    progress_logger: logging.Logger | None = None,
 ) -> VisionBarsResult:
     """Download Binance Vision klines and return as `BinanceBar` instances."""
     if start_ms is None:  # Defensive: vision needs explicit start
@@ -227,6 +236,7 @@ async def download_vision_bars(
                         symbol=vision_symbol,
                         current=processed_days,
                         total=total_days,
+                        progress_logger=progress_logger,
                     )
         except BinanceVisionNotFound:
             # Surface to caller so REST fallback can kick in immediately
@@ -248,6 +258,7 @@ async def download_vision_agg_trade_ticks(
     ts_init: int,
     start_ms: int,
     end_ms: int | None,
+    progress_logger: logging.Logger | None = None,
 ) -> VisionAggTradesResult:
     """Download Binance Vision aggregate trades and map to `TradeTick`s."""
     if start_ms is None:
@@ -329,6 +340,7 @@ async def download_vision_agg_trade_ticks(
                         symbol=vision_symbol,
                         current=processed_days,
                         total=total_days,
+                        progress_logger=progress_logger,
                     )
         except BinanceVisionNotFound:
             raise

@@ -143,6 +143,7 @@ class FactorExpLiveStrategy(Strategy):
         self._should_request_historical_data = True
         self._warmup_catalog: WarmupCatalog | None = None
         self._warmup_catalog_coverage: WarmupCoverage | None = None
+        self._last_indicator_remaining: int | None = None
 
         # IMMEDIATE TEST: Verify logger works during strategy instantiation
         print(f"🔍 [TEST] FactorExpLiveStrategy.__init__() called for {config.instrument_id}")
@@ -956,6 +957,7 @@ class FactorExpLiveStrategy(Strategy):
                 f"Historical bars delivered ({chunk[0].bar_type}): "
                 f"first={first_iso} last={last_iso} count={len(chunk)}"
             )
+            self._log_indicator_progress()
 
         if isinstance(data, list):
             if data and isinstance(data[0], Bar):
@@ -964,6 +966,21 @@ class FactorExpLiveStrategy(Strategy):
             for value in data.values():
                 if isinstance(value, list) and value and isinstance(value[0], Bar):
                     _log_bar_chunk(value)
+
+    def _log_indicator_progress(self, *, force: bool = False) -> None:
+        """Emit indicator warmup progress with remaining count."""
+        indicator = self._factor_indicator
+        if indicator is None:
+            return
+        required = indicator.required_history
+        count = indicator.count
+        remaining = max(required - count, 0)
+        if not force and remaining == self._last_indicator_remaining:
+            return
+        self._last_indicator_remaining = remaining
+        self.log.info(
+            f"Indicator warmup progress: {count}/{required} (remaining {remaining})"
+        )
 
     def on_quote_tick(self, tick: QuoteTick):
         """Handle quote tick data."""
@@ -989,13 +1006,12 @@ class FactorExpLiveStrategy(Strategy):
             return
 
         if not self._indicators_ready():
-            if self._factor_indicator is not None:
-                self.log.debug(
-                    f"Indicator warmup progress: "
-                    f"{self._factor_indicator.count}/{self._factor_indicator.required_history}"
-                )
+            self._log_indicator_progress()
             self.log.debug("Indicators not ready yet")
             return
+        else:
+            if self._last_indicator_remaining not in (0, None):
+                self._log_indicator_progress(force=True)
 
         self._bar_count += 1
         price = float(bar.close.as_decimal())
@@ -1081,6 +1097,7 @@ class FactorExpLiveStrategy(Strategy):
         self._segment_rotation_counter = 0
         self._latest_factor_value = None
         self._last_bar_close = None
+        self._last_indicator_remaining = None
 
         for state in self._segment_states:
             state.current_qty = 0.0

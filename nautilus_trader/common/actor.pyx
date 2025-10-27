@@ -3625,6 +3625,7 @@ cdef class Actor(Component):
         cdef int length = len(bars)
         cdef Bar first = bars[0] if length > 0 else None
         cdef Bar last = bars[length - 1] if length > 0 else None
+        cdef BarType lookup_bar_type
 
         if length > 0:
             self._log.info(f"Received <Bar[{length}]> data for {first.bar_type}")
@@ -3636,7 +3637,11 @@ cdef class Actor(Component):
             raise RuntimeError(f"cannot handle <Bar[{length}]> data: incorrectly sorted")
 
         # Update indicators
-        cdef list indicators = self._indicators_for_bars.get(first.bar_type)
+        lookup_bar_type = first.bar_type
+        if lookup_bar_type.is_composite():
+            lookup_bar_type = lookup_bar_type.standard()
+
+        cdef list indicators = self._indicators_for_bars.get(lookup_bar_type)
         cdef:
             int i
             Bar bar

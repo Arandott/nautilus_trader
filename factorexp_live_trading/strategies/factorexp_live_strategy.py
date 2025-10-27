@@ -980,10 +980,14 @@ class FactorExpLiveStrategy(Strategy):
         if isinstance(data, list):
             if data and isinstance(data[0], Bar):
                 _log_bar_chunk(data)
-        elif isinstance(data, dict):
+            return
+        if isinstance(data, dict):
             for value in data.values():
                 if isinstance(value, list) and value and isinstance(value[0], Bar):
                     _log_bar_chunk(value)
+            return
+        if isinstance(data, Bar):
+            self._log_indicator_progress()
 
     def _log_indicator_progress(self, *, force: bool = False) -> None:
         """Emit indicator warmup progress with remaining count."""
@@ -993,6 +997,10 @@ class FactorExpLiveStrategy(Strategy):
         required = indicator.required_history
         count = indicator.count
         remaining = max(required - count, 0)
+        if not force and remaining not in (0, required):
+            stride = max(required // 10, 1)
+            if count % stride != 0:
+                return
         if not force and remaining == self._last_indicator_remaining:
             return
         self._last_indicator_remaining = remaining

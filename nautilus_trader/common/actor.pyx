@@ -3642,6 +3642,7 @@ cdef class Actor(Component):
             lookup_bar_type = lookup_bar_type.standard()
 
         cdef list indicators = self._indicators_for_bars.get(lookup_bar_type)
+        self._log.info(f"Updating {len(indicators) if indicators else 0} indicators for {lookup_bar_type}")
         cdef:
             int i
             Bar bar

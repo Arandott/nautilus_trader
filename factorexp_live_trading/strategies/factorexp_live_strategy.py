@@ -224,6 +224,13 @@ class FactorExpLiveStrategy(Strategy):
             self._trade_count_timer_name = None
             self.log.warning(f"Unable to start trade tick monitor: {exc}")
 
+        # Ensure trade ticks feed into on_trade_tick for monitoring
+        try:
+            self.subscribe_trade_ticks(self.config.instrument_id)
+            self.log.info(f"Subscribed trade ticks for {self.config.instrument_id}.")
+        except Exception as exc:
+            self.log.warning(f"Unable to subscribe trade ticks for {self.config.instrument_id}: {exc}")
+
     def _resolve_config_path(self, config_path: str) -> Path:
         """
         Resolve factor config path relative to repository root.

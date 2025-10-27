@@ -1018,7 +1018,7 @@ class BinanceMarketHttpAPI:
                 request_end_time = min(current_start + max_interval, end_time_ms)
 
             klines = await self.query_klines(
-                symbol=request_symbol,
+                symbol=str(request_symbol),
                 interval=interval,
                 limit=limit,
                 start_time=current_start,

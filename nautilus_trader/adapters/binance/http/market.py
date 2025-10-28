@@ -965,7 +965,7 @@ class BinanceMarketHttpAPI:
     async def request_binance_bars(
         self,
         bar_type: BarType,
-        ts_init: int,
+        ts_init: int | None = None,
         interval: BinanceKlineInterval,
         limit: int | None = None,
         start_time: int | None = None,
@@ -988,12 +988,12 @@ class BinanceMarketHttpAPI:
 
         if self._use_vision_bars and current_start is not None:
             try:
-                vision_result: VisionBarsResult = await download_vision_bars(
-                    account_type=self._account_type,
-                    vision_symbol=str(request_symbol),
-                    interval=interval,
-                    bar_type=bar_type,
-                    ts_init=ts_init,
+                    vision_result: VisionBarsResult = await download_vision_bars(
+                        account_type=self._account_type,
+                        vision_symbol=str(request_symbol),
+                        interval=interval,
+                        bar_type=bar_type,
+                        ts_init=ts_init,
                     start_ms=current_start,
                     end_ms=end_time_ms if end_time is not None else None,
                     display_symbol=bar_type.instrument_id.value,

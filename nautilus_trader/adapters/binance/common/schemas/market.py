@@ -250,11 +250,13 @@ class BinanceKline(msgspec.Struct, array_like=True):
     def parse_to_binance_bar(
         self,
         bar_type: BarType,
-        ts_init: int,
+        ts_init: int | None = None,
     ) -> BinanceBar:
         """
         Parse kline to BinanceBar.
         """
+        ts_event = millis_to_nanos(self.close_time)
+        init_ts = ts_event if ts_init is None else ts_init
         return BinanceBar(
             bar_type=bar_type,
             open=Price.from_str(self.open),
@@ -266,8 +268,8 @@ class BinanceKline(msgspec.Struct, array_like=True):
             count=self.trades_count,
             taker_buy_base_volume=Decimal(self.taker_base_volume),
             taker_buy_quote_volume=Decimal(self.taker_quote_volume),
-            ts_event=millis_to_nanos(self.close_time),
-            ts_init=ts_init,
+            ts_event=ts_event,
+            ts_init=init_ts,
         )
 
 
@@ -689,13 +691,15 @@ class BinanceCandlestick(msgspec.Struct, frozen=True):
         self,
         instrument_id: InstrumentId,
         enum_parser: BinanceEnumParser,
-        ts_init: int,
+        ts_init: int | None = None,
     ) -> BinanceBar:
         bar_type = BarType(
             instrument_id=instrument_id,
             bar_spec=enum_parser.parse_binance_kline_interval_to_bar_spec(self.i),
             aggregation_source=AggregationSource.EXTERNAL,
         )
+        ts_event = millis_to_nanos(self.T)
+        init_ts = ts_event if ts_init is None else ts_init
         return BinanceBar(
             bar_type=bar_type,
             open=Price.from_str(self.o),
@@ -707,8 +711,8 @@ class BinanceCandlestick(msgspec.Struct, frozen=True):
             count=self.n,
             taker_buy_base_volume=Decimal(self.V),
             taker_buy_quote_volume=Decimal(self.Q),
-            ts_event=millis_to_nanos(self.T),
-            ts_init=ts_init,
+            ts_event=ts_event,
+            ts_init=init_ts,
         )
 
 

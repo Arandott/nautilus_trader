@@ -658,7 +658,7 @@ class BinanceCommonDataClient(LiveMarketDataClient):
                 start_time=start_time_ms,
                 end_time=end_time_ms,
                 limit=request.limit if request.limit > 0 else None,
-                ts_init=self._clock.timestamp_ns(),
+                ts_init=None,
             )
 
             if request.bar_type.is_internally_aggregated():
@@ -746,7 +746,7 @@ class BinanceCommonDataClient(LiveMarketDataClient):
             interval=BinanceKlineInterval.MINUTE_1,
             start_time=start_time_ms,
             end_time=end_time_ms,
-            ts_init=self._clock.timestamp_ns(),
+            ts_init=None,
             limit=limit,
         )
 

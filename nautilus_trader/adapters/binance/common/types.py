@@ -114,13 +114,19 @@ class BinanceBar(Bar):
         )
 
     def __setstate__(self, state):
-        super().__setstate__(state[:14])
-        self.quote_volume = Decimal(state[14])
-        self.count = state[15]
-        self.taker_buy_base_volume = Decimal(state[16])
-        self.taker_buy_quote_volume = Decimal(state[17])
-        self.taker_sell_base_volume = Decimal(state[18])
-        self.taker_sell_quote_volume = Decimal(state[19])
+        base_len = len(state) - 6
+        super().__setstate__(state[:base_len])
+
+        self.quote_volume = Decimal(state[base_len])
+        self.count = state[base_len + 1]
+        self.taker_buy_base_volume = Decimal(state[base_len + 2])
+        self.taker_buy_quote_volume = Decimal(state[base_len + 3])
+        self.taker_sell_base_volume = Decimal(state[base_len + 4])
+        self.taker_sell_quote_volume = Decimal(state[base_len + 5])
+
+        if hasattr(self, "amt"):
+            # TODO: build a helper that restores all extended fields consistently and call it here.
+            self.amt = Quantity.from_str(format(self.quote_volume, "f"))
 
     def __repr__(self) -> str:
         return (

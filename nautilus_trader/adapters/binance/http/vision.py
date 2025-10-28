@@ -159,9 +159,9 @@ async def download_vision_bars(
     vision_symbol: str,
     interval: BinanceKlineInterval,
     bar_type: BarType,
-    ts_init: int | None = None,
     start_ms: int,
     end_ms: int | None,
+    ts_init: int | None = None,
     display_symbol: str | None = None,
     progress_logger: logging.Logger | None = None,
 ) -> VisionBarsResult:

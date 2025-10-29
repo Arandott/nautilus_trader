@@ -15,6 +15,7 @@ from nautilus_trader.config import InstrumentProviderConfig
 from nautilus_trader.config import LiveExecEngineConfig
 from nautilus_trader.config import LoggingConfig
 from nautilus_trader.config import TradingNodeConfig
+from nautilus_trader.live.config import LiveDataEngineConfig
 from nautilus_trader.live.config import LiveRiskEngineConfig
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import TraderId
@@ -123,6 +124,10 @@ def create_trading_node_config(api_credentials: dict[str, str | None], instrumen
     return TradingNodeConfig(
         trader_id=TraderId("FACTOREXP-LIVE-001"),
 
+        data_engine=LiveDataEngineConfig(
+            graceful_shutdown_on_exception=True,
+        ),
+
         # Logging configuration with portfolio monitoring
         logging=LoggingConfig(
             log_level=config.log_level,
@@ -142,6 +147,7 @@ def create_trading_node_config(api_credentials: dict[str, str | None], instrumen
 
         # Execution engine with enhanced reconciliation
         exec_engine=LiveExecEngineConfig(
+            graceful_shutdown_on_exception=True,
             reconciliation=True,
             reconciliation_lookback_mins=1440,  # 24 hours
             inflight_check_interval_ms=5000,    # 5 seconds
@@ -153,6 +159,7 @@ def create_trading_node_config(api_credentials: dict[str, str | None], instrumen
 
         # Dynamic Risk Engine with account-size-appropriate limits
         risk_engine=LiveRiskEngineConfig(
+            graceful_shutdown_on_exception=True,
             bypass=False,  # Enable all risk checks for live trading
             max_order_submit_rate="20/00:00:01",      # Max 20 orders per second
             max_order_modify_rate="10/00:00:01",      # Max 10 modifications per second

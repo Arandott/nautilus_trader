@@ -459,7 +459,8 @@ class FactorExpLiveStrategy(Strategy):
         if is_internal:
             composite_base = self._build_time_composite_bar_type(bar_type)
             if composite_base is not None and composite_base != bar_type:
-                request_bar_types = [composite_base, bar_type]
+                # 只请求复合型即可触发历史 1 分钟条目灌入，避免把刚聚合出的内部条目再次回灌自身
+                request_bar_types = [composite_base]
                 self.log.info(
                     f"Warmup 将优先使用 {composite_base} 作为 EXTERNAL 基础条目，再聚合成 {bar_type}。"
                 )

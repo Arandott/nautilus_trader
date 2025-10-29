@@ -10,6 +10,7 @@ import subprocess
 import sys
 import sysconfig
 from pathlib import Path
+import pandas as pd
 
 import numpy as np
 from Cython.Build import build_ext
@@ -876,6 +877,8 @@ cdef class BarBuilder:
     cdef Price _low
     cdef Price _close
     cdef Quantity volume
+
+    cdef Logger _log 
 {"".join(frags["state_decls"])}
 
     cpdef void set_partial(self, Bar partial_bar)
@@ -936,6 +939,8 @@ cdef class BarBuilder:
         self._low = None
         self._close = None
         self.volume = Quantity.zero_c(precision=self.size_precision)
+
+        self._log = Logger(name=type(self).__name__)
 {"".join(frags["inits"])}
 
     def __repr__(self) -> str:
@@ -1010,6 +1015,7 @@ cdef class BarBuilder:
         Condition.not_none(bar, "bar")
 
         if ts_init < self.ts_last:
+            self._log.info(f"Skipping out-of-order bar update: ts_init={{pd.to_datetime(ts_init, unit='ns', utc=True)}} < ts_last={{pd.to_datetime(self.ts_last, unit='ns', utc=True)}}")
             return  # Not applicable
 
         if self._open is None:

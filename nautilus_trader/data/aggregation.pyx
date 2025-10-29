@@ -274,6 +274,11 @@ ELSE:
             return bar
 
 
+cdef int _QUEUE_EVENT_TRADE = 0
+cdef int _QUEUE_EVENT_QUOTE = 1
+cdef int _QUEUE_EVENT_BAR = 2
+
+
 cdef class BarAggregator:
     """
     Provides a means of aggregating specified bars and sending to a registered handler.
@@ -314,12 +319,16 @@ cdef class BarAggregator:
             bar_type=self.bar_type,
         )
         self._batch_mode = False
+        self._live_queue = []
+        self._live_paused = False
+        self._resume_on_batch_stop = False
         self.is_running = False # is_running means that an aggregator receives data from the message bus
 
     def start_batch_update(self, handler: Callable[[Bar], None], uint64_t time_ns) -> None:
         self._batch_mode = True
         self._handler_backup = self._handler
         self._handler = handler
+        self._resume_on_batch_stop = False
         self._start_batch_time(time_ns)
 
     def _start_batch_time(self, uint64_t time_ns):
@@ -328,6 +337,30 @@ cdef class BarAggregator:
     def stop_batch_update(self) -> None:
         self._batch_mode = False
         self._handler = self._handler_backup
+        self._handler_backup = None
+        if self._resume_on_batch_stop and self._live_paused:
+            # resume request deferred until batch completes
+            self.resume_live()
+
+    cpdef void pause_live(self):
+        if not self._live_paused:
+            self._log.debug(f"Paused live updates for {self.bar_type}")
+        self._live_paused = True
+        self._resume_on_batch_stop = False
+
+    cpdef void resume_live(self):
+        if not self._live_paused:
+            self._resume_on_batch_stop = False
+            return
+
+        if self._batch_mode:
+            # Defer until batch is fully processed
+            self._resume_on_batch_stop = True
+            return
+
+        self._resume_on_batch_stop = False
+        self._live_paused = False
+        self._drain_live_queue()
 
     def set_await_partial(self, bint value):
         self._await_partial = value
@@ -344,12 +377,14 @@ cdef class BarAggregator:
         """
         Condition.not_none(tick, "tick")
 
-        if not self._await_partial:
-            self._apply_update(
-                price=tick.extract_price(self.bar_type.spec.price_type),
-                size=tick.extract_size(self.bar_type.spec.price_type),
-                ts_event=tick.ts_event,
-            )
+        if self._await_partial:
+            return
+
+        if self._live_paused and not self._batch_mode:
+            self._queue_quote_tick(tick)
+            return
+
+        self._process_quote_tick(tick)
 
     cpdef void handle_trade_tick(self, TradeTick tick):
         """
@@ -363,12 +398,14 @@ cdef class BarAggregator:
         """
         Condition.not_none(tick, "tick")
 
-        if not self._await_partial:
-            self._apply_update(
-                price=tick.price,
-                size=tick.size,
-                ts_event=tick.ts_event,
-            )
+        if self._await_partial:
+            return
+
+        if self._live_paused and not self._batch_mode:
+            self._queue_trade_tick(tick)
+            return
+
+        self._process_trade_tick(tick)
 
     cpdef void handle_bar(self, Bar bar):
         """
@@ -382,12 +419,14 @@ cdef class BarAggregator:
         """
         Condition.not_none(bar, "bar")
 
-        if not self._await_partial:
-            self._apply_update_bar(
-                bar=bar,
-                volume=bar.volume,
-                ts_init=bar.ts_init,
-            )
+        if self._await_partial:
+            return
+
+        if self._live_paused and not self._batch_mode:
+            self._queue_bar(bar)
+            return
+
+        self._process_bar(bar)
 
     cpdef void set_partial(self, Bar partial_bar):
         """
@@ -416,6 +455,51 @@ cdef class BarAggregator:
     cdef void _build_and_send(self, uint64_t ts_event, uint64_t ts_init):
         cdef Bar bar = self._builder.build(ts_event=ts_event, ts_init=ts_init)
         self._handler(bar)
+
+    cdef void _process_quote_tick(self, QuoteTick tick):
+        self._apply_update(
+            price=tick.extract_price(self.bar_type.spec.price_type),
+            size=tick.extract_size(self.bar_type.spec.price_type),
+            ts_event=tick.ts_event,
+        )
+
+    cdef void _process_trade_tick(self, TradeTick tick):
+        self._apply_update(
+            price=tick.price,
+            size=tick.size,
+            ts_event=tick.ts_event,
+        )
+
+    cdef void _process_bar(self, Bar bar):
+        self._apply_update_bar(
+            bar=bar,
+            volume=bar.volume,
+            ts_init=bar.ts_init,
+        )
+
+    cdef void _queue_quote_tick(self, QuoteTick tick):
+        self._live_queue.append((_QUEUE_EVENT_QUOTE, tick))
+
+    cdef void _queue_trade_tick(self, TradeTick tick):
+        self._live_queue.append((_QUEUE_EVENT_TRADE, tick))
+
+    cdef void _queue_bar(self, Bar bar):
+        self._live_queue.append((_QUEUE_EVENT_BAR, bar))
+
+    cdef void _drain_live_queue(self):
+        if not self._live_queue:
+            return
+
+        cdef list queued = self._live_queue
+        self._live_queue = []
+
+        for event_type, payload in queued:
+            if event_type == _QUEUE_EVENT_TRADE:
+                self._process_trade_tick(<TradeTick>payload)
+            elif event_type == _QUEUE_EVENT_QUOTE:
+                self._process_quote_tick(<QuoteTick>payload)
+            elif event_type == _QUEUE_EVENT_BAR:
+                self._process_bar(<Bar>payload)
 
 
 cdef class TickBarAggregator(BarAggregator):

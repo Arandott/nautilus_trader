@@ -38,6 +38,8 @@ from nautilus_trader.data.messages cimport RequestQuoteTicks
 from nautilus_trader.data.messages cimport RequestTradeTicks
 from nautilus_trader.data.messages cimport SubscribeBars
 from nautilus_trader.data.messages cimport SubscribeData
+from nautilus_trader.data.messages cimport PauseAggregatedBars
+from nautilus_trader.data.messages cimport ResumeAggregatedBars
 from nautilus_trader.data.messages cimport SubscribeIndexPrices
 from nautilus_trader.data.messages cimport SubscribeInstrument
 from nautilus_trader.data.messages cimport SubscribeInstrumentClose
@@ -92,6 +94,7 @@ cdef class DataEngine(Component):
     cdef readonly dict[InstrumentId, list[SyntheticInstrument]] _synthetic_trade_feeds
     cdef readonly list[InstrumentId] _subscribed_synthetic_quotes
     cdef readonly list[InstrumentId] _subscribed_synthetic_trades
+    cdef set[BarType] _paused_bar_types
     cdef readonly dict[InstrumentId, list[OrderBookDelta]] _buffered_deltas_map
     cdef readonly dict[str, SnapshotInfo] _snapshot_info
     cdef readonly dict[UUID4, int] _query_group_n_responses
@@ -190,6 +193,8 @@ cdef class DataEngine(Component):
     cpdef void _handle_unsubscribe_data(self, DataClient client, UnsubscribeData command)
     cpdef void _handle_unsubscribe_instrument_status(self, MarketDataClient client, UnsubscribeInstrumentStatus command)
     cpdef void _handle_unsubscribe_instrument_close(self, MarketDataClient client, UnsubscribeInstrumentClose command)
+    cpdef void _handle_pause_aggregated_bars(self, PauseAggregatedBars command)
+    cpdef void _handle_resume_aggregated_bars(self, ResumeAggregatedBars command)
 
 # -- REQUEST HANDLERS -----------------------------------------------------------------------------
 

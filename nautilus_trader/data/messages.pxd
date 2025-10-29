@@ -141,6 +141,19 @@ cdef class UnsubscribeInstrumentClose(UnsubscribeData):
     pass
 
 
+cdef class AggregatedBarControl(DataCommand):
+    cdef readonly tuple bar_types
+    """The bar types targeted by the control command.\n\n:returns: `tuple[BarType, ...]`"""
+
+
+cdef class PauseAggregatedBars(AggregatedBarControl):
+    pass
+
+
+cdef class ResumeAggregatedBars(AggregatedBarControl):
+    pass
+
+
 cdef class RequestData(Request):
     cdef readonly DataType data_type
     """The request data type.\n\n:returns: `type`"""

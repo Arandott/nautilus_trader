@@ -27,6 +27,7 @@ from factorexp_live_trading.config.strategy_config import FactorExpLiveStrategyC
 
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.common.component import TimeEvent
+from nautilus_trader.core.uuid import UUID4
 
 # FactorExp imports - VERIFIED to exist
 from nautilus_trader.indicators.factorexp.indicator import FactorExpIndicator
@@ -463,16 +464,52 @@ class FactorExpLiveStrategy(Strategy):
                     f"Warmup 将优先使用 {composite_base} 作为 EXTERNAL 基础条目，再聚合成 {bar_type}。"
                 )
 
+        control_bar_types: tuple[BarType, ...] = ()
+        warmup_callback = None
+
+        if is_internal:
+            control_bar_types = tuple(bt for bt in request_bar_types if bt.is_internally_aggregated())
+
+            if control_bar_types:
+                try:
+                    self.pause_aggregated_bars(list(control_bar_types))
+                    self.log.info(
+                        f"Paused live aggregation for warmup gate: {', '.join(str(bt) for bt in control_bar_types)}"
+                    )
+                except Exception as exc:
+                    self.log.error(f"Failed to pause live aggregation for warmup: {exc}")
+                    raise
+
+                def _on_warmup_complete(request_id: UUID4) -> None:
+                    bar_list = ", ".join(str(bt) for bt in control_bar_types)
+                    self.log.info(
+                        f"Warmup request {request_id} completed; resuming aggregation gate for {bar_list}."
+                    )
+                    try:
+                        self.resume_aggregated_bars(list(control_bar_types))
+                    except Exception as resume_exc:
+                        self.log.error(
+                            f"Failed to resume aggregation gate for {bar_list}: {resume_exc}"
+                        )
+
+                warmup_callback = _on_warmup_complete
+
         try:
             if is_internal:
-                self.request_aggregated_bars(
+                request_id = self.request_aggregated_bars(
                     request_bar_types,
                     start=start_time,
                     end=now,
                     update_subscriptions=True,
                     update_catalog=catalog_update,
+                    callback=warmup_callback,
                     params=warmup_params,
                 )
+
+                if control_bar_types:
+                    self.log.debug(
+                        f"Warmup gate active for request {request_id} ({', '.join(str(bt) for bt in control_bar_types)})."
+                    )
             else:
                 self.request_bars(
                     bar_type=bar_type,
@@ -482,9 +519,15 @@ class FactorExpLiveStrategy(Strategy):
                     params=warmup_params,
                 )
         except Exception as exc:
-            self.log.error(
-                f"Historical warmup request failed for {bar_type}: {exc}"
-            )
+            if control_bar_types:
+                try:
+                    self.resume_aggregated_bars(list(control_bar_types))
+                except Exception as resume_exc:
+                    self.log.error(
+                        f"Failed to resume aggregation gate after warmup error: {resume_exc}"
+                    )
+
+            self.log.error(f"Historical warmup request failed for {bar_type}: {exc}")
             raise
 
     def _get_warmup_catalog(self) -> WarmupCatalog | None:

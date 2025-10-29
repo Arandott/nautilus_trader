@@ -67,6 +67,8 @@ from nautilus_trader.data.messages cimport RequestQuoteTicks
 from nautilus_trader.data.messages cimport RequestTradeTicks
 from nautilus_trader.data.messages cimport SubscribeBars
 from nautilus_trader.data.messages cimport SubscribeData
+from nautilus_trader.data.messages cimport PauseAggregatedBars
+from nautilus_trader.data.messages cimport ResumeAggregatedBars
 from nautilus_trader.data.messages cimport SubscribeIndexPrices
 from nautilus_trader.data.messages cimport SubscribeInstrument
 from nautilus_trader.data.messages cimport SubscribeInstrumentClose
@@ -1755,6 +1757,119 @@ cdef class Actor(Component):
             await_partial=await_partial,
             client_id=client_id,
             venue=bar_type.instrument_id.venue,
+            command_id=UUID4(),
+            ts_init=self._clock.timestamp_ns(),
+            params=params,
+        )
+        self._send_data_cmd(command)
+
+    cpdef void pause_aggregated_bars(
+        self,
+        list bar_types,
+        ClientId client_id = None,
+        Venue venue = None,
+        dict[str, object] params = None,
+    ):
+        """
+        Pause live updates for the given internally aggregated bar types.
+
+        Any real-time ticks published while paused are queued inside the aggregators until
+        `resume_aggregated_bars` is called.
+
+        Parameters
+        ----------
+        bar_types : list[BarType]
+            The internally aggregated bar types to pause.
+        client_id : ClientId, optional
+            The specific client ID for the command.
+        venue : Venue, optional
+            The venue for the command. Inferred from `bar_types` if omitted.
+        params : dict[str, Any], optional
+            Additional parameters for the command.
+        """
+        Condition.not_empty(bar_types, "bar_types")
+        Condition.is_true(self.trader_id is not None, "The actor has not been registered")
+
+        params = params or {}
+
+        cdef list normalized = []
+        cdef BarType bar_type
+        cdef Venue resolved_venue = venue
+
+        for bar_type in bar_types:
+            Condition.is_true(isinstance(bar_type, BarType), "bar_types contained non BarType")
+            normalized.append(bar_type)
+
+            if resolved_venue is None:
+                resolved_venue = bar_type.instrument_id.venue
+            else:
+                Condition.is_true(
+                    bar_type.instrument_id.venue == resolved_venue,
+                    "bar_types contained multiple venues; specify `venue` explicitly",
+                )
+
+        Condition.is_true(client_id or resolved_venue, "Both `client_id` and `venue` were None")
+
+        cdef PauseAggregatedBars command = PauseAggregatedBars(
+            bar_types=tuple(normalized),
+            client_id=client_id,
+            venue=resolved_venue,
+            command_id=UUID4(),
+            ts_init=self._clock.timestamp_ns(),
+            params=params,
+        )
+        self._send_data_cmd(command)
+
+    cpdef void resume_aggregated_bars(
+        self,
+        list bar_types,
+        ClientId client_id = None,
+        Venue venue = None,
+        dict[str, object] params = None,
+    ):
+        """
+        Resume live updates for the given internally aggregated bar types.
+
+        Any queued ticks accumulated while paused are replayed into the aggregators first.
+
+        Parameters
+        ----------
+        bar_types : list[BarType]
+            The internally aggregated bar types to resume.
+        client_id : ClientId, optional
+            The specific client ID for the command.
+        venue : Venue, optional
+            The venue for the command. Inferred from `bar_types` if omitted.
+        params : dict[str, Any], optional
+            Additional parameters for the command.
+        """
+        Condition.not_empty(bar_types, "bar_types")
+        Condition.is_true(self.trader_id is not None, "The actor has not been registered")
+
+        params = params or {}
+
+        cdef list normalized = []
+        cdef BarType bar_type
+        cdef Venue resolved_venue = venue
+
+        for bar_type in bar_types:
+            Condition.is_true(isinstance(bar_type, BarType), "bar_types contained non BarType")
+            normalized.append(bar_type)
+
+            if resolved_venue is None:
+                resolved_venue = bar_type.instrument_id.venue
+            else:
+                Condition.is_true(
+                    bar_type.instrument_id.venue == resolved_venue,
+                    "bar_types contained multiple venues; specify `venue` explicitly",
+                )
+
+        Condition.is_true(client_id or resolved_venue, "Both `client_id` and `venue` were None")
+
+        cdef ResumeAggregatedBars command = ResumeAggregatedBars(
+            bar_types=tuple(normalized),
+            client_id=client_id,
+            venue=resolved_venue,
             command_id=UUID4(),
             ts_init=self._clock.timestamp_ns(),
             params=params,

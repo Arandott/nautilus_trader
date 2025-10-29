@@ -1704,6 +1704,84 @@ cdef class UnsubscribeInstrumentClose(UnsubscribeData):
         )
 
 
+cdef class AggregatedBarControl(DataCommand):
+    """
+    Base class for bar aggregation control commands such as pause and resume.
+
+    Parameters
+    ----------
+    bar_types : Iterable[BarType]
+        The bar types targeted by the command.
+    client_id : ClientId or ``None``
+        The data client ID for the command.
+    venue : Venue or ``None``
+        The venue for the command.
+    command_id : UUID4
+        The command ID.
+    ts_init : uint64_t
+        UNIX timestamp (nanoseconds) when the object was initialized.
+    params : dict[str, object], optional
+        Additional parameters for the command.
+    """
+
+    def __init__(
+        self,
+        object bar_types not None,
+        ClientId client_id: ClientId | None,
+        Venue venue: Venue | None,
+        UUID4 command_id not None,
+        uint64_t ts_init,
+        dict[str, object] params: dict | None = None,
+    ) -> None:
+        bar_types_tuple = tuple(bar_types)
+        Condition.not_empty(bar_types_tuple, "bar_types")
+
+        normalized: list[BarType] = []
+
+        for bar_type in bar_types_tuple:
+            Condition.is_true(isinstance(bar_type, BarType), "bar_types contained non BarType")
+            normalized.append(bar_type.standard())
+
+        super().__init__(
+            DataType(Bar),
+            client_id,
+            venue,
+            command_id,
+            ts_init,
+            params,
+        )
+        self.bar_types = tuple(normalized)
+
+    def __str__(self) -> str:
+        return (
+            f"{type(self).__name__}("
+            f"bar_types={[str(bar_type) for bar_type in self.bar_types]}, "
+            f"client_id={self.client_id}, "
+            f"venue={self.venue})"
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}("
+            f"bar_types={[str(bar_type) for bar_type in self.bar_types]}, "
+            f"client_id={self.client_id}, "
+            f"venue={self.venue}, "
+            f"id={self.id}{form_params_str(self.params)})"
+        )
+
+
+cdef class PauseAggregatedBars(AggregatedBarControl):
+    """
+    Represents a command to pause bar aggregators from consuming live updates.
+    """
+
+
+cdef class ResumeAggregatedBars(AggregatedBarControl):
+    """
+    Represents a command to resume bar aggregators, replaying queued updates.
+    """
+
+
 cdef class RequestData(Request):
     """
     Represents a request for data.

@@ -651,6 +651,56 @@ class TestTickBarAggregator:
         assert handler[0].close == Price.from_str("1.00003")
         assert handler[0].volume == Quantity.from_int(3)
 
+    def test_pause_live_defers_ticks_until_resume(self):
+        # Arrange
+        handler = []
+        instrument = AUDUSD_SIM
+        bar_spec = BarSpecification(2, BarAggregation.TICK, PriceType.LAST)
+        bar_type = BarType(instrument.id, bar_spec)
+        aggregator = TickBarAggregator(
+            instrument,
+            bar_type,
+            handler.append,
+        )
+
+        tick1 = TradeTick(
+            instrument_id=instrument.id,
+            price=Price.from_str("1.00001"),
+            size=Quantity.from_int(1),
+            aggressor_side=AggressorSide.BUYER,
+            trade_id=TradeId("pause1"),
+            ts_event=0,
+            ts_init=0,
+        )
+
+        tick2 = TradeTick(
+            instrument_id=instrument.id,
+            price=Price.from_str("1.00002"),
+            size=Quantity.from_int(1),
+            aggressor_side=AggressorSide.SELLER,
+            trade_id=TradeId("pause2"),
+            ts_event=1,
+            ts_init=1,
+        )
+
+        aggregator.pause_live()
+
+        # Act
+        aggregator.handle_trade_tick(tick1)
+        aggregator.handle_trade_tick(tick2)
+
+        # Assert
+        assert handler == []
+
+        # Act
+        aggregator.resume_live()
+
+        # Assert
+        assert len(handler) == 1
+        bar = handler[0]
+        assert bar.volume == Quantity.from_int(2)
+        assert bar.ts_init == tick2.ts_event
+
     def test_run_quote_ticks_through_aggregator_results_in_expected_bars(self):
         # Arrange
         handler = []
@@ -1885,6 +1935,72 @@ class TestTimeBarAggregator:
         # Assert
         bar = handler[0]
         assert len(handler) == 1
+        assert Price.from_str("1.000025") == bar.open
+        assert Price.from_str("1.000035") == bar.high
+        assert Price.from_str("1.000015") == bar.low
+        assert Price.from_str("1.000015") == bar.close
+        assert Quantity.from_int(3) == bar.volume
+        assert bar.ts_init == 3 * 60_000_000_000
+
+    def test_pause_gate_allows_batch_warmup_and_replays_queued_tick(self):
+        # Arrange
+        clock = TestClock()
+        clock.set_time(3 * 60 * NANOSECONDS_IN_SECOND)
+        handler = []
+        instrument_id = TestIdStubs.audusd_id()
+        bar_spec = BarSpecification(3, BarAggregation.MINUTE, PriceType.MID)
+        bar_type = BarType(instrument_id, bar_spec)
+        aggregator = TimeBarAggregator(
+            AUDUSD_SIM,
+            bar_type,
+            handler.append,
+            clock,
+        )
+
+        tick1 = QuoteTick(
+            instrument_id=AUDUSD_SIM.id,
+            bid_price=Price.from_str("1.00001"),
+            ask_price=Price.from_str("1.00004"),
+            bid_size=Quantity.from_int(1),
+            ask_size=Quantity.from_int(1),
+            ts_event=1 * 60 * NANOSECONDS_IN_SECOND,
+            ts_init=1 * 60 * NANOSECONDS_IN_SECOND,
+        )
+
+        tick2 = QuoteTick(
+            instrument_id=AUDUSD_SIM.id,
+            bid_price=Price.from_str("1.00002"),
+            ask_price=Price.from_str("1.00005"),
+            bid_size=Quantity.from_int(1),
+            ask_size=Quantity.from_int(1),
+            ts_event=2 * 60 * NANOSECONDS_IN_SECOND,
+            ts_init=2 * 60 * NANOSECONDS_IN_SECOND,
+        )
+
+        tick3 = QuoteTick(
+            instrument_id=AUDUSD_SIM.id,
+            bid_price=Price.from_str("1.00000"),
+            ask_price=Price.from_str("1.00003"),
+            bid_size=Quantity.from_int(1),
+            ask_size=Quantity.from_int(1),
+            ts_event=3 * 60 * NANOSECONDS_IN_SECOND,
+            ts_init=3 * 60 * NANOSECONDS_IN_SECOND,
+        )
+
+        aggregator.pause_live()
+
+        aggregator.start_batch_update(handler.append, tick1.ts_event)
+        aggregator.handle_quote_tick(tick1)
+        aggregator.handle_quote_tick(tick2)
+        aggregator.stop_batch_update()
+
+        aggregator.handle_quote_tick(tick3)
+        assert handler == []
+
+        aggregator.resume_live()
+
+        assert len(handler) == 1
+        bar = handler[0]
         assert Price.from_str("1.000025") == bar.open
         assert Price.from_str("1.000035") == bar.high
         assert Price.from_str("1.000015") == bar.low

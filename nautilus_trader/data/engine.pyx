@@ -79,6 +79,8 @@ from nautilus_trader.data.messages cimport RequestQuoteTicks
 from nautilus_trader.data.messages cimport RequestTradeTicks
 from nautilus_trader.data.messages cimport SubscribeBars
 from nautilus_trader.data.messages cimport SubscribeData
+from nautilus_trader.data.messages cimport PauseAggregatedBars
+from nautilus_trader.data.messages cimport ResumeAggregatedBars
 from nautilus_trader.data.messages cimport SubscribeIndexPrices
 from nautilus_trader.data.messages cimport SubscribeInstrument
 from nautilus_trader.data.messages cimport SubscribeInstrumentClose
@@ -174,6 +176,7 @@ cdef class DataEngine(Component):
         self._snapshot_info: dict[str, SnapshotInfo] = {}
         self._query_group_n_responses: dict[UUID4, int] = {}
         self._query_group_responses: dict[UUID4, list] = {}
+        self._paused_bar_types: set[BarType] = set()
 
         # Configuration
         self.debug = config.debug
@@ -765,7 +768,13 @@ cdef class DataEngine(Component):
                 )
                 return  # No client to handle command
 
-        if isinstance(command, SubscribeData):
+        if isinstance(command, PauseAggregatedBars):
+            self._handle_pause_aggregated_bars(command)
+            return
+        elif isinstance(command, ResumeAggregatedBars):
+            self._handle_resume_aggregated_bars(command)
+            return
+        elif isinstance(command, SubscribeData):
             self._handle_subscribe(client, command)
         elif isinstance(command, UnsubscribeData):
             self._handle_unsubscribe(client, command)
@@ -1328,6 +1337,37 @@ cdef class DataEngine(Component):
         # Only unsubscribe if currently subscribed
         if command.instrument_id in client.subscribed_instrument_close():
             client.unsubscribe_instrument_close(command)
+
+    cpdef void _handle_pause_aggregated_bars(self, PauseAggregatedBars command):
+        cdef BarType bar_type
+        cdef BarType standard_type
+        cdef BarAggregator aggregator
+
+        for bar_type in command.bar_types:
+            standard_type = bar_type.standard()
+            self._paused_bar_types.add(standard_type)
+            aggregator = self._bar_aggregators.get(standard_type)
+
+            if aggregator is None:
+                self._log.debug(f"Deferring pause for {standard_type}: aggregator not yet available")
+                continue
+
+            aggregator.pause_live()
+
+    cpdef void _handle_resume_aggregated_bars(self, ResumeAggregatedBars command):
+        cdef BarType bar_type
+        cdef BarType standard_type
+        cdef BarAggregator aggregator
+
+        for bar_type in command.bar_types:
+            standard_type = bar_type.standard()
+            self._paused_bar_types.discard(standard_type)
+            aggregator = self._bar_aggregators.get(standard_type)
+
+            if aggregator is None:
+                continue
+
+            aggregator.resume_live()
 
 # -- REQUEST HANDLERS -----------------------------------------------------------------------------
 
@@ -2117,6 +2157,9 @@ cdef class DataEngine(Component):
                 if params["update_subscriptions"]:
                     self._bar_aggregators[bar_type.standard()] = aggregator
 
+                    if aggregator.bar_type in self._paused_bar_types:
+                        aggregator.pause_live()
+
             aggregated_bars = []
             handler = lambda bar: aggregated_bars.append(bar)
 
@@ -2281,6 +2324,10 @@ cdef class DataEngine(Component):
 
         # Add aggregator
         self._bar_aggregators[command.bar_type.standard()] = aggregator
+
+        if aggregator.bar_type in self._paused_bar_types:
+            aggregator.pause_live()
+
         self._log.debug(f"Added {aggregator} for {command.bar_type} bars")
 
         # Subscribe to required data

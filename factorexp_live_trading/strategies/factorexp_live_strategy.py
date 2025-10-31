@@ -131,6 +131,7 @@ class FactorExpLiveStrategy(Strategy):
         self._max_leverage = 2.0
         self._segment_stop_loss_pct = 0.05
         self._min_order_size = 0.001
+        self._effective_equity_total = 0.0
 
         # Strategy monitoring counters
         self._bar_count = 0
@@ -146,6 +147,8 @@ class FactorExpLiveStrategy(Strategy):
         self._warmup_catalog: WarmupCatalog | None = None
         self._warmup_catalog_coverage: WarmupCoverage | None = None
         self._last_indicator_remaining: int | None = None
+        self._last_indicator_timestamp_ns: int | None = None
+        self._warmup_completion_logged = False
 
         # IMMEDIATE TEST: Verify logger works during strategy instantiation
         print(f"🔍 [TEST] FactorExpLiveStrategy.__init__() called for {config.instrument_id}")
@@ -609,7 +612,40 @@ class FactorExpLiveStrategy(Strategy):
             self.log.error(f"Account equity for {quote_currency} is non-positive: {total_equity}")
             return False
 
-        equity_per_segment = total_equity / self._segment_count
+        usage_pct = float(self.config.max_account_usage_pct)
+        if usage_pct <= 0:
+            self.log.error("max_account_usage_pct must be greater than zero.")
+            return False
+        if usage_pct > 1.0:
+            self.log.warning(
+                f"max_account_usage_pct {usage_pct:.2f} exceeds 100%; clamping to full balance."
+            )
+            usage_pct = 1.0
+
+        effective_equity = total_equity * usage_pct
+        max_absolute = float(self.config.max_absolute_exposure)
+        if max_absolute > 0:
+            effective_equity = min(effective_equity, max_absolute)
+
+        effective_equity = min(effective_equity, total_equity)
+        if effective_equity <= 0:
+            self.log.error(
+                "Configured capital limits result in zero effective equity. "
+                f"(total={total_equity:.2f}, usage_pct={usage_pct:.2%}, "
+                f"max_absolute={max_absolute:.2f})"
+            )
+            return False
+
+        self._effective_equity_total = effective_equity
+
+        reserved_equity = total_equity - effective_equity
+        if reserved_equity > 1e-6:
+            self.log.info(
+                f"Capital allocation -> effective={effective_equity:.2f} {quote_currency}, "
+                f"reserved={reserved_equity:.2f} {quote_currency}"
+            )
+
+        equity_per_segment = effective_equity / self._segment_count
         self._segment_states = [
             SegmentState(
                 idx=idx,
@@ -640,8 +676,8 @@ class FactorExpLiveStrategy(Strategy):
         self._bar_duration_ns = self._calculate_bar_duration_ns()
         self.log.info(
             f"Initialized {self._segment_count} segments | equity per segment={equity_per_segment:.2f}, "
-            f"max_leverage={self._max_leverage:.2f}, stop_loss={self._segment_stop_loss_pct:.2%}, "
-            f"freeze={self._freeze_duration_bars} bars"
+            f"effective_equity={effective_equity:.2f}, max_leverage={self._max_leverage:.2f}, "
+            f"stop_loss={self._segment_stop_loss_pct:.2%}, freeze={self._freeze_duration_bars} bars"
         )
         return True
 
@@ -1015,6 +1051,7 @@ class FactorExpLiveStrategy(Strategy):
             last_iso = datetime.fromtimestamp(
                 chunk[-1].ts_event / 1_000_000_000, tz=timezone.utc
             ).isoformat()
+            self._last_indicator_timestamp_ns = chunk[-1].ts_event
             self.log.info(
                 f"Historical bars delivered ({chunk[0].bar_type}): "
                 f"first={first_iso} last={last_iso} count={len(chunk)}"
@@ -1031,6 +1068,7 @@ class FactorExpLiveStrategy(Strategy):
                     _log_bar_chunk(value)
             return
         if isinstance(data, Bar):
+            self._last_indicator_timestamp_ns = data.ts_event
             self._log_indicator_progress()
 
     def _log_indicator_progress(self, *, force: bool = False) -> None:
@@ -1048,15 +1086,36 @@ class FactorExpLiveStrategy(Strategy):
         if not force and remaining == self._last_indicator_remaining:
             return
         self._last_indicator_remaining = remaining
+        if remaining > 0:
+            self._warmup_completion_logged = False
         self.log.info(
             f"Indicator warmup progress: {count}/{required} (remaining {remaining})"
         )
-        if remaining == 0 and self._indicator_progress_timer_name:
-            try:
-                self.clock.cancel_timer(self._indicator_progress_timer_name)
-            except Exception as exc:
-                self.log.warning(f"Unable to cancel indicator warmup monitor: {exc}")
-            self._indicator_progress_timer_name = None
+        if remaining == 0:
+            if not self._warmup_completion_logged:
+                self._log_indicator_snapshot(reason="warmup complete")
+                self._warmup_completion_logged = True
+            if self._indicator_progress_timer_name:
+                try:
+                    self.clock.cancel_timer(self._indicator_progress_timer_name)
+                except Exception as exc:
+                    self.log.warning(f"Unable to cancel indicator warmup monitor: {exc}")
+                self._indicator_progress_timer_name = None
+
+    def _log_indicator_snapshot(self, *, reason: str) -> None:
+        """Log the latest indicator value and timestamp for diagnostics."""
+        indicator = self._factor_indicator
+        if indicator is None or indicator.count == 0:
+            return
+        ts_ns = self._last_indicator_timestamp_ns
+        if ts_ns is None:
+            ts_ns = self._clock.timestamp_ns()
+        ts_iso = datetime.fromtimestamp(ts_ns / 1_000_000_000, tz=timezone.utc).isoformat()
+        value = float(indicator.value)
+        self._latest_factor_value = value
+        self.log.info(
+            f"Indicator snapshot ({reason}): ts={ts_iso}, value={value:.6f}, count={indicator.count}"
+        )
 
     def on_quote_tick(self, tick: QuoteTick):
         """Handle quote tick data."""
@@ -1096,6 +1155,7 @@ class FactorExpLiveStrategy(Strategy):
         raw_value = float(self._factor_indicator.value)
         factor_value = raw_value
 
+        self._last_indicator_timestamp_ns = bar.ts_event
         if abs(factor_value) < self._min_signal_magnitude:
             factor_value = 0.0
 
@@ -1180,6 +1240,8 @@ class FactorExpLiveStrategy(Strategy):
         self._latest_factor_value = None
         self._last_bar_close = None
         self._last_indicator_remaining = None
+        self._last_indicator_timestamp_ns = None
+        self._warmup_completion_logged = False
         if self._indicator_progress_timer_name:
             try:
                 self.clock.cancel_timer(self._indicator_progress_timer_name)

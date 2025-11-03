@@ -7,6 +7,7 @@ This strategy uses ONLY FactorExp expressions - no native Nautilus indicators.
 All FactorExp operators have been verified against the actual implementation.
 """
 
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -98,17 +99,28 @@ class FactorExpLiveStrategy(Strategy):
 
         # Shared factor configuration (loaded from research YAML)
         self._factor_config_path = self._resolve_config_path(config.factor_config_path)
-        self._factor_id = config.factor_id
+        factor_ids_cfg = config.factor_ids
+        if not factor_ids_cfg:
+            factor_ids_cfg = (config.factor_id,)
+        elif isinstance(factor_ids_cfg, str):
+            factor_ids_cfg = tuple(
+                part.strip() for part in factor_ids_cfg.split(",") if part.strip()
+            )
+            if not factor_ids_cfg:
+                factor_ids_cfg = (config.factor_id,)
+        self._factor_ids: tuple[str, ...] = tuple(factor_ids_cfg)
+        self._factor_id = self._factor_ids[0]  # Legacy single-factor references
         self._factor_loader: FactorConfigLoader | None = None
-        self._factor_config = None
+        self._factor_configs: dict[str, Any] = {}
         self._factor_defaults: dict | None = None
         self._risk_config = None
         self._execution_config = None
         self._position_scale = Decimal("1.0")
-        self._factor_indicator: FactorExpIndicator | None = None
-        self._factor_expression: str | None = None
+        self._factor_indicators: dict[str, FactorExpIndicator] = {}
+        self._factor_expressions: dict[str, str] = {}
         self._factor_requires_extended = False
         self._warmup_bars = 0  # Will be set after indicator creation based on required_history
+        self._latest_factor_values: dict[str, float] = {}
         self._latest_factor_value: float | None = None
 
         # Copy factor overrides from config (will be validated against defaults)
@@ -128,10 +140,12 @@ class FactorExpLiveStrategy(Strategy):
         self._segment_rotation_counter = 0
         self._last_bar_close: float | None = None
         self._instrument = None
-        self._max_leverage = 2.0
+        self._max_leverage = 10.0
         self._segment_stop_loss_pct = 0.05
         self._min_order_size = 0.001
         self._effective_equity_total = 0.0
+        self._capital_allocation_usd = 0.0
+        self._target_notional_usd = 0.0
 
         # Strategy monitoring counters
         self._bar_count = 0
@@ -157,6 +171,124 @@ class FactorExpLiveStrategy(Strategy):
         else:
             print("❌ [TEST] FactorExpLiveStrategy logger NOT available during __init__")
 
+    @staticmethod
+    def _quantity_to_float(quantity: Any) -> float | None:
+        """Best-effort conversion of Quantity-like values to float."""
+        if quantity is None:
+            return None
+        try:
+            return float(quantity)
+        except (TypeError, ValueError):
+            getter = getattr(quantity, "as_double", None)
+            if callable(getter):
+                return float(getter())
+        return None
+
+    def _apply_instrument_size_constraints(self) -> None:
+        """Align `_min_order_size` with venue constraints from the instrument."""
+        instrument = self._instrument
+        if instrument is None:
+            return
+
+        size_increment = self._quantity_to_float(getattr(instrument, "size_increment", None))
+        min_quantity = self._quantity_to_float(getattr(instrument, "min_quantity", None))
+
+        candidate = self._min_order_size
+        if size_increment and size_increment > 0:
+            candidate = max(candidate, size_increment)
+        if min_quantity and min_quantity > 0:
+            candidate = max(candidate, min_quantity)
+
+        if candidate > self._min_order_size:
+            self.log.info(
+                f"Aligning min order size with venue constraints: {self._min_order_size:.6f} -> {candidate:.6f}"
+            )
+            self._min_order_size = candidate
+
+    def _resolve_capital_budgets(
+        self,
+        account_equity: float,
+        usage_pct: float,
+        quote_currency: str,
+    ) -> tuple[float, float, float, float]:
+        """
+        Determine effective margin and notional budgets after applying venue leverage rules.
+
+        Returns
+        -------
+        tuple
+            (effective_margin, effective_notional, usage_limit, leverage_limit)
+        """
+        if self._max_leverage <= 0:
+            raise ValueError("max_leverage must be greater than zero before resolving capital budgets.")
+
+        usage_limit = account_equity * usage_pct
+        leverage_limit = usage_limit * self._max_leverage
+
+        requested_margin = self.config.capital_allocation_usd
+        if requested_margin is None:
+            requested_margin = float(self.config.max_absolute_exposure)
+        else:
+            requested_margin = float(requested_margin)
+
+        requested_notional = self.config.target_notional_usd
+        if requested_notional is not None:
+            requested_notional = float(requested_notional)
+
+        clamp_messages: list[str] = []
+
+        if requested_margin is not None and requested_margin <= 0:
+            raise ValueError("Requested capital allocation must be greater than zero.")
+
+        if requested_notional is not None and requested_notional <= 0:
+            raise ValueError("Requested target notional must be greater than zero.")
+
+        # Harmonize requests so both margin and notional are available
+        if requested_margin is None and requested_notional is None:
+            requested_margin = usage_limit
+
+        if requested_margin is None and requested_notional is not None:
+            requested_margin = requested_notional / self._max_leverage
+
+        if requested_notional is None and requested_margin is not None:
+            requested_notional = requested_margin * self._max_leverage
+
+        if requested_margin is None or requested_notional is None:
+            raise ValueError("Unable to resolve capital budgets from configuration.")
+
+        # Inform when configuration is inconsistent with leverage
+        implied_notional = requested_margin * self._max_leverage
+        if requested_notional > implied_notional + 1e-6:
+            clamp_messages.append(
+                f"Requested notional ({requested_notional:.2f}) exceeds margin "
+                f"capacity ({implied_notional:.2f}) for leverage {self._max_leverage:.2f}; clamped."
+            )
+            requested_notional = implied_notional
+
+        effective_margin = min(requested_margin, usage_limit)
+        if requested_margin > usage_limit + 1e-6:
+            clamp_messages.append(
+                f"Margin request {requested_margin:.2f} {quote_currency} exceeds usage limit "
+                f"{usage_limit:.2f}; clamped."
+            )
+
+        effective_notional = min(requested_notional, leverage_limit)
+        if requested_notional > leverage_limit + 1e-6:
+            clamp_messages.append(
+                f"Notional request {requested_notional:.2f} exceeds leverage limit {leverage_limit:.2f}; clamped."
+            )
+
+        # Ensure internal consistency between derived margin/notional
+        effective_notional = min(effective_notional, effective_margin * self._max_leverage)
+
+        if effective_margin <= 0 or effective_notional <= 0:
+            raise ValueError("Effective capital allocation resolved to non-positive values.")
+
+        for message in clamp_messages:
+            self.log.warning(message)
+
+        return effective_margin, effective_notional, usage_limit, leverage_limit
+
     def on_start(self):
         """Actions to be performed when the strategy is started."""
         # IMMEDIATE TEST: Verify on_start is called
@@ -170,14 +302,19 @@ class FactorExpLiveStrategy(Strategy):
             self.stop()
             return
         self._instrument = instrument
-        self._long_position_id = PositionId(f"{self.config.instrument_id}-FACTOREXP-LONG")
-        self._short_position_id = PositionId(f"{self.config.instrument_id}-FACTOREXP-SHORT")
+        self._apply_instrument_size_constraints()
+        self._long_position_id = PositionId(f"{self.config.instrument_id}-LONG")
+        self._short_position_id = PositionId(f"{self.config.instrument_id}-SHORT")
 
         # Log capital management configuration
         self.log.info(
             f"Capital Management: max_account_usage={self.config.max_account_usage_pct:.1%}, "
-            f"max_absolute_exposure=${self.config.max_absolute_exposure:,.0f}, "
+            f"max_margin_fallback=${self.config.max_absolute_exposure:,.0f}, "
             f"position_risk={self.config.position_risk_pct:.1%}"
+        )
+        self.log.warning(
+            "当前版本尚未消费以下配置字段：position_risk_pct, take_profit_pct, "
+            "use_market_orders, max_daily_trades, max_daily_loss_usd, max_drawdown_pct。"
         )
 
         # Load shared factor definition
@@ -202,7 +339,7 @@ class FactorExpLiveStrategy(Strategy):
             return
 
         self.log.info(
-            f"Factor graph ready | factor_id={self._factor_id}, "
+            f"Factor graph initialized | factor_ids={', '.join(self._factor_ids)} | "
             f"warmup={self._warmup_bars} bars"
         )
 
@@ -247,6 +384,14 @@ class FactorExpLiveStrategy(Strategy):
 
         # Ensure trade ticks feed into on_trade_tick for monitoring
         try:
+            self.subscribe_quote_ticks(self.config.instrument_id)
+            self.log.info(f"Subscribed quote ticks for {self.config.instrument_id}.")
+        except Exception as exc:
+            self.log.warning(
+                f"Unable to subscribe quote ticks for {self.config.instrument_id}: {exc}"
+            )
+
+        try:
             self.subscribe_trade_ticks(self.config.instrument_id)
             self.log.info(f"Subscribed trade ticks for {self.config.instrument_id}.")
         except Exception as exc:
@@ -282,15 +427,38 @@ class FactorExpLiveStrategy(Strategy):
             )
             return False
 
-        try:
-            self._factor_config = self._factor_loader.get_factor(self._factor_id)
-        except KeyError:
+        missing: list[str] = []
+        self._factor_configs.clear()
+        self._factor_expressions.clear()
+        self._factor_requires_extended = False
+
+        for factor_id in self._factor_ids:
+            try:
+                factor_config = self._factor_loader.get_factor(factor_id)
+            except KeyError:
+                missing.append(factor_id)
+                continue
+            self._factor_configs[factor_id] = factor_config
+            self._factor_expressions[factor_id] = factor_config.expression
+            if factor_config.requires_extended:
+                self._factor_requires_extended = True
+
+        if missing:
             available = ", ".join(self._factor_loader.list_factors())
             self.log.error(
-                f"Factor '{self._factor_id}' not found in "
-                f"{self._factor_config_path}. Available factors: {available}"
+                f"Missing factor(s) in catalog {self._factor_config_path}: {', '.join(missing)}. "
+                f"Available factors: {available}"
             )
             return False
+
+        if not self._factor_configs:
+            self.log.error(
+                f"No valid factors resolved from configuration: {', '.join(self._factor_ids)}"
+            )
+            return False
+
+        # Primary factor ID is now the first configured entry (for legacy integrations)
+        self._factor_id = next(iter(self._factor_configs))
 
         self._factor_defaults = self._factor_loader.get_defaults() or {}
         defaults = self._factor_defaults
@@ -300,6 +468,7 @@ class FactorExpLiveStrategy(Strategy):
         self._execution_config = getattr(self._factor_loader, "execution_config", None)
         if self._execution_config:
             self._min_order_size = float(self._execution_config.min_order_size)
+        self._apply_instrument_size_constraints()
 
         # Synchronise shared parameters with backtest defaults (allow overrides)
         default_zscore = int(defaults.get("zscore_period", self._zscore_period))
@@ -313,19 +482,18 @@ class FactorExpLiveStrategy(Strategy):
 
         # Note: _warmup_bars will be set after indicator creation based on required_history
         # This ensures we get the true warmup requirement accounting for nested windows
-        self._factor_expression = self._factor_config.expression
-        self._factor_requires_extended = bool(self._factor_config.requires_extended)
 
-        expression_preview = (
-            self._factor_expression.replace(" ", "")[:120] + "..."
-            if self._factor_expression and len(self._factor_expression) > 120
-            else self._factor_expression
-        )
-        self.log.info(
-            f"Loaded factor '{self._factor_config.name}' "
-            f"(requires_extended={self._factor_requires_extended}) | "
-            f"expression={expression_preview}"
-        )
+        for factor_id, factor_config in self._factor_configs.items():
+            expression = factor_config.expression
+            expression_preview = (
+                expression.replace(" ", "")[:120] + "..."
+                if expression and len(expression) > 120
+                else expression
+            )
+            self.log.info(
+                f"Loaded factor '{factor_config.name}' (requires_extended={factor_config.requires_extended}) | "
+                f"expression={expression_preview}"
+            )
 
         return True
 
@@ -345,33 +513,40 @@ class FactorExpLiveStrategy(Strategy):
     def _setup_factor_graph(self):
         """Instantiate and register the FactorExp indicator based on YAML config."""
         try:
-            # Create indicator without period parameter - it will be auto-detected
-            # from the expression tree accounting for nested windows
-            self._factor_indicator = FactorExpIndicator(
-                expression=self._factor_expression,
-                name=f"{self._factor_config.factor_id.upper()}",
-            )
+            indicators: dict[str, FactorExpIndicator] = {}
+            required_histories: list[int] = []
 
-            # Get the true warmup requirement from the indicator
-            # This accounts for nested window operators correctly
-            self._warmup_bars = self._factor_indicator.required_history
+            for factor_id, factor_config in self._factor_configs.items():
+                expression = self._factor_expressions[factor_id]
+                indicator = FactorExpIndicator(
+                    expression=expression,
+                    name=factor_config.factor_id.upper(),
+                )
+                indicators[factor_id] = indicator
+                required_histories.append(indicator.required_history)
+                self.log.info(
+                    f"Indicator created | factor_id={factor_id} required_history={indicator.required_history}"
+                )
+
+            self._factor_indicators = indicators
+            self._warmup_bars = max(required_histories, default=0)
 
             self.log.info(
-                f"Indicator created | required_history={self._warmup_bars} bars "
-                f"(auto-detected from expression tree)"
+                f"Factor graph ready | factor_ids={', '.join(self._factor_ids)} | "
+                f"max_required_history={self._warmup_bars}"
             )
         except Exception as exc:
             self.log.error(
-                f"Failed to instantiate FactorExp indicator for factor "
-                f"'{self._factor_id}': {exc}"
+                f"Failed to instantiate FactorExp indicators for factors {self._factor_ids}: {exc}"
             )
             raise
 
         try:
-            self.register_indicator_for_bars(self.config.bar_type, self._factor_indicator)
+            for indicator in self._factor_indicators.values():
+                self.register_indicator_for_bars(self.config.bar_type, indicator)
         except Exception as exc:
             self.log.error(
-                f"Failed to register FactorExp indicator for {self.config.bar_type}: {exc}"
+                f"Failed to register FactorExp indicators for {self.config.bar_type}: {exc}"
             )
             raise
 
@@ -622,30 +797,54 @@ class FactorExpLiveStrategy(Strategy):
             )
             usage_pct = 1.0
 
-        effective_equity = total_equity * usage_pct
-        max_absolute = float(self.config.max_absolute_exposure)
-        if max_absolute > 0:
-            effective_equity = min(effective_equity, max_absolute)
+        configured_leverage = float(
+            getattr(self._risk_config, "max_position_size", self._max_leverage or 2.0)
+        )
+        leverage_override = getattr(self.config, "max_leverage", None)
+        if leverage_override:
+            configured_leverage = float(leverage_override)
+        if configured_leverage <= 0:
+            self.log.error("Configured leverage must be greater than zero.")
+            return False
+        self._max_leverage = configured_leverage
 
-        effective_equity = min(effective_equity, total_equity)
-        if effective_equity <= 0:
-            self.log.error(
-                "Configured capital limits result in zero effective equity. "
-                f"(total={total_equity:.2f}, usage_pct={usage_pct:.2%}, "
-                f"max_absolute={max_absolute:.2f})"
+        try:
+            capital_allocation, target_notional, usage_limit, leverage_limit = (
+                self._resolve_capital_budgets(
+                    account_equity=total_equity,
+                    usage_pct=usage_pct,
+                    quote_currency=str(quote_currency),
+                )
             )
+        except ValueError as exc:
+            self.log.error(f"Failed to resolve capital budgets: {exc}")
             return False
 
-        self._effective_equity_total = effective_equity
+        utilization = capital_allocation / usage_limit if usage_limit > 0 else 0.0
+        notional_utilization = target_notional / leverage_limit if leverage_limit > 0 else 0.0
 
-        reserved_equity = total_equity - effective_equity
-        if reserved_equity > 1e-6:
+        self._effective_equity_total = capital_allocation
+        self._capital_allocation_usd = capital_allocation
+        self._target_notional_usd = target_notional
+
+        cash_reserved = max(total_equity - capital_allocation, 0.0)
+        if cash_reserved > 1e-6:
             self.log.info(
-                f"Capital allocation -> effective={effective_equity:.2f} {quote_currency}, "
-                f"reserved={reserved_equity:.2f} {quote_currency}"
+                f"Capital allocation (margin)={capital_allocation:.2f} {quote_currency}, "
+                f"cash_reserved={cash_reserved:.2f} {quote_currency}, usage={utilization:.2%}"
+            )
+        else:
+            self.log.info(
+                f"Capital allocation (margin)={capital_allocation:.2f} {quote_currency}, "
+                f"usage={utilization:.2%}"
             )
 
-        equity_per_segment = effective_equity / self._segment_count
+        self.log.info(
+            f"Target notional={target_notional:.2f} {quote_currency} "
+            f"(leverage_limit={leverage_limit:.2f}, utilization={notional_utilization:.2%})"
+        )
+
+        equity_per_segment = capital_allocation / self._segment_count
         self._segment_states = [
             SegmentState(
                 idx=idx,
@@ -661,22 +860,22 @@ class FactorExpLiveStrategy(Strategy):
         self._segment_rotation_counter = 0
 
         if self._risk_config:
-            self._max_leverage = float(self._risk_config.max_position_size)
             self._segment_stop_loss_pct = float(self._risk_config.stop_loss)
             self._freeze_duration_bars = int(
                 self._risk_config.max_rebalance_interval or self._freeze_duration_bars
             )
         else:
-            self._max_leverage = 2.0
-            self._segment_stop_loss_pct = 0.05
+            self._segment_stop_loss_pct = float(self.config.stop_loss_pct)
 
         if self._execution_config:
             self._min_order_size = float(self._execution_config.min_order_size)
+        self._apply_instrument_size_constraints()
 
         self._bar_duration_ns = self._calculate_bar_duration_ns()
         self.log.info(
             f"Initialized {self._segment_count} segments | equity per segment={equity_per_segment:.2f}, "
-            f"effective_equity={effective_equity:.2f}, max_leverage={self._max_leverage:.2f}, "
+            f"margin_allocation={capital_allocation:.2f}, target_notional={target_notional:.2f}, "
+            f"max_leverage={self._max_leverage:.2f}, "
             f"stop_loss={self._segment_stop_loss_pct:.2%}, freeze={self._freeze_duration_bars} bars"
         )
         return True
@@ -719,6 +918,41 @@ class FactorExpLiveStrategy(Strategy):
         unrealized = (price - state.avg_entry_price) * state.current_qty
         return state.current_equity + unrealized
 
+    def _get_position_signed_qty(self, position_id: Optional[PositionId]) -> float:
+        """Return signed quantity (long positive, short negative) for a position."""
+        if position_id is None:
+            return 0.0
+
+        try:
+            position = self.cache.position(position_id)
+        except Exception as exc:  # Cache access should not break rebalancing
+            self.log.warning(f"Unable to fetch position {position_id}: {exc}")
+            return 0.0
+
+        if position is None:
+            return 0.0
+
+        signed = getattr(position, "signed_qty", None)
+        if signed is not None:
+            return float(signed)
+
+        quantity = getattr(position, "quantity", None)
+        if quantity is None:
+            return 0.0
+
+        try:
+            qty_value = float(quantity.as_decimal())
+        except Exception:
+            return 0.0
+
+        side = getattr(position, "side", None)
+        side_name = getattr(side, "name", "")
+        if side_name == "SHORT":
+            return -qty_value
+        if side_name == "LONG":
+            return qty_value
+        return qty_value
+
     def _submit_segment_target(self, state: SegmentState, target_qty: float) -> bool:
         """
         Route orders so the segment converges to target quantity.
@@ -735,31 +969,68 @@ class FactorExpLiveStrategy(Strategy):
         current_qty = state.current_qty
         delta = target_qty - current_qty
         if abs(delta) < self._min_order_size:
-            self.log.debug(
+            self.log.info(
                 f"Seg{state.idx}: delta {delta:.6f} below min order {self._min_order_size}, skipping"
             )
             return False
+
+        long_signed_qty = self._get_position_signed_qty(self._long_position_id)
+        short_signed_qty = self._get_position_signed_qty(self._short_position_id)
+        available_long = max(0.0, long_signed_qty)
+        available_short = max(0.0, -short_signed_qty)
 
         operations: list[tuple[OrderSide, float, PositionId, bool]] = []
 
         if delta > 0:
             remaining = delta
+            fully_cleared_short = current_qty >= 0 or abs(current_qty) < self._min_order_size
             if current_qty < 0:
-                cover_qty = min(abs(current_qty), remaining)
+                cover_required = min(abs(current_qty), remaining)
+                cover_qty = min(cover_required, available_short)
                 if cover_qty >= self._min_order_size:
                     operations.append((OrderSide.BUY, cover_qty, self._short_position_id, True))
-                remaining -= cover_qty
-            if remaining >= self._min_order_size:
+                    available_short -= cover_qty
+                    remaining -= cover_qty
+                    fully_cleared_short = (current_qty + cover_qty) >= -self._min_order_size
+                else:
+                    if cover_required >= self._min_order_size:
+                        self.log.warning(
+                            f"Seg{state.idx}: expected short inventory {cover_required:.6f} "
+                            f"but only {available_short:.6f} available; skipping new long orders"
+                        )
+                    remaining = 0.0
+            if fully_cleared_short and remaining >= self._min_order_size:
                 operations.append((OrderSide.BUY, remaining, self._long_position_id, False))
+            elif remaining >= self._min_order_size:
+                self.log.debug(
+                    f"Seg{state.idx}: short exposure not cleared (est {current_qty + min(abs(current_qty), available_short):.6f}), "
+                    "deferring long entry"
+                )
         else:
             remaining = abs(delta)
+            fully_cleared_long = current_qty <= 0 or current_qty < self._min_order_size
             if current_qty > 0:
-                reduce_qty = min(current_qty, remaining)
+                reduce_required = min(current_qty, remaining)
+                reduce_qty = min(reduce_required, available_long)
                 if reduce_qty >= self._min_order_size:
                     operations.append((OrderSide.SELL, reduce_qty, self._long_position_id, True))
-                remaining -= reduce_qty
-            if remaining >= self._min_order_size:
+                    available_long -= reduce_qty
+                    remaining -= reduce_qty
+                    fully_cleared_long = (current_qty - reduce_qty) <= self._min_order_size
+                else:
+                    if reduce_required >= self._min_order_size:
+                        self.log.warning(
+                            f"Seg{state.idx}: expected long inventory {reduce_required:.6f} "
+                            f"but only {available_long:.6f} available; skipping new short orders"
+                        )
+                    remaining = 0.0
+            if fully_cleared_long and remaining >= self._min_order_size:
                 operations.append((OrderSide.SELL, remaining, self._short_position_id, False))
+            elif remaining >= self._min_order_size:
+                self.log.debug(
+                    f"Seg{state.idx}: long exposure not cleared (est {current_qty - min(current_qty, available_long):.6f}), "
+                    "deferring short entry"
+                )
 
         if not operations:
             return False
@@ -979,8 +1250,17 @@ class FactorExpLiveStrategy(Strategy):
             return
 
         target_weight = factor_value * float(self._position_scale)
-        target_notional = target_weight * segment_equity
         max_notional = abs(segment_equity) * self._max_leverage
+        target_notional = target_weight * max_notional
+        self.log.info(
+            f"Seg{state.idx}: current_capital={segment_equity:.2f}, max_notional={max_notional:.2f}, "
+            f"factor={factor_value:.4f}, target_weight={target_weight:.4f}, target_notional={target_notional:.2f}",
+            LogColor.YELLOW
+        )
+        self.log.info(
+            f"Seg{state.idx}: max_notional={max_notional:.2f} (leverage={self._max_leverage:.2f})",
+            LogColor.YELLOW
+        )
 
         if target_notional > max_notional:
             target_notional = max_notional
@@ -988,6 +1268,10 @@ class FactorExpLiveStrategy(Strategy):
             target_notional = -max_notional
 
         target_qty = target_notional / price
+        self.log.info(
+            f"Seg{state.idx}: price={price:.2f}, target_qty(before rounding)={target_qty:.6f}",
+            LogColor.YELLOW
+        )
 
         if segment_equity > state.peak_equity:
             state.peak_equity = segment_equity
@@ -1073,25 +1357,45 @@ class FactorExpLiveStrategy(Strategy):
 
     def _log_indicator_progress(self, *, force: bool = False) -> None:
         """Emit indicator warmup progress with remaining count."""
-        indicator = self._factor_indicator
-        if indicator is None:
+        if not self._factor_indicators:
             return
-        required = indicator.required_history
-        count = indicator.count
-        remaining = max(required - count, 0)
-        if not force and remaining not in (0, required):
-            stride = max(required // 10, 1)
-            if count % stride != 0:
-                return
-        if not force and remaining == self._last_indicator_remaining:
+
+        progress_entries: list[tuple[str, int, int, int]] = []
+        for factor_id, indicator in self._factor_indicators.items():
+            required = indicator.required_history
+            count = indicator.count
+            remaining = max(required - count, 0)
+            progress_entries.append((factor_id, required, count, remaining))
+
+        if not progress_entries:
             return
-        self._last_indicator_remaining = remaining
-        if remaining > 0:
-            self._warmup_completion_logged = False
-        self.log.info(
-            f"Indicator warmup progress: {count}/{required} (remaining {remaining})"
+
+        worst_factor, worst_required, worst_count, worst_remaining = max(
+            progress_entries, key=lambda entry: entry[3]
         )
-        if remaining == 0:
+
+        if not force and worst_remaining not in (0, worst_required):
+            stride = max(worst_required // 10, 1)
+            if stride > 0 and worst_count % stride != 0:
+                return
+
+        if not force and worst_remaining == self._last_indicator_remaining:
+            return
+
+        self._last_indicator_remaining = worst_remaining
+
+        if worst_remaining > 0:
+            self._warmup_completion_logged = False
+
+        summary = ", ".join(
+            f"{factor_id}:{count}/{required}"
+            for factor_id, required, count, _ in progress_entries
+        )
+        self.log.info(
+            f"Indicator warmup progress: [{summary}] | worst_remaining={worst_remaining}"
+        )
+
+        if worst_remaining == 0:
             if not self._warmup_completion_logged:
                 self._log_indicator_snapshot(reason="warmup complete")
                 self._warmup_completion_logged = True
@@ -1104,17 +1408,36 @@ class FactorExpLiveStrategy(Strategy):
 
     def _log_indicator_snapshot(self, *, reason: str) -> None:
         """Log the latest indicator value and timestamp for diagnostics."""
-        indicator = self._factor_indicator
-        if indicator is None or indicator.count == 0:
+        if not self._factor_indicators:
             return
+
+        valid_values: dict[str, float] = {}
+        details: list[str] = []
+
+        for factor_id, indicator in self._factor_indicators.items():
+            if indicator.count == 0:
+                continue
+            try:
+                value = float(indicator.value)
+            except (TypeError, ValueError):
+                continue
+            if math.isnan(value) or math.isinf(value):
+                continue
+            valid_values[factor_id] = value
+            details.append(f"{factor_id}={value:.6f} (count={indicator.count})")
+
+        if not valid_values:
+            return
+
+        self._latest_factor_values = valid_values
         ts_ns = self._last_indicator_timestamp_ns
         if ts_ns is None:
             ts_ns = self._clock.timestamp_ns()
         ts_iso = datetime.fromtimestamp(ts_ns / 1_000_000_000, tz=timezone.utc).isoformat()
-        value = float(indicator.value)
-        self._latest_factor_value = value
+        avg_value = sum(valid_values.values()) / len(valid_values)
+        self._latest_factor_value = avg_value
         self.log.info(
-            f"Indicator snapshot ({reason}): ts={ts_iso}, value={value:.6f}, count={indicator.count}"
+            f"Indicator snapshot ({reason}): ts={ts_iso}, avg={avg_value:.6f}, factors=[{'; '.join(details)}]"
         )
 
     def on_quote_tick(self, tick: QuoteTick):
@@ -1136,6 +1459,11 @@ class FactorExpLiveStrategy(Strategy):
         bar : Bar
             The received bar data
         """
+        # show bar info for diagnostics
+        self.log.info(
+            f"Received bar: {bar}"
+        )
+
         if not self._segment_states:
             self.log.debug("Segments not initialized yet")
             return
@@ -1152,20 +1480,46 @@ class FactorExpLiveStrategy(Strategy):
         price = float(bar.close.as_decimal())
         self._last_bar_close = price
 
-        raw_value = float(self._factor_indicator.value)
-        factor_value = raw_value
+        factor_values: dict[str, float] = {}
+        for factor_id, indicator in self._factor_indicators.items():
+            try:
+                value = float(indicator.value)
+            except (TypeError, ValueError):
+                continue
+            if math.isnan(value) or math.isinf(value):
+                self.log.warning(
+                    f"Discarding invalid factor value for {factor_id}: {value}"
+                )
+                continue
+            factor_values[factor_id] = value
 
+        if not factor_values:
+            self.log.warning("All factor values invalid this bar; skipping signal generation.")
+            return
+
+        avg_raw = sum(factor_values.values()) / len(factor_values)
+        factor_value = avg_raw
         self._last_indicator_timestamp_ns = bar.ts_event
-        if abs(factor_value) < self._min_signal_magnitude:
+        if abs(avg_raw) < self._min_signal_magnitude:
             factor_value = 0.0
 
+        # if factor_value >= 5.0:
+        #     factor_value = 5.0
+        # elif factor_value <= -5.0:
+        #     factor_value = -5.0
+
+        self._latest_factor_values = factor_values
         self._latest_factor_value = factor_value
 
         bar_time = datetime.fromtimestamp(
             bar.ts_event / 1_000_000_000, tz=timezone.utc
         ).isoformat()
+        factor_details = ", ".join(
+            f"{factor_id}={value:.6f}" for factor_id, value in factor_values.items()
+        )
         self.log.info(
-            f"Factor value @ {bar_time}: raw={raw_value:.6f}, effective={factor_value:.6f}, close={price:.4f}"
+            f"Factor values @ {bar_time}: avg_raw={avg_raw:.6f}, effective={factor_value:.6f}, "
+            f"factors=[{factor_details}]"
         )
 
         # Periodic portfolio monitoring (every 10 bars to avoid noise)
@@ -1193,12 +1547,16 @@ class FactorExpLiveStrategy(Strategy):
 
     def _indicators_ready(self) -> bool:
         """Check if the FactorExp indicator has sufficient data."""
-        indicator = self._factor_indicator
-        return bool(
-            indicator
-            and indicator.initialized
-            and indicator.count >= indicator.required_history
-        )
+        if not self._factor_indicators:
+            return False
+
+        for indicator in self._factor_indicators.values():
+            if not (
+                indicator.initialized
+                and indicator.count >= indicator.required_history
+            ):
+                return False
+        return True
 
     def on_stop(self):
         """Stop hook ensuring segment ledger is flattened."""
@@ -1216,6 +1574,34 @@ class FactorExpLiveStrategy(Strategy):
             except Exception as exc:
                 self.log.warning(f"Unable to cancel indicator warmup monitor: {exc}")
             self._indicator_progress_timer_name = None
+
+        instrument_id = self.config.instrument_id
+        msgbus = getattr(self, "_msgbus", None)
+
+        if msgbus is not None:
+            quote_topic = (
+                f"data.quotes.{instrument_id.venue}.{instrument_id.symbol.topic()}"
+            )
+            if msgbus.is_subscribed(quote_topic, self.handle_quote_tick):
+                try:
+                    self.unsubscribe_quote_ticks(instrument_id)
+                    self.log.info(f"Unsubscribed quote ticks for {instrument_id}.")
+                except Exception as exc:
+                    self.log.debug(
+                        f"Unable to unsubscribe quote ticks for {instrument_id}: {exc}"
+                    )
+
+            trade_topic = (
+                f"data.trades.{instrument_id.venue}.{instrument_id.symbol.topic()}"
+            )
+            if msgbus.is_subscribed(trade_topic, self.handle_trade_tick):
+                try:
+                    self.unsubscribe_trade_ticks(instrument_id)
+                    self.log.info(f"Unsubscribed trade ticks for {instrument_id}.")
+                except Exception as exc:
+                    self.log.debug(
+                        f"Unable to unsubscribe trade ticks for {instrument_id}: {exc}"
+                    )
 
         self.log.info("FactorExpLiveStrategy stopped")
         self.show_portfolio_info("Portfolio state (Strategy stopped)")
@@ -1237,6 +1623,7 @@ class FactorExpLiveStrategy(Strategy):
         self._order_pending_delta.clear()
         self._segment_index = 0
         self._segment_rotation_counter = 0
+        self._latest_factor_values = {}
         self._latest_factor_value = None
         self._last_bar_close = None
         self._last_indicator_remaining = None
@@ -1265,6 +1652,7 @@ class FactorExpLiveStrategy(Strategy):
         return {
             "last_bar_close": self._last_bar_close,
             "latest_factor_value": self._latest_factor_value,
+            "latest_factor_values": self._latest_factor_values,
             "segments": [
                 {
                     "idx": state.idx,
@@ -1284,6 +1672,7 @@ class FactorExpLiveStrategy(Strategy):
         """Restore ledger state after serialization."""
         self._last_bar_close = state.get("last_bar_close")
         self._latest_factor_value = state.get("latest_factor_value")
+        self._latest_factor_values = state.get("latest_factor_values", {})
 
         segments_data = state.get("segments", [])
         if segments_data and len(segments_data) == len(self._segment_states):
@@ -1365,15 +1754,19 @@ class FactorExpLiveStrategy(Strategy):
             color=LogColor.BLUE,
         )
 
-        if self._latest_factor_value is not None:
+        if self._latest_factor_value is not None and self._latest_factor_values:
+            details = ", ".join(
+                f"{factor_id}={value:.4f}"
+                for factor_id, value in self._latest_factor_values.items()
+            )
             self.log.info(
-                f"Factor {self._factor_id}: {self._latest_factor_value:.6f} "
-                f"(min_signal {self._min_signal_magnitude:.3f})",
+                f"Factor avg: {self._latest_factor_value:.6f} "
+                f"(min_signal {self._min_signal_magnitude:.3f}) | components=[{details}]",
                 color=LogColor.GREEN,
             )
         else:
             self.log.info(
-                f"Factor {self._factor_id}: warming up...",
+                f"Factors {', '.join(self._factor_ids)}: warming up...",
                 color=LogColor.GREEN,
             )
 
@@ -1432,7 +1825,9 @@ class FactorExpLiveStrategy(Strategy):
             "depleted_segments": depleted_segments,
             "factor": {
                 "id": self._factor_id,
+                "ids": list(self._factor_ids),
                 "value": self._latest_factor_value,
+                "component_values": self._latest_factor_values,
                 "min_signal": self._min_signal_magnitude,
                 "required_history": self._warmup_bars,
                 "indicator_ready": self._indicators_ready(),
@@ -1440,6 +1835,9 @@ class FactorExpLiveStrategy(Strategy):
             "risk_config": {
                 "max_account_usage_pct": float(self.config.max_account_usage_pct),
                 "max_absolute_exposure": self.config.max_absolute_exposure,
+                "capital_allocation_usd": self._capital_allocation_usd,
+                "target_notional_usd": self._target_notional_usd,
+                "max_leverage": self._max_leverage,
                 "position_risk_pct": float(self.config.position_risk_pct),
                 "stop_loss_pct": self.config.stop_loss_pct,
             },

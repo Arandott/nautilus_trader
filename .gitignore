@@ -111,3 +111,4 @@ factorexp_backtest/research/notebooks/*
 /reports
 
 *.fea
+factorexp_backtest/configs/factors.yaml

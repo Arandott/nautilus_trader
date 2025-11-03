@@ -74,6 +74,7 @@ Thumbs.db
 # Trading specific
 data/logs/*.log
 data/cache/*.json
+data/catalog/live
 data/backups/*.bak
 *.key
 *.pem
@@ -83,3 +84,4 @@ encryption.key
 # Temporary files
 *.tmp
 *.temp
+*.feather

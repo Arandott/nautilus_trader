@@ -24,6 +24,8 @@ cdef class BarBuilder:
     cdef Price _close
     cdef Quantity volume
 
+    cdef Logger _log 
+
     cdef double _ext_amt_accum
     cdef double _ext_amt_multiplier
 

@@ -25,15 +25,11 @@ from nautilus_trader.persistence.config import StreamingConfig
 
 
 class TradingConfig:
-    """Trading configuration container with dynamic account size support."""
+    """Trading configuration container for live trading node."""
 
     def __init__(self):
         self.trading_mode = os.getenv("TRADING_MODE", "testnet")
         self.is_testnet = self.trading_mode == "testnet"
-
-        # Account size detection for dynamic configuration
-        self.account_size_usd = self._detect_account_size()
-        self.is_small_account = self.account_size_usd <= 500 if self.account_size_usd else False
 
         # Portfolio monitoring settings
         self.portfolio_update_interval = int(os.getenv("PORTFOLIO_UPDATE_INTERVAL_SEC", 5))
@@ -41,7 +37,7 @@ class TradingConfig:
         self.alert_threshold_pnl_pct = float(os.getenv("ALERT_THRESHOLD_PNL_PCT", 0.02))
 
         # Logging settings
-        self.log_level = os.getenv("LOG_LEVEL", "DEBUG")  # Reduced from DEBUG to avoid excessive logging
+        self.log_level = os.getenv("LOG_LEVEL", "INFO")  # Reduced from DEBUG to avoid excessive logging
         self.log_level_file = os.getenv("LOG_LEVEL_FILE", "DEBUG")
         self.enable_structured_logging = os.getenv("ENABLE_STRUCTURED_LOGGING", "true").lower() == "true"
 
@@ -55,39 +51,6 @@ class TradingConfig:
         # Futures leverage controls
         self._futures_leverage_default = self._parse_leverage_default()
         self._futures_leverage_overrides = self._parse_leverage_overrides()
-
-    def _detect_account_size(self) -> float | None:
-        """Detect account size from environment variable."""
-        account_size_env = os.getenv("ACCOUNT_SIZE_USD", "")
-        try:
-            if account_size_env and account_size_env.lower() not in ["", "standard"]:
-                return float(account_size_env)
-        except ValueError:
-            pass
-        return None
-
-    def get_dynamic_notional_limits(self) -> dict[str, float]:
-        """Calculate dynamic notional limits based on account size."""
-        if self.account_size_usd and self.account_size_usd <= 500:
-            # Small account limits - much more conservative
-            base_limit = min(self.account_size_usd * 0.6, 300)  # 60% of account or $300 max
-            return {
-                "BTCUSDT-PERP.BINANCE": base_limit,
-                "ETHUSDT-PERP.BINANCE": base_limit * 0.8,  # Slightly lower for ETH
-            }
-        elif self.account_size_usd and self.account_size_usd <= 2000:
-            # Medium account limits
-            base_limit = self.account_size_usd * 0.4  # 40% of account
-            return {
-                "BTCUSDT-PERP.BINANCE": base_limit,
-                "ETHUSDT-PERP.BINANCE": base_limit * 0.8,
-            }
-        else:
-            # Large account limits (original values)
-            return {
-                "BTCUSDT-PERP.BINANCE": 3000,
-                "ETHUSDT-PERP.BINANCE": 2000,
-            }
 
     def _parse_leverage_default(self) -> int | None:
         """Read FUTURES_LEVERAGE_DEFAULT from environment."""
@@ -184,12 +147,8 @@ def create_trading_node_config(api_credentials: dict[str, str | None], instrumen
     """
     Create trading node configuration with dynamic risk management and precision instrument loading.
     
-    Automatically adjusts risk limits based on account size:
-    - Small accounts (≤$500): Conservative limits (60% of account)
-    - Medium accounts (≤$2000): Moderate limits (40% of account)  
-    - Large accounts (>$2000): Standard limits ($3000/$2000)
-    
-    Only loads data for instruments that will actually be traded, improving performance.
+    Loads data and configures execution for the specified instruments while applying
+    optional leverage overrides and portfolio monitoring settings.
     
     Parameters
     ----------
@@ -258,13 +217,12 @@ def create_trading_node_config(api_credentials: dict[str, str | None], instrumen
             debug=True,
         ),
 
-        # Dynamic Risk Engine with account-size-appropriate limits
+        # Dynamic Risk Engine with configurable rate limits
         risk_engine=LiveRiskEngineConfig(
             graceful_shutdown_on_exception=True,
             bypass=False,  # Enable all risk checks for live trading
             max_order_submit_rate="20/00:00:01",      # Max 20 orders per second
             max_order_modify_rate="10/00:00:01",      # Max 10 modifications per second
-            max_notional_per_order=config.get_dynamic_notional_limits(),  # Dynamic limits based on account size
             debug=True,  # Enable detailed risk logging
         ),
 

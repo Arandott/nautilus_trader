@@ -31,48 +31,30 @@ python main.py
 
 ### Step 3: Customize Your Trading (Optional)
 
-Edit `main.py` at the bottom to control:
-- **Which contracts to trade** (instruments)
-- **How much money to use** (account_size_usd)
+Edit `main.py` at the bottom to control instruments, or use environment variables for capital settings.
 
 ```python
 # Uncomment and customize these lines in main.py:
 custom_instruments = ["BTCUSDT-PERP.BINANCE", "ETHUSDT-PERP.BINANCE"]
-custom_account_size = 200.0  # USD
 
 # Then change the last line to:
-asyncio.run(main(instruments=custom_instruments, account_size_usd=custom_account_size))
+asyncio.run(main(instruments=custom_instruments))
 ```
 
-## 💰 Account Size Settings
+## 💰 Capital Settings
 
-The system automatically optimizes based on your account size:
-
-**Small Accounts (≤$500)**:
-- Conservative settings: 60% max usage, 1.5% position risk
-- Tighter stop losses: 1.2%
-- Fewer daily trades: 10 max
-
-**Standard Accounts (>$500)**:
-- Standard settings: 80% max usage, 2% position risk  
-- Normal stop losses: 1.5%
-- More daily trades: 20 max
-
+- Set `FACTOREXP_CAPITAL_ALLOCATION_USD` for the desired margin budget (pre-leverage).
+- Optionally set `FACTOREXP_TARGET_NOTIONAL_USD` if you want to cap the leveraged exposure.
+- `FACTOREXP_MAX_LEVERAGE` overrides the venue leverage used for deriving notional targets.
+- Leave them blank to rely on StrategyConfig defaults (margin budget defaults to 5,000 USD).
 **Example Configurations**:
 ```python
-# $200 small account trading BTC only
+# Custom instruments
 asyncio.run(main(
-    instruments=["BTCUSDT-PERP.BINANCE"], 
-    account_size_usd=200.0
+    instruments=["BTCUSDT-PERP.BINANCE", "ETHUSDT-PERP.BINANCE"]
 ))
 
-# $1000 account trading BTC, ETH, SOL
-asyncio.run(main(
-    instruments=["BTCUSDT-PERP.BINANCE", "ETHUSDT-PERP.BINANCE", "SOLUSDT-PERP.BINANCE"],
-    account_size_usd=1000.0  
-))
-
-# Default settings (uses environment variables if set)
+# Default settings (uses environment variables / StrategyConfig defaults)
 asyncio.run(main())
 ```
 
@@ -119,7 +101,11 @@ You can still use environment variables for convenience:
 ```bash
 # In .env file
 TRADING_INSTRUMENTS=BTCUSDT-PERP.BINANCE,ETHUSDT-PERP.BINANCE
-ACCOUNT_SIZE_USD=500
+FACTOREXP_CAPITAL_ALLOCATION_USD=2500
+FACTOREXP_TARGET_NOTIONAL_USD=7500
+FACTOREXP_FACTOR_IDS=posvolume_vwap_ret_volatility_96,negvolume_vwap_ret_volatility_96,statenum1_close_ret_std_96
+# Legacy fallback（单因子）:
+# FACTOREXP_FACTOR_ID=vwap_return_std
 
 # Email alerts (optional)
 ENABLE_EMAIL_ALERTS=true
@@ -129,11 +115,12 @@ EMAIL_PASSWORD=your_app_password
 
 ### Strategy Parameters
 
-The strategy uses:
-- **EMA signals**: Fast EMA (12) vs Slow EMA (26)
-- **Risk management**: Dynamic based on account size
-- **Stop losses**: 1.2-1.5% depending on account size
-- **Position sizing**: 1.5-2% risk per trade
+Key parameters:
+- **FactorExp 指标平均**: 支持 1～N 个因子，信号为 Clip/ZScore 后的等权均值（范围 [-2, 2]）
+- **Margin budget**: `capital_allocation_usd`（默认 5,000，可通过环境变量覆盖）
+- **Target notional**: `target_notional_usd`（默认按杠杆推导，可显式配置）
+- **Stop losses**: 1.5% 默认（无风险配置时 fallback）
+- **Position sizing**: 2% risk per trade（可在 StrategyConfig 中调整）
 
 ## 🛠️ Troubleshooting
 
@@ -158,33 +145,21 @@ The strategy uses:
 
 ## 🎯 Quick Examples
 
-**Example 1: $200 Account, BTC Only**
+**Example 1: Override instruments in code**
 ```python
 # Edit main.py bottom:
 asyncio.run(main(
-    instruments=["BTCUSDT-PERP.BINANCE"],
-    account_size_usd=200.0
+    instruments=["BTCUSDT-PERP.BINANCE", "SOLUSDT-PERP.BINANCE"]
 ))
 ```
 
-**Example 2: $1000 Account, Multiple Coins**  
-```python
-# Edit main.py bottom:
-asyncio.run(main(
-    instruments=[
-        "BTCUSDT-PERP.BINANCE",
-        "ETHUSDT-PERP.BINANCE", 
-        "SOLUSDT-PERP.BINANCE"
-    ],
-    account_size_usd=1000.0
-))
-```
-
-**Example 3: Use Environment Variables**
+**Example 2: Use environment overrides**
 ```bash
 # Set in .env:
 TRADING_INSTRUMENTS=BTCUSDT-PERP.BINANCE,ETHUSDT-PERP.BINANCE
-ACCOUNT_SIZE_USD=500
+FACTOREXP_CAPITAL_ALLOCATION_USD=2500
+FACTOREXP_TARGET_NOTIONAL_USD=7500
+FACTOREXP_MAX_LEVERAGE=3
 
 # Run with defaults:
 python main.py

@@ -38,6 +38,8 @@ def create_small_account_strategy_example():
 
     print("📊 Small Account Configuration (200 USDT):")
     print(f"  Capital Usage: {small_account_config.max_account_usage_pct:.0%}")
+    if small_account_config.capital_allocation_usd:
+        print(f"  Capital Allocation: ${small_account_config.capital_allocation_usd:,.0f}")
     print(f"  Position Risk: {small_account_config.position_risk_pct:.1%}")
     print(f"  Stop Loss: {small_account_config.stop_loss_pct:.1%}")
     print(f"  Daily Loss Limit: ${small_account_config.max_daily_loss_usd:.0f}")
@@ -45,12 +47,15 @@ def create_small_account_strategy_example():
     print(f"  Max Drawdown: {small_account_config.max_drawdown_pct:.1%}")
     print(f"  Factor Catalog: {small_account_config.factor_config_path}")
     print(f"  Factor ID: {small_account_config.factor_id}")
+    print(f"  Factor IDs: {', '.join(small_account_config.factor_ids)}")
     print(f"  Z-Score Period: {small_account_config.zscore_period}")
     print(f"  Min Signal Magnitude: {small_account_config.min_signal_magnitude}")
 
     # Example position sizing calculation
     account_balance = 200.0
-    effective_equity = account_balance * float(small_account_config.max_account_usage_pct)
+    effective_equity = float(small_account_config.capital_allocation_usd or (
+        account_balance * float(small_account_config.max_account_usage_pct)
+    ))
     max_risk_per_trade = effective_equity * float(small_account_config.position_risk_pct)
 
     print("\n💰 Position Sizing Example:")
@@ -109,6 +114,11 @@ def compare_configurations():
 
     comparisons = [
         ("Capital Usage", f"{standard_config.max_account_usage_pct:.0%}", f"{small_config.max_account_usage_pct:.0%}"),
+        (
+            "Capital Allocation",
+            f"${(standard_config.capital_allocation_usd or 0):.0f}",
+            f"${(small_config.capital_allocation_usd or 0):.0f}",
+        ),
         ("Position Risk", f"{standard_config.position_risk_pct:.1%}", f"{small_config.position_risk_pct:.1%}"),
         ("Stop Loss", f"{standard_config.stop_loss_pct:.1%}", f"{small_config.stop_loss_pct:.1%}"),
         ("Take Profit", f"{standard_config.take_profit_pct:.1%}", f"{small_config.take_profit_pct:.1%}"),
@@ -116,6 +126,7 @@ def compare_configurations():
         ("Daily Loss", f"${standard_config.max_daily_loss_usd:.0f}", f"${small_config.max_daily_loss_usd:.0f}"),
         ("Max Drawdown", f"{standard_config.max_drawdown_pct:.1%}", f"{small_config.max_drawdown_pct:.1%}"),
         ("Factor ID", standard_config.factor_id, small_config.factor_id),
+        ("Factor IDs", ", ".join(standard_config.factor_ids), ", ".join(small_config.factor_ids)),
         ("Z-Score Period", standard_config.zscore_period, small_config.zscore_period),
         ("Min Signal", f"{standard_config.min_signal_magnitude:.3f}", f"{small_config.min_signal_magnitude:.3f}"),
     ]

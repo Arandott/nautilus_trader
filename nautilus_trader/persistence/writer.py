@@ -143,6 +143,7 @@ class StreamingFeatherWriter:
         self.flush_interval_ms = flush_interval_ms or 1000
         self._last_flush = self.clock.utc_now()
         self.missing_writers: set[type] = set()
+        self._missing_instrument_writers: set[tuple[str, str]] = set()
 
     def _update_next_rotation_time(self, table_name: str | tuple[str, str]) -> None:
         """
@@ -370,32 +371,42 @@ class StreamingFeatherWriter:
             bar: Bar = obj
             table += f"_{str(bar.bar_type).lower()}"
 
-        if table not in self._writers:
-            self.logger.debug(f"Writer not setup for table '{table}'")
-            if table.startswith("custom_signal"):
-                self._create_writer(cls=cls)
-            elif table.startswith(("bar", "binance_bar")):
-                self._create_writer(cls=cls, table_name=table)
-            elif table in self._per_instrument_writers:
-                key = (table, obj.instrument_id.value)  # type: ignore
-                instrument = self.cache.instrument(obj.instrument_id)  # type: ignore
-                if key not in self._instrument_writers and instrument is not None:
-                    self._create_instrument_writer(cls=cls, obj=obj)
-            elif cls not in self.missing_writers:
-                self.logger.warning(f"Can't find writer for cls: {cls}")
-                self.missing_writers.add(cls)
-                return
-            else:
-                return
+        writer: RecordBatchStreamWriter | None
 
         if table in self._per_instrument_writers:
-            key = (table, obj.instrument_id.value)  # type: ignore
-            if key in self._instrument_writers:
-                writer: RecordBatchStreamWriter = self._instrument_writers[key]
-            else:
-                return
+            key = (table, obj.instrument_id.value)  # type: ignore[attr-defined]
+            writer = self._instrument_writers.get(key)
+            if writer is None:
+                instrument = self.cache.instrument(obj.instrument_id)  # type: ignore[attr-defined]
+                if instrument is None:
+                    if key not in self._missing_instrument_writers:
+                        self._missing_instrument_writers.add(key)
+                        self.logger.debug(
+                            f"Instrument cache not ready for table '{table}' and instrument '{obj.instrument_id.value}'",
+                        )
+                    return
+                self._create_instrument_writer(cls=cls, obj=obj)
+                self._missing_instrument_writers.discard(key)
+                writer = self._instrument_writers.get(key)
+                if writer is None:
+                    return
         else:
-            writer: RecordBatchStreamWriter = self._writers[table]  # type: ignore
+            writer = self._writers.get(table)  # type: ignore[index]
+            if writer is None:
+                self.logger.debug(f"Writer not setup for table '{table}'")
+                if table.startswith("custom_signal"):
+                    self._create_writer(cls=cls)
+                elif table.startswith(("bar", "binance_bar")):
+                    self._create_writer(cls=cls, table_name=table)
+                elif cls not in self.missing_writers:
+                    self.logger.warning(f"Can't find writer for cls: {cls}")
+                    self.missing_writers.add(cls)
+                    return
+                else:
+                    return
+                writer = self._writers.get(table)  # type: ignore[index]
+                if writer is None:
+                    return
 
         serialized = ArrowSerializer.serialize_batch([obj], data_cls=cls)
         if not serialized:

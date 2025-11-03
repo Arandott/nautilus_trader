@@ -39,6 +39,8 @@ cdef class BarBuilder:
         self._close = None
         self.volume = Quantity.zero_c(precision=self.size_precision)
 
+        self._log = Logger(name=type(self).__name__)
+
         self._ext_amt_accum = 0.0
         self._ext_amt_multiplier = 1.0
         if instrument is not None and hasattr(instrument, 'multiplier'):
@@ -78,6 +80,7 @@ cdef class BarBuilder:
 
         if self.ts_last == 0:
             self.ts_last = partial_bar.ts_init
+            self._log.debug(f"set_partial set ts_last to be {partial_bar.ts_init}")
 
         self._partial_set = True
         self.initialized = True
@@ -117,6 +120,8 @@ cdef class BarBuilder:
         self.volume._mem.raw += size._mem.raw
         self.count += 1
         self.ts_last = ts_event
+        if self.count == 1:
+            self._log.debug(f"Trade tick set ts_last to {self.ts_last}")
 
         # Accumulate amt: price * size * multiplier
         self._ext_amt_accum += price.as_double() * size.as_double() * self._ext_amt_multiplier
@@ -129,6 +134,7 @@ cdef class BarBuilder:
         Condition.not_none(bar, "bar")
 
         if ts_init < self.ts_last:
+            self._log.debug(f"Skipping out-of-order bar update: ts_init={pd.to_datetime(ts_init, unit='ns', utc=True)} < ts_last={pd.to_datetime(self.ts_last, unit='ns', utc=True)}")
             return  # Not applicable
 
         if self._open is None:
@@ -148,6 +154,8 @@ cdef class BarBuilder:
         self.volume._mem.raw += volume._mem.raw
         self.count += 1
         self.ts_last = ts_init
+        self._log.debug(f"update_bar set self.ts_last to be {pd.to_datetime(ts_init, unit='ns', utc=True)}")
+
 
         # Accumulate amt from child bar - fail fast if missing
         if not hasattr(bar, 'amt'):

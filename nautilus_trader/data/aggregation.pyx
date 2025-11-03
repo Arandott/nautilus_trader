@@ -1150,6 +1150,8 @@ cdef class TimeBarAggregator(BarAggregator):
             self._batch_pre_update(ts_init)
 
         self._builder.update_bar(bar, volume, ts_init)
+        self._log.debug(f"Updated TimeBarAggregator with bar: {bar}")
+        self._log.debug(f"Builder state: count={self._builder.count}, open={self._builder._open}, high={self._builder._high}, low={self._builder._low}, close={self._builder._close}, volume={self._builder.volume}")
 
         if self._build_on_next_tick:
             if ts_init <= self._stored_close_ns:

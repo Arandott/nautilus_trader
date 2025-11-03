@@ -2,8 +2,8 @@
 """
 FactorExp Live Trading Startup Script
 
-Professional startup script with comprehensive pre-flight checks, 
-environment validation, and support for both standard and small account configurations.
+Professional startup script with comprehensive pre-flight checks and
+environment validation for the StrategyConfig-based live trading system.
 """
 
 import asyncio
@@ -56,7 +56,9 @@ def check_environment():
     optional_vars = {
         "TRADING_MODE": "testnet",
         "LOG_LEVEL": "INFO",
-        "ACCOUNT_SIZE_USD": "Standard account configuration"
+        "FACTOREXP_CAPITAL_ALLOCATION_USD": "StrategyConfig fallback",
+        "FACTOREXP_TARGET_NOTIONAL_USD": "Derived from margin × leverage",
+        "FACTOREXP_MAX_LEVERAGE": "Strategy/risk config default",
     }
 
     for var, default in optional_vars.items():
@@ -145,29 +147,15 @@ def show_configuration():
     """Display current configuration using new StrategyConfig architecture."""
     print("\n📋 Current Configuration (StrategyConfig Architecture):")
 
-    # Core trading settings
     trading_mode = os.getenv("TRADING_MODE", "testnet")
-    account_size = os.getenv("ACCOUNT_SIZE_USD", "Standard")
-
     print(f"  🔧 Trading Mode: {trading_mode}")
-    print(f"  💰 Account Configuration: {account_size}")
 
-    # Account type detection
-    try:
-        account_size_float = float(account_size) if account_size != "Standard" else 0
-        if account_size_float > 0 and account_size_float <= 500:
-            print("  📊 Account Type: Small Account (≤$500) - Optimized settings enabled")
-        else:
-            print("  📊 Account Type: Standard Account")
-    except ValueError:
-        print("  📊 Account Type: Standard Account")
-
-    # New StrategyConfig parameters (defaults)
+    # Strategy defaults
     print("\n  🎯 Strategy Configuration:")
-    print("    • Capital Usage: 80% (60% for small accounts)")
-    print("    • Position Risk: 2% (1.5% for small accounts)")
-    print("    • Stop Loss: 1.5% (1.2% for small accounts)")
-    print("    • Max Daily Trades: 20 (10 for small accounts)")
+    print("    • Capital Usage ceiling: 80% of detected equity (configurable)")
+    print("    • Margin budget: via FACTOREXP_CAPITAL_ALLOCATION_USD or StrategyConfig default")
+    print("    • Target notional: via FACTOREXP_TARGET_NOTIONAL_USD or margin × leverage")
+    print("    • Max leverage override: FACTOREXP_MAX_LEVERAGE (optional)")
 
     factor_config_path = os.getenv("FACTOREXP_CONFIG_PATH", "../factorexp_backtest/configs/factors.yaml")
     factor_id = os.getenv("FACTOREXP_FACTOR_ID", "vwap_return_std")
@@ -175,6 +163,9 @@ def show_configuration():
     clip_min = os.getenv("FACTOREXP_CLIP_MIN", "-2.0")
     clip_max = os.getenv("FACTOREXP_CLIP_MAX", "2.0")
     min_signal = os.getenv("FACTOREXP_MIN_SIGNAL", "0.05")
+    capital_allocation = os.getenv("FACTOREXP_CAPITAL_ALLOCATION_USD", "")
+    target_notional = os.getenv("FACTOREXP_TARGET_NOTIONAL_USD", "")
+    max_leverage = os.getenv("FACTOREXP_MAX_LEVERAGE", "")
 
     print("\n  🧮 FactorExp Alignment:")
     print(f"    • Factor Catalog: {factor_config_path}")
@@ -182,6 +173,14 @@ def show_configuration():
     print(f"    • Z-Score Period: {zscore_period}")
     print(f"    • Clip Bounds: [{clip_min}, {clip_max}]")
     print(f"    • Min Signal Magnitude: {min_signal}")
+    margin_msg = capital_allocation if capital_allocation else "Derived from StrategyConfig"
+    target_notional_msg = target_notional if target_notional else "Derived from margin × leverage"
+    leverage_msg = max_leverage if max_leverage else "Strategy/risk config default"
+    print(f"    • Margin Allocation: {margin_msg}")
+    print(f"    • Target Notional: {target_notional_msg}")
+    print(f"    • Max Leverage Override: {leverage_msg}")
+    print("    • ⚠️ 未消费字段: position_risk_pct / take_profit_pct / use_market_orders / "
+          "max_daily_trades / max_daily_loss_usd / max_drawdown_pct")
 
     # Alert settings
     print("\n  🔔 Alert Configuration:")
@@ -202,58 +201,6 @@ def show_configuration():
         for var in deprecated_found:
             print(f"    • {var} - Now configured via StrategyConfig class")
         print("    Please migrate to new configuration system.")
-
-
-def detect_and_configure_account_type() -> float | None:
-    """Detect account type and offer configuration options."""
-    account_size_env = os.getenv("ACCOUNT_SIZE_USD", "")
-
-    # Try to get account size from environment
-    try:
-        if account_size_env and account_size_env != "Standard":
-            account_size = float(account_size_env)
-            print(f"\n💰 Account size detected: ${account_size:.0f}")
-        else:
-            account_size = None
-    except ValueError:
-        account_size = None
-
-    # If no account size specified, ask user
-    if account_size is None:
-        print("\n💰 Account Configuration:")
-        print("  1. Standard Account (>$500) - Default settings")
-        print("  2. Small Account (≤$500) - Conservative optimized settings")
-        print("  3. Custom Amount - Specify your account size")
-
-        while True:
-            try:
-                choice = input("\nSelect account type (1/2/3): ").strip()
-
-                if choice == "1":
-                    account_size = None  # Use standard configuration
-                    print("✅ Using standard account configuration")
-                    break
-                elif choice == "2":
-                    account_size = 200.0  # Default small account size
-                    print("✅ Using small account optimized configuration")
-                    break
-                elif choice == "3":
-                    size_input = input("Enter your account size in USD: $").strip()
-                    account_size = float(size_input)
-                    if account_size <= 500:
-                        print(f"✅ Using small account configuration for ${account_size:.0f}")
-                    else:
-                        print(f"✅ Using standard account configuration for ${account_size:.0f}")
-                    break
-                else:
-                    print("❌ Invalid choice. Please enter 1, 2, or 3.")
-            except ValueError:
-                print("❌ Invalid amount. Please enter a valid number.")
-            except KeyboardInterrupt:
-                print("\n❌ Configuration cancelled")
-                return None
-
-    return account_size
 
 
 def confirm_trading_mode():
@@ -281,7 +228,7 @@ async def main():
     """Main startup routine with new StrategyConfig architecture support."""
     print("=" * 60)
     print("🚀 FactorExp Live Trading System - Professional Startup")
-    print("   🎯 StrategyConfig Architecture | 💰 Small Account Support")
+    print("   🎯 StrategyConfig Architecture")
     print("=" * 60)
 
     # Step 1: Load environment
@@ -293,25 +240,14 @@ async def main():
         print("\n❌ Pre-flight checks failed. Please fix the issues above.")
         return
 
-    # Step 3: Account configuration
-    account_size = detect_and_configure_account_type()
-    if account_size is None and "ACCOUNT_SIZE_USD" not in os.environ:
-        # User cancelled or error occurred
-        print("❌ Account configuration required")
-        return
-
-    # Set account size in environment for main system
-    if account_size is not None:
-        os.environ["ACCOUNT_SIZE_USD"] = str(account_size)
-
-    # Step 4: Show final configuration
+    # Step 3: Show final configuration
     show_configuration()
 
-    # Step 5: Confirm trading mode
+    # Step 4: Confirm trading mode
     if not confirm_trading_mode():
         return
 
-    # Step 6: Start trading system
+    # Step 5: Start trading system
     print("\n🚀 Starting FactorExp Trading System...")
     print("📊 Using new StrategyConfig architecture with type-safe configurations")
 

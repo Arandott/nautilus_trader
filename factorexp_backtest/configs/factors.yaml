@@ -50,6 +50,115 @@ factors:
     description: "Standard deviation of VWAP returns over 1440 bars (15 days), filtered for positive volume changes"
     requires_extended: true
 
+  posvolume_vwap_ret_volatility_96:
+    name: "Positive Volume VWAP Return Volatility (96)"
+    expression: "Clip(ZScore(TS_Std(When(Greater(TS_Delta($volume, 1), 0), Div(Sub(Div($amt, $volume), TS_Ref(Div($amt, $volume), 1)), TS_Ref(Div($amt, $volume), 1)), Div(0, 0)), 96), 5760), -2, 2)"
+    description: "96-bar volatility of VWAP returns filtered for positive volume delta."
+    requires_extended: true
+
+  negvolume_vwap_ret_volatility_96:
+    name: "Negative Volume VWAP Return Volatility (96)"
+    expression: "Clip(ZScore(TS_Std(When(Less(TS_Delta($volume, 1), 0), Div(Sub(Div($amt, $volume), TS_Ref(Div($amt, $volume), 1)), TS_Ref(Div($amt, $volume), 1)), Div(0, 0)), 96), 5760), -2, 2)"
+    description: "96-bar volatility of VWAP returns filtered for negative volume delta."
+    requires_extended: true
+
+  posvolume_close_ret_volatility_96:
+    name: "Positive Volume Close Return Volatility (96)"
+    expression: "Clip(ZScore(TS_Std(When(Greater(TS_Delta($volume, 1), 0), Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), Div(0, 0)), 96), 5760), -2, 2)"
+    description: "96-bar volatility of close returns filtered for positive volume delta."
+
+  negvolume_close_ret_volatility_96:
+    name: "Negative Volume Close Return Volatility (96)"
+    expression: "Clip(ZScore(TS_Std(When(Less(TS_Delta($volume, 1), 0), Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), Div(0, 0)), 96), 5760), -2, 2)"
+    description: "96-bar volatility of close returns filtered for negative volume delta."
+
+  rsj_close_ret_96:
+    name: "RSJ Close Return Ratio (96)"
+    expression: "Clip(ZScore(Div(Sub(TS_Sum(When(Greater(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), 0), Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), Div(0, 0)), 96), TS_Sum(When(Less(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), 0), Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), Div(0, 0)), 96)), TS_Sum(Pow(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), 2), 96)), 5760), -2, 2)"
+    description: "RSJ ratio of close returns over 96 bars."
+
+  gp1_2_3_96:
+    name: "Close to Open Volatility (96)"
+    expression: "Clip(ZScore(TS_Std(Div($close, $open), 96), 5760), -2, 2)"
+    description: "96-bar volatility of the close/open price ratio."
+
+  smtmny1_ret_to_volume_close_ret_abs_mean_shigh_96:
+    name: "Smart Money Close Abs Return Mean High (96)"
+    expression: "Clip(ZScore(TS_MeanSelQ(Abs(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1))), Div(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), $volume), 96, 0.8, 1.0), 5760), -2, 2)"
+    description: "MeanSelQ of absolute close returns using top 20% return-to-volume scores."
+
+  smtmny1_ret_to_volume_close_ret_abs_mean_slow_96:
+    name: "Smart Money Close Abs Return Mean Low (96)"
+    expression: "Clip(ZScore(TS_MeanSelQ(Abs(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1))), Div(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), $volume), 96, 0.0, 0.2), 5760), -2, 2)"
+    description: "MeanSelQ of absolute close returns using bottom 20% return-to-volume scores."
+
+  smtmny1_ret_to_volume_vwap_ret_abs_mean_shigh_96:
+    name: "Smart Money VWAP Abs Return Mean High (96)"
+    expression: "Clip(ZScore(TS_MeanSelQ(Abs(Div(Sub(Div($amt, $volume), TS_Ref(Div($amt, $volume), 1)), TS_Ref(Div($amt, $volume), 1))), Div(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), $volume), 96, 0.8, 1.0), 5760), -2, 2)"
+    description: "MeanSelQ of absolute VWAP returns using top 20% close return-to-volume scores."
+    requires_extended: true
+
+  smtmny1_ret_to_volume_vwap_ret_abs_mean_slow_96:
+    name: "Smart Money VWAP Abs Return Mean Low (96)"
+    expression: "Clip(ZScore(TS_MeanSelQ(Abs(Div(Sub(Div($amt, $volume), TS_Ref(Div($amt, $volume), 1)), TS_Ref(Div($amt, $volume), 1))), Div(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), $volume), 96, 0.0, 0.2), 5760), -2, 2)"
+    description: "MeanSelQ of absolute VWAP returns using bottom 20% close return-to-volume scores."
+    requires_extended: true
+
+  smtmny1_abs_ret_to_volume_close_ret_abs_mean_shigh_96:
+    name: "Smart Money Abs Close Return Mean High (96)"
+    expression: "Clip(ZScore(TS_MeanSelQ(Abs(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1))), Abs(Div(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), $volume)), 96, 0.8, 1.0), 5760), -2, 2)"
+    description: "MeanSelQ of absolute close returns using absolute return-to-volume weights."
+
+  smtmny1_abs_ret_to_volume_vwap_ret_abs_mean_shigh_96:
+    name: "Smart Money Abs VWAP Return Mean High (96)"
+    expression: "Clip(ZScore(TS_MeanSelQ(Abs(Div(Sub(Div($amt, $volume), TS_Ref(Div($amt, $volume), 1)), TS_Ref(Div($amt, $volume), 1))), Abs(Div(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), $volume)), 96, 0.8, 1.0), 5760), -2, 2)"
+    description: "MeanSelQ of absolute VWAP returns using absolute close return-to-volume weights."
+    requires_extended: true
+
+  statenum1_vwap_ret_std_96:
+    name: "VWAP Return Volatility (96)"
+    expression: "Clip(ZScore(TS_Std(Div(Sub(Div($amt, $volume), TS_Ref(Div($amt, $volume), 1)), TS_Ref(Div($amt, $volume), 1)), 96), 5760), -2, 2)"
+    description: "96-bar volatility of VWAP returns."
+    requires_extended: true
+
+  statenum1_vwap_ret_pow05_mean_96:
+    name: "VWAP Return Pow0.5 Mean (96)"
+    expression: "Clip(ZScore(TS_Mean(Pow(Div(Sub(Div($amt, $volume), TS_Ref(Div($amt, $volume), 1)), TS_Ref(Div($amt, $volume), 1)), 0.5), 96), 5760), -2, 2)"
+    description: "Mean of square-root VWAP returns over 96 bars."
+    requires_extended: true
+
+  statenum1_vwap_ret_pow2_pow05_mean_96:
+    name: "VWAP Return Pow2 Pow0.5 Mean (96)"
+    expression: "Clip(ZScore(TS_Mean(Pow(Pow(Div(Sub(Div($amt, $volume), TS_Ref(Div($amt, $volume), 1)), TS_Ref(Div($amt, $volume), 1)), 2), 0.5), 96), 5760), -2, 2)"
+    description: "Mean of sqrt squared VWAP returns (i.e., abs returns) over 96 bars."
+    requires_extended: true
+
+  statenum1_vwap_ret_pow2_median_96:
+    name: "VWAP Return Pow2 Median (96)"
+    expression: "Clip(ZScore(TS_Quantile(Pow(Div(Sub(Div($amt, $volume), TS_Ref(Div($amt, $volume), 1)), TS_Ref(Div($amt, $volume), 1)), 2), 96, 0.5), 5760), -2, 2)"
+    description: "Median of squared VWAP returns over 96 bars."
+    requires_extended: true
+
+  statenum1_close_ret_std_96:
+    name: "Close Return Volatility (96)"
+    expression: "Clip(ZScore(TS_Std(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), 96), 5760), -2, 2)"
+    description: "96-bar volatility of close returns."
+
+  statenum1_close_ret_pow05_mean_96:
+    name: "Close Return Pow0.5 Mean (96)"
+    expression: "Clip(ZScore(TS_Mean(Pow(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), 0.5), 96), 5760), -2, 2)"
+    description: "Mean of square-root close returns over 96 bars."
+
+  statenum1_close_ret_pow2_pow05_mean_96:
+    name: "Close Return Pow2 Pow0.5 Mean (96)"
+    expression: "Clip(ZScore(TS_Mean(Pow(Pow(Div(Sub($close, TS_Ref($close, 1)), TS_Ref($close, 1)), 2), 0.5), 96), 5760), -2, 2)"
+    description: "Mean of sqrt squared close returns (i.e., abs returns) over 96 bars."
+
+  statenum1_volume_pow05_mean_96:
+    name: "Volume Pow0.5 Mean (96)"
+    expression: "Clip(ZScore(TS_Mean(Pow($volume, 0.5), 96), 5760), -2, 2)"
+    description: "Mean of square-root volume over 96 bars."
+
 # Risk management
 risk_management:
   max_position_size: 2.0      # Maximum position size (2x leverage)

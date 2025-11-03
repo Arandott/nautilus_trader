@@ -9,6 +9,7 @@ Integrates portfolio monitoring, risk management, and FactorExp strategies.
 import asyncio
 import os
 import sys
+import traceback
 from pathlib import Path
 
 
@@ -42,7 +43,7 @@ class FactorExpTradingSystem:
     - Alert management
     """
 
-    def __init__(self, instruments: list[str] = None, account_size_usd: float = None):
+    def __init__(self, instruments: list[str] = None):
         """
         Initialize the trading system with user-configurable parameters.
         
@@ -51,13 +52,9 @@ class FactorExpTradingSystem:
         instruments : List[str], optional
             List of instruments to trade (e.g., ["BTCUSDT-PERP.BINANCE"])
             If None, uses default instruments
-        account_size_usd : float, optional
-            Account size in USD for small account optimization
-            If None, uses standard configuration
         """
         # User-configurable settings using StrategyConfig architecture
         self.instruments = instruments or self._get_default_instruments()
-        self.account_size_usd = account_size_usd or self._detect_account_size()
         self.trading_node: TradingNode = None
         self.strategies: dict[str, Strategy] = {}
 
@@ -88,19 +85,6 @@ class FactorExpTradingSystem:
             print(f"📊 Using default instruments: {default_instruments}")
             return default_instruments
 
-    def _detect_account_size(self) -> float:
-        """Detect account size from environment variable for backward compatibility."""
-        account_size_env = os.getenv("ACCOUNT_SIZE_USD", "")
-        try:
-            if account_size_env and account_size_env.lower() not in ["", "standard"]:
-                account_size = float(account_size_env)
-                print(f"💰 Account size from env: ${account_size:.0f}")
-                return account_size
-        except ValueError:
-            pass
-
-        print("💰 Using standard account configuration")
-        return None
 
     async def initialize(self) -> bool:
         """
@@ -143,6 +127,7 @@ class FactorExpTradingSystem:
 
         except Exception as e:
             print(f"❌ Initialization failed: {e}")
+            traceback.print_exc()
             return False
 
     def _setup_data_directory(self):
@@ -208,30 +193,29 @@ class FactorExpTradingSystem:
             instrument_id = InstrumentId.from_str(instrument_str)
             bar_type = BarType.from_str(f"{instrument_str}-15-MINUTE-LAST-INTERNAL")
 
-            # Create strategy configuration using official FactorExpLiveStrategyConfig
-            if self.account_size_usd and self.account_size_usd <= 500:
-                # Use optimized configuration for small accounts
-                strategy_config = FactorExpLiveStrategyConfig.create_small_account_config(
-                    instrument_id=instrument_id,
-                    bar_type=bar_type,
-                    account_size_usd=self.account_size_usd,
-                    **factor_params,
-                )
-                print(f"📊 Small account config for {instrument_str} (${self.account_size_usd:.0f}):")
-            else:
-                # Use standard configuration
-                strategy_config = FactorExpLiveStrategyConfig(
-                    instrument_id=instrument_id,
-                    bar_type=bar_type,
-                    **factor_params,
-                )
-                print(f"📊 Standard config for {instrument_str}:")
+            config_overrides = dict(factor_params)
+            config_overrides = {key: value for key, value in config_overrides.items() if value is not None}
+
+            strategy_config = FactorExpLiveStrategyConfig(
+                instrument_id=instrument_id,
+                bar_type=bar_type,
+                **config_overrides,
+            )
+            print(f"📊 Strategy config for {instrument_str}:")
 
             # Display configuration
             print(f"  Max account usage: {strategy_config.max_account_usage_pct:.0%}")
-            print(f"  Max absolute exposure: ${strategy_config.max_absolute_exposure:,.0f}")
+            print(f"  Margin fallback (max_absolute_exposure): ${strategy_config.max_absolute_exposure:,.0f}")
+            if strategy_config.capital_allocation_usd:
+                print(f"  Margin allocation: ${strategy_config.capital_allocation_usd:,.0f}")
+            if strategy_config.target_notional_usd:
+                print(f"  Target notional: ${strategy_config.target_notional_usd:,.0f}")
+            if strategy_config.max_leverage:
+                print(f"  Max leverage override: {strategy_config.max_leverage:.2f}x")
             print(f"  Position risk: {strategy_config.position_risk_pct:.1%}")
             print(f"  Stop loss: {strategy_config.stop_loss_pct:.1%}")
+            print("  ⚠️ 当前版本尚未消费: position_risk_pct / take_profit_pct / use_market_orders / "
+                  "max_daily_trades / max_daily_loss_usd / max_drawdown_pct")
             print(
                 f"  Factor: {strategy_config.factor_id} | "
                 f"ZScore={strategy_config.zscore_period} | "
@@ -304,6 +288,7 @@ class FactorExpTradingSystem:
 
         except Exception as e:
             print(f"❌ Failed to prepare trading: {e}")
+            traceback.print_exc()
             self.is_running = False
             return False
 
@@ -365,6 +350,7 @@ class FactorExpTradingSystem:
 
         except Exception as e:
             print(f"❌ Error during shutdown: {e}")
+            traceback.print_exc()
             print("🛑 FORCE SHUTDOWN due to error")
 
     # Monitoring functionality removed - using native strategy-level monitoring instead
@@ -375,7 +361,6 @@ class FactorExpTradingSystem:
             "is_running": self.is_running,
             "strategies_count": len(self.strategies),
             "instruments": self.instruments,
-            "account_size_usd": self.account_size_usd,
             "strategies_status": {
                 inst: strategy.get_strategy_summary()
                 for inst, strategy in self.strategies.items()
@@ -383,7 +368,7 @@ class FactorExpTradingSystem:
         }
 
 
-async def main(instruments: list[str] = None, account_size_usd: float = None):
+async def main(instruments: list[str] = None):
     """Main entry point for the FactorExp trading system."""
     print("=" * 60)
     print("🚀 FactorExp Live Trading System")
@@ -394,7 +379,6 @@ async def main(instruments: list[str] = None, account_size_usd: float = None):
     # Create trading system with user-configurable parameters
     trading_system = FactorExpTradingSystem(
         instruments=instruments,
-        account_size_usd=account_size_usd
     )
 
     try:
@@ -443,11 +427,8 @@ if __name__ == "__main__":
     # Custom instruments (perpetual contracts to trade)
     # custom_instruments = ["BTCUSDT-PERP.BINANCE", "ETHUSDT-PERP.BINANCE", "SOLUSDT-PERP.BINANCE"]
 
-    # Custom account size for small account optimization
-    # custom_account_size = 200.0  # USD
-
     # Run with custom parameters:
-    # asyncio.run(main(instruments=custom_instruments, account_size_usd=custom_account_size))
+    # asyncio.run(main(instruments=custom_instruments))
 
     # Run with default parameters (or environment variables for backward compatibility)
     asyncio.run(main())

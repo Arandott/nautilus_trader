@@ -44,11 +44,12 @@ Clip(
 6. 仓位 sizing、止损、追踪止损与 Phase 1 前保持一致（`FixedRiskSizer` + 1.5% 停损）。  
 
 ## 风险管理摘要
-- **资本约束**：`max_absolute_exposure`（默认 5000 USD）+ `max_account_usage_pct`（默认 80%）。  
+- **资本约束**：显式 `capital_allocation_usd`（默认继承 `max_absolute_exposure`，并受 `max_account_usage_pct` 校验）。  
 - **单笔风险**：`position_risk_pct`（默认 2%）交给 `FixedRiskSizer` 计算仓位。  
 - **止损**：1.5% 固定百分比 + 追踪止损。  
 - **日度限制**：`max_daily_trades`, `max_daily_loss_usd`, `max_drawdown_pct`。  
 - **小账户模式**：`create_small_account_config` 自动降低资本占用和信号阈值。  
+- ⚠️ 当前实时策略尚未消费 `position_risk_pct` / `take_profit_pct` / `use_market_orders` / `max_daily_trades` / `max_daily_loss_usd` / `max_drawdown_pct`，仅做占位配置。  
 
 ## 日志 / 监控
 - `show_portfolio_info` 输出因子最新值与阈值。  
@@ -63,6 +64,7 @@ Clip(
 | `FACTOREXP_ZSCORE_PERIOD` | Z-Score 窗口 | `5760` |
 | `FACTOREXP_CLIP_MIN` / `FACTOREXP_CLIP_MAX` | 剪裁区间 | `-2.0` / `2.0` |
 | `FACTOREXP_MIN_SIGNAL` | 触发最小信号强度 | `0.05` |
+| `FACTOREXP_CAPITAL_ALLOCATION_USD` | 显式资本预算（覆盖配置默认值） | _未设置_ |
 
 ## 下一步 (Phase 3 提前说明)
 - 多头/空头仓位将扩展为 96 个 SegmentState，匹配回测架构。  

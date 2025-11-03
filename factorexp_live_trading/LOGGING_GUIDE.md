@@ -12,7 +12,7 @@
 
 **示例输出**：
 ```
-2024-01-15 10:30:15 [INFO] FactorExpLiveStrategy: Generated LONG signal - EMA Ratio: 1.0078
+2024-01-15 10:30:15 [INFO] FactorExpLiveStrategy: Factor values avg_raw=0.8420 effective=0.8420 factors=[vwap=0.9100, close=0.7740]
 2024-01-15 10:30:15 [INFO] FactorExpLiveStrategy: Entering LONG position: size=0.0024, price=50000.0
 2024-01-15 10:30:16 [INFO] FactorExpLiveStrategy: Position opened: BUY 0.0024 BTCUSDT-PERP.BINANCE
 ```

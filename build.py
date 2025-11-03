@@ -976,6 +976,7 @@ cdef class BarBuilder:
 
         if self.ts_last == 0:
             self.ts_last = partial_bar.ts_init
+            self._log.debug(f"set_partial set ts_last to be {{partial_bar.ts_init}}")
 
         self._partial_set = True
         self.initialized = True
@@ -1006,6 +1007,8 @@ cdef class BarBuilder:
         self.volume._mem.raw += size._mem.raw
         self.count += 1
         self.ts_last = ts_event
+        if self.count == 1:
+            self._log.debug(f"Trade tick set ts_last to {{self.ts_last}}")
 {"".join(frags["on_trades"])}
 
     cpdef void update_bar(self, Bar bar, Quantity volume, uint64_t ts_init):
@@ -1015,7 +1018,7 @@ cdef class BarBuilder:
         Condition.not_none(bar, "bar")
 
         if ts_init < self.ts_last:
-            self._log.info(f"Skipping out-of-order bar update: ts_init={{pd.to_datetime(ts_init, unit='ns', utc=True)}} < ts_last={{pd.to_datetime(self.ts_last, unit='ns', utc=True)}}")
+            self._log.debug(f"Skipping out-of-order bar update: ts_init={{pd.to_datetime(ts_init, unit='ns', utc=True)}} < ts_last={{pd.to_datetime(self.ts_last, unit='ns', utc=True)}}")
             return  # Not applicable
 
         if self._open is None:
@@ -1035,6 +1038,8 @@ cdef class BarBuilder:
         self.volume._mem.raw += volume._mem.raw
         self.count += 1
         self.ts_last = ts_init
+        self._log.debug(f"update_bar set self.ts_last to be {{pd.to_datetime(ts_init, unit='ns', utc=True)}}")
+
 {"".join(frags["on_bars"])}
 
     cpdef void reset(self):

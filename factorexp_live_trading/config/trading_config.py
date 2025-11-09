@@ -40,6 +40,8 @@ class TradingConfig:
         self.log_level = os.getenv("LOG_LEVEL", "INFO")  # Reduced from DEBUG to avoid excessive logging
         self.log_level_file = os.getenv("LOG_LEVEL_FILE", "DEBUG")
         self.enable_structured_logging = os.getenv("ENABLE_STRUCTURED_LOGGING", "true").lower() == "true"
+        self.log_directory = Path(__file__).resolve().parent.parent / "data" / "logs"
+        self.log_directory.mkdir(parents=True, exist_ok=True)
 
         # Catalog persistence controls
         default_catalog_root = Path(__file__).resolve().parent.parent / "data" / "catalog"
@@ -182,17 +184,17 @@ def create_trading_node_config(api_credentials: dict[str, str | None], instrumen
         print(f"⚙️ Futures leverage overrides: {symbols_preview}")
 
     return TradingNodeConfig(
-        trader_id=TraderId("FACTOREXP-LIVE-001"),
+            trader_id=TraderId("FACTOREXP-LIVE-001"),
 
-        data_engine=LiveDataEngineConfig(
-            graceful_shutdown_on_exception=True,
+            data_engine=LiveDataEngineConfig(
+                graceful_shutdown_on_exception=True,
         ),
 
         # Logging configuration with portfolio monitoring
         logging=LoggingConfig(
             log_level=config.log_level,
             log_level_file=config.log_level_file,
-            log_directory="./data/logs",  # Organize application logs in data/logs directory
+            log_directory=str(config.log_directory),
             log_file_format="json" if config.enable_structured_logging else None,
             log_colors=True,
             log_component_levels={

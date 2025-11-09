@@ -296,6 +296,11 @@ class FactorExpLiveStrategy(Strategy):
         self.log.info("🔍 [TEST] on_start() method called")
         self.log.info(f"FactorExpLiveStrategy starting for {self.config.instrument_id}")
 
+        instruments = self.cache.instruments(venue=self.config.instrument_id.venue)
+        self.log.info(
+            f"Cache instruments -> {[str(inst.id) for inst in instruments]}"
+        )
+
         instrument = self.cache.instrument(self.config.instrument_id)
         if instrument is None:
             self.log.error(f"Could not find instrument {self.config.instrument_id}")
@@ -859,24 +864,36 @@ class FactorExpLiveStrategy(Strategy):
         self._segment_index = 0
         self._segment_rotation_counter = 0
 
-        if self._risk_config:
+        segment_stop_override = getattr(self.config, "segment_stop_loss_pct", None)
+        if segment_stop_override is not None:
+            self._segment_stop_loss_pct = max(float(segment_stop_override), 0.0)
+        elif self._risk_config and getattr(self._risk_config, "stop_loss", None) is not None:
             self._segment_stop_loss_pct = float(self._risk_config.stop_loss)
+        else:
+            self._segment_stop_loss_pct = float(self.config.stop_loss_pct)
+
+        segment_freeze_override = getattr(self.config, "segment_freeze_bars", None)
+        if segment_freeze_override is not None:
+            self._freeze_duration_bars = int(segment_freeze_override)
+        elif self._risk_config and getattr(self._risk_config, "max_rebalance_interval", None):
             self._freeze_duration_bars = int(
                 self._risk_config.max_rebalance_interval or self._freeze_duration_bars
             )
-        else:
-            self._segment_stop_loss_pct = float(self.config.stop_loss_pct)
 
         if self._execution_config:
             self._min_order_size = float(self._execution_config.min_order_size)
         self._apply_instrument_size_constraints()
 
         self._bar_duration_ns = self._calculate_bar_duration_ns()
+        stop_loss_display = (
+            f"{self._segment_stop_loss_pct:.2%}" if self._segment_stop_loss_pct > 0 else "disabled"
+        )
+
         self.log.info(
             f"Initialized {self._segment_count} segments | equity per segment={equity_per_segment:.2f}, "
             f"margin_allocation={capital_allocation:.2f}, target_notional={target_notional:.2f}, "
             f"max_leverage={self._max_leverage:.2f}, "
-            f"stop_loss={self._segment_stop_loss_pct:.2%}, freeze={self._freeze_duration_bars} bars"
+            f"stop_loss={stop_loss_display}, freeze={self._freeze_duration_bars} bars"
         )
         return True
 
@@ -1175,22 +1192,24 @@ class FactorExpLiveStrategy(Strategy):
         if total_equity > state.peak_equity:
             state.peak_equity = total_equity
 
-        drawdown = state.peak_equity - total_equity
-        threshold = state.peak_equity * self._segment_stop_loss_pct
+        stop_pct = self._segment_stop_loss_pct
+        if stop_pct > 0:
+            drawdown = state.peak_equity - total_equity
+            threshold = state.peak_equity * stop_pct
 
-        if drawdown > threshold:
-            self.log.warning(
-                f"Seg{state.idx}: stop-loss triggered | drawdown={drawdown:.2f} "
-                f"threshold={threshold:.2f} peak={state.peak_equity:.2f} equity={total_equity:.2f}"
-            )
-            self._force_flat(state)
-            state.frozen_until_ns = self._clock.timestamp_ns() + (
-                self._freeze_duration_bars * self._bar_duration_ns
-            )
-            state.peak_equity = max(total_equity, state.current_equity)
-            state.pending_target_qty = 0.0
-            state.pending_timestamp_ns = 0
-            return True
+            if drawdown > threshold:
+                self.log.warning(
+                    f"Seg{state.idx}: stop-loss triggered | drawdown={drawdown:.2f} "
+                    f"threshold={threshold:.2f} peak={state.peak_equity:.2f} equity={total_equity:.2f}"
+                )
+                self._force_flat(state)
+                state.frozen_until_ns = self._clock.timestamp_ns() + (
+                    self._freeze_duration_bars * self._bar_duration_ns
+                )
+                state.peak_equity = max(total_equity, state.current_equity)
+                state.pending_target_qty = 0.0
+                state.pending_timestamp_ns = 0
+                return True
 
         if total_equity <= 0:
             self.log.error(
@@ -1523,8 +1542,7 @@ class FactorExpLiveStrategy(Strategy):
         )
 
         # Periodic portfolio monitoring (every 10 bars to avoid noise)
-        if self._bar_count % 10 == 0:
-            self.show_portfolio_info(f"Portfolio state (Bar {self._bar_count})")
+        self.show_portfolio_info(f"Portfolio state (Bar {self._bar_count})")
 
         # Run risk checks on all segments with inventory
         risk_triggered = 0
@@ -1840,6 +1858,10 @@ class FactorExpLiveStrategy(Strategy):
                 "max_leverage": self._max_leverage,
                 "position_risk_pct": float(self.config.position_risk_pct),
                 "stop_loss_pct": self.config.stop_loss_pct,
+                "segment_stop_loss_pct": (
+                    self._segment_stop_loss_pct if self._segment_stop_loss_pct > 0 else None
+                ),
+                "segment_freeze_bars": self._freeze_duration_bars,
             },
         }
     def on_order_filled(self, event: OrderFilled):

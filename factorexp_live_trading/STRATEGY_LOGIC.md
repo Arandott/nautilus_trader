@@ -46,7 +46,8 @@ Clip(
 ## 风险管理摘要
 - **资本约束**：显式 `capital_allocation_usd`（默认继承 `max_absolute_exposure`，并受 `max_account_usage_pct` 校验）。  
 - **单笔风险**：`position_risk_pct`（默认 2%）交给 `FixedRiskSizer` 计算仓位。  
-- **止损**：1.5% 固定百分比 + 追踪止损。  
+- **止损**：默认 1.5%（无研究风控时），亦可通过 `segment_stop_loss_pct` 或环境变量 `FACTOREXP_SEGMENT_STOP_LOSS_PCT` 覆盖（设为 0 即关闭），并优先于回测 `risk_management.stop_loss`。  
+- **暂停/冻结**：Segment 被止损或归零后默认冻结 96 根 Bar，可由回测 `risk_management.max_rebalance_interval` 或 `FACTOREXP_SEGMENT_FREEZE_BARS` 覆盖。  
 - **日度限制**：`max_daily_trades`, `max_daily_loss_usd`, `max_drawdown_pct`。  
 - **小账户模式**：`create_small_account_config` 自动降低资本占用和信号阈值。  
 - ⚠️ 当前实时策略尚未消费 `position_risk_pct` / `take_profit_pct` / `use_market_orders` / `max_daily_trades` / `max_daily_loss_usd` / `max_drawdown_pct`，仅做占位配置。  
@@ -65,6 +66,8 @@ Clip(
 | `FACTOREXP_CLIP_MIN` / `FACTOREXP_CLIP_MAX` | 剪裁区间 | `-2.0` / `2.0` |
 | `FACTOREXP_MIN_SIGNAL` | 触发最小信号强度 | `0.05` |
 | `FACTOREXP_CAPITAL_ALLOCATION_USD` | 显式资本预算（覆盖配置默认值） | _未设置_ |
+| `FACTOREXP_SEGMENT_STOP_LOSS_PCT` | Segment 追踪止损覆盖值（设为 0 可显式关闭） | _未设置_（优先级高于回测风控） |
+| `FACTOREXP_SEGMENT_FREEZE_BARS` | Segment 冻结 Bar 数覆盖值 | _未设置_（优先级高于回测风控/默认 96） |
 
 ## 下一步 (Phase 3 提前说明)
 - 多头/空头仓位将扩展为 96 个 SegmentState，匹配回测架构。  

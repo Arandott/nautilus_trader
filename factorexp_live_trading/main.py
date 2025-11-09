@@ -213,7 +213,17 @@ class FactorExpTradingSystem:
             if strategy_config.max_leverage:
                 print(f"  Max leverage override: {strategy_config.max_leverage:.2f}x")
             print(f"  Position risk: {strategy_config.position_risk_pct:.1%}")
-            print(f"  Stop loss: {strategy_config.stop_loss_pct:.1%}")
+            if strategy_config.segment_stop_loss_pct is not None:
+                if strategy_config.segment_stop_loss_pct <= 0:
+                    print("  Segment stop loss override: disabled")
+                else:
+                    print(f"  Segment stop loss override: {strategy_config.segment_stop_loss_pct:.1%}")
+            else:
+                print(f"  Stop loss (fallback): {strategy_config.stop_loss_pct:.1%}")
+            if strategy_config.segment_freeze_bars is not None:
+                print(f"  Segment freeze duration override: {strategy_config.segment_freeze_bars} bars")
+            else:
+                print("  Segment freeze duration: auto (risk config/default)")
             print("  ⚠️ 当前版本尚未消费: position_risk_pct / take_profit_pct / use_market_orders / "
                   "max_daily_trades / max_daily_loss_usd / max_drawdown_pct")
             print(

@@ -42,6 +42,12 @@ def test_strategy_config_rejects_empty_factor_ids():
         _make_config(factor_ids=[])
 
 
+def test_strategy_config_allows_disabling_segment_stop_loss():
+    config = _make_config(segment_stop_loss_pct=0.0)
+
+    assert config.segment_stop_loss_pct == 0.0
+
+
 def test_secure_config_manager_parses_factor_ids(tmp_path, monkeypatch):
     manager = SecureConfigManager(project_root=Path(tmp_path))
 
@@ -53,3 +59,16 @@ def test_secure_config_manager_parses_factor_ids(tmp_path, monkeypatch):
 
     monkeypatch.delenv("FACTOREXP_FACTOR_IDS")
 
+
+def test_secure_config_manager_parses_segment_risk_overrides(tmp_path, monkeypatch):
+    manager = SecureConfigManager(project_root=Path(tmp_path))
+
+    monkeypatch.setenv("FACTOREXP_SEGMENT_STOP_LOSS_PCT", "0.025")
+    monkeypatch.setenv("FACTOREXP_SEGMENT_FREEZE_BARS", "144")
+    params = manager.get_factorexp_parameters()
+
+    assert params["segment_stop_loss_pct"] == 0.025
+    assert params["segment_freeze_bars"] == 144
+
+    monkeypatch.delenv("FACTOREXP_SEGMENT_STOP_LOSS_PCT")
+    monkeypatch.delenv("FACTOREXP_SEGMENT_FREEZE_BARS")

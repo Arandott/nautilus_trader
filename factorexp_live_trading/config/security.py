@@ -139,6 +139,12 @@ class SecureConfigManager:
                 os.getenv("FACTOREXP_TARGET_NOTIONAL_USD")
             ),
             "max_leverage": self._parse_optional_float(os.getenv("FACTOREXP_MAX_LEVERAGE")),
+            "segment_stop_loss_pct": self._parse_optional_float(
+                os.getenv("FACTOREXP_SEGMENT_STOP_LOSS_PCT")
+            ),
+            "segment_freeze_bars": self._parse_optional_positive_int(
+                os.getenv("FACTOREXP_SEGMENT_FREEZE_BARS")
+            ),
         }
 
     @staticmethod
@@ -160,3 +166,16 @@ class SecureConfigManager:
             return float(raw)
         except ValueError as exc:
             raise ValueError(f"Invalid float value '{raw}' for FACTOREXP_CAPITAL_ALLOCATION_USD") from exc
+
+    @staticmethod
+    def _parse_optional_positive_int(raw: str | None) -> int | None:
+        """Safely parse optional positive integers from environment variables."""
+        if raw is None or raw == "":
+            return None
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ValueError(f"Invalid integer value '{raw}' for FACTOREXP_SEGMENT_FREEZE_BARS") from exc
+        if value <= 0:
+            raise ValueError("FACTOREXP_SEGMENT_FREEZE_BARS must be a positive integer")
+        return value

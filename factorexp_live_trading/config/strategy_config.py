@@ -56,9 +56,13 @@ class FactorExpLiveStrategyConfig(StrategyConfig, frozen=True):
     position_risk_pct : PositiveFloat, default 0.02
         Risk percentage per position (2%).
     stop_loss_pct : PositiveFloat, default 0.015
-        Stop loss percentage (1.5%).
+        Stop loss percentage (1.5%) used when no segment-level override is supplied.
+    segment_stop_loss_pct : float | None, default None
+        Optional override for the segment-level trailing stop loss. Set to 0 to disable.
     take_profit_pct : PositiveFloat, default 0.03
         Take profit percentage (3%).
+    segment_freeze_bars : PositiveInt | None, default None
+        Optional override for how many bars a depleted segment stays frozen.
     use_market_orders : bool, default True
         Whether to use market orders (True) or limit orders (False).
     max_daily_trades : PositiveInt, default 20
@@ -92,7 +96,9 @@ class FactorExpLiveStrategyConfig(StrategyConfig, frozen=True):
 
     # Risk management parameters
     stop_loss_pct: PositiveFloat = 0.015  # todo: 仅在无风险配置时 fallback
+    segment_stop_loss_pct: float | None = None
     take_profit_pct: PositiveFloat = 0.03  # todo: 尚未接入执行逻辑
+    segment_freeze_bars: PositiveInt | None = None
 
     # Trading parameters
     use_market_orders: bool = True  # todo: 策略始终使用市价单，未读此配置

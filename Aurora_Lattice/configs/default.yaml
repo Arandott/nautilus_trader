@@ -1,0 +1,50 @@
+strategy_id: "AURORA-HDG"
+order_id_tag: "AHDG"
+instrument_id: "KASUSDT-PERP.BINANCE"
+tick_size: 0.1
+base_symbol: "KASUSDT"
+
+grid:
+  levels: 6
+  k_sigma: 0.9
+  k_s: 0.5
+  k_f: 0.6
+  fee_buffer_bps: 3.0
+  reanchor_rho: 1.2
+  reanchor_timeout_ms: 400
+
+inventory:
+  i_max: 40
+  i_soft: 24
+  gamma: 2.0e-6
+  kappa_alpha: 0.8
+  beta_i: 0.6
+  theta_i: 0.8
+  base_qty: 1.0
+  eta: 0.35
+  q_min: 0.2
+  q_max: 2.0
+
+alpha:
+  tau_ms: 300
+  a_max_bps: 3.0
+  a_gate_bps: 1.2
+  beta_alpha: 0.25
+  kappa_delta: 0.25
+  rls_forgetting: 0.995
+
+fill_model:
+  impl: "HittingQueue"
+  lambda_window_ms: 300
+  use_empirical_touch: true
+  min_p_fill: 0.15
+
+exec:
+  msg_rate_budget: 40
+  maker_fee_bps: 0.0
+  taker_fee_bps: 2.0
+
+risk:
+  shock_mode_sigma_mult: 2.5
+  hedge_cooldown_ms: 800
+  hedge_min_qty: 2.0

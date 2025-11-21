@@ -45,4 +45,5 @@ strum = { workspace = true }
 pyo3 = { workspace = true, optional = true }
 
 [dev-dependencies]
+approx = "0.5"
 rstest = { workspace = true }

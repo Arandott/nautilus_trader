@@ -45,6 +45,8 @@ pub fn indicators(_: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Book
     m.add_class::<crate::book::imbalance::BookImbalanceRatio>()?;
+    m.add_class::<crate::book::l1_factors::BookL1Factors>()?;
+    m.add_class::<crate::book::mid_price_vol::BookMidPriceVolEstimator>()?;
 
     // Ratio
     m.add_class::<crate::ratio::efficiency_ratio::EfficiencyRatio>()?;

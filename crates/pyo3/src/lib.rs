@@ -184,6 +184,13 @@ fn _libnautilus(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "cython-compat")]
     re_export_module_attributes(m, n)?;
 
+    let n = "aurora";
+    let submodule = pyo3::wrap_pymodule!(nautilus_aurora::python::aurora);
+    m.add_wrapped(submodule)?;
+    sys_modules.set_item(format!("{module_name}.{n}"), m.getattr(n)?)?;
+    #[cfg(feature = "cython-compat")]
+    re_export_module_attributes(m, n)?;
+
     ////////////////////////////////////////////////////////////////////////////////
     // Adapters
     ////////////////////////////////////////////////////////////////////////////////
@@ -299,6 +306,7 @@ fn _libnautilus(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     Ok(())
 }
+
 
 #[cfg(feature = "cython-compat")]
 fn re_export_module_attributes(

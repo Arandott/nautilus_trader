@@ -1,9 +1,11 @@
-"""Risk controls and hedging helpers."""
+"""Risk controls backed by PyO3 advisors."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
+
+from nautilus_trader.core.nautilus_pyo3 import aurora as aurora_bindings
 
 from .config import InventoryParams, RiskParams
 
@@ -24,12 +26,22 @@ class RiskDecision:
 
 
 class RiskStateMachine:
+    """Thin wrapper around the Rust/PyO3 risk advisor."""
+
     def __init__(self, params: RiskParams, inventory: InventoryParams) -> None:
         self.params = params
         self.inventory = inventory
-        self.state = RiskState.NORMAL
-        self._last_sigma = 0.0
-        self._last_hedge_ns = 0
+        self._advisor = aurora_bindings.AuroraRiskAdvisor(
+            vol_shock_sigma_mult=params.shock_mode_sigma_mult,
+            inventory_soft_limit=inventory.i_soft,
+            hedge_cooldown_ms=params.hedge_cooldown_ms,
+            hedge_min_qty=params.hedge_min_qty,
+        )
+        self._state_map = {
+            aurora_bindings.AuroraRiskState.NORMAL: RiskState.NORMAL,
+            aurora_bindings.AuroraRiskState.WIDEN: RiskState.WIDEN,
+            aurora_bindings.AuroraRiskState.PAUSE: RiskState.PAUSE,
+        }
 
     def on_metrics(
         self,
@@ -38,41 +50,17 @@ class RiskStateMachine:
         inventory_qty: float,
         now_ns: int,
     ) -> RiskDecision:
-        sigma_ratio = sigma_rel / max(base_sigma, 1e-9)
-        state = self.state
-        reason = None
-        widen_factor = 1.0
-        reduce_levels = 0
-
-        if sigma_ratio >= self.params.shock_mode_sigma_mult:
-            state = RiskState.PAUSE
-            reason = "vol_shock"
-        elif sigma_ratio >= (self.params.shock_mode_sigma_mult * 0.7):
-            state = RiskState.WIDEN
-            widen_factor = 1.5
-            reduce_levels = 1
-            reason = "vol_spike"
-        else:
-            state = RiskState.NORMAL
-
-        self.state = state
-        hedge_qty = self._maybe_hedge(inventory_qty, now_ns)
-
+        decision = self._advisor.advise(
+            sigma_rel=sigma_rel,
+            base_sigma=base_sigma,
+            inventory_qty=inventory_qty,
+            now_ns=now_ns,
+        )
+        state = self._state_map.get(decision.state, RiskState.NORMAL)
         return RiskDecision(
             state=state,
-            widen_factor=widen_factor,
-            reduce_levels=reduce_levels,
-            hedge_qty=hedge_qty,
-            reason=reason,
+            widen_factor=decision.widen_factor,
+            reduce_levels=int(decision.reduce_levels),
+            hedge_qty=decision.hedge_qty,
+            reason=decision.reason,
         )
-
-    def _maybe_hedge(self, qty: float, now_ns: int) -> float:
-        if abs(qty) < self.inventory.i_soft:
-            return 0.0
-        elapsed = (now_ns - self._last_hedge_ns) / 1e6  # ms
-        if elapsed < self.params.hedge_cooldown_ms:
-            return 0.0
-
-        hedge_qty = self.params.hedge_min_qty if qty > 0 else -self.params.hedge_min_qty
-        self._last_hedge_ns = now_ns
-        return hedge_qty

@@ -1,9 +1,9 @@
 strategy:
   strategy_id: "AURORA-HDG"
   order_id_tag: "AHDG"
-  instrument_id: "KASUSDT-PERP.BINANCE"
+  instrument_id: "BTCUSDT-PERP.OKX"
   tick_size: 0.1
-  base_symbol: "KASUSDT"
+  base_symbol: "BTCUSDT"
 
   grid:
     levels: 6
@@ -25,7 +25,7 @@ strategy:
     kappa_alpha: 0.8
     beta_i: 0.6
     theta_i: 0.8
-    base_qty: 1.0
+    base_qty: 0.1
     eta: 0.35
     q_min: 0.2
     q_max: 2.0
@@ -76,28 +76,26 @@ strategy:
     cooldown_ms: 500
 
 runtime:
-  trader_id: "AURORA-HDG-LIVE"
+  trader_id: "AURORA-HDG-OKX"
   log_level: "INFO"
   log_directory: "../data/logs"
   catalog_path: "../data/catalog"
-  trading_mode: "testnet"  # 改成 "live" 即可切换到实盘（CLI 不会覆盖此字段）
+  trading_mode: "testnet"
 
   clients:
-    BINANCE_PERP:
-      venue: "BINANCE"
-      testnet: true  # 缺省继承 trading_mode，显式指定可与其它 venue 混用
-      credentials:
-        api_key_env: "BINANCE_API_KEY"
-        api_secret_env: "BINANCE_API_SECRET"
-      account_type: "USDT_FUTURES"
+    OKX_SWAP:
+      venue: "OKX"
       use_data_client: true
       use_exec_client: true
-      update_instruments_interval_mins: 60
-      futures_leverage: 20
-      use_position_ids: true
-      use_reduce_only: false
-      max_retries: 3
-      retry_delay_initial_ms: 1000
-      retry_delay_max_ms: 10000
+      update_instruments_interval_mins: 120
       instrument_ids:
-        - "KASUSDT-PERP.BINANCE"
+        - "BTCUSDT-PERP.OKX"
+      instrument_types:
+        - "SWAP"
+      contract_types:
+        - "SWAP"
+      margin_mode: "CROSS"
+      use_spot_margin: false
+      max_retries: 5
+      retry_delay_initial_ms: 1000
+      retry_delay_max_ms: 15000

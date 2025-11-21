@@ -39,3 +39,4 @@ To contribute, follow these steps:
 - For documentation changes, follow the style guide in `docs/developer_guide/docs.md` (use sentence case for headings H2 and below).
 - Keep PRs small and focused for easier review.
 - Reference the relevant GitHub issue(s) in your PR comment.
+- 如果修改 `Aurora_Lattice` 模块，请在提交前运行 `python -m pytest Aurora_Lattice/tests`，确保 HDG 配置与策略 smoke tests 全部通过。

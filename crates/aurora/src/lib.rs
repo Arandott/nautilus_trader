@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -13,8 +13,19 @@
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
 
-//! Order book specific indicators.
+//! Aurora strategy support primitives implemented in pure Rust.
 
-pub mod imbalance;
-pub mod l1_factors;
-pub mod mid_price_vol;
+pub mod alpha;
+pub mod fill;
+pub mod grid;
+pub mod risk;
+
+pub use alpha::{RlsAlpha, RlsParams};
+pub use fill::{FillModel, QueueStats};
+pub use grid::{
+    GridLevel, GridPlan, GridPlanner, GridPlannerConfig, GridParams, InventoryParams,
+};
+pub use risk::{RiskAdvisor, RiskDecision, RiskState};
+
+#[cfg(feature = "python")]
+pub mod python;

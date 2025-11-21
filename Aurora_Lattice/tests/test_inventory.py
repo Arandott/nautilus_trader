@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from aurora_hdg.config import InventoryParams
-from aurora_hdg.inventory import compute_center, compute_target_inventory
+from Aurora_Lattice.aurora_hdg.config import InventoryParams
+from Aurora_Lattice.aurora_hdg.inventory import compute_center, compute_target_inventory
 
 
 def _inventory_params() -> InventoryParams:
@@ -45,5 +45,6 @@ def test_compute_center_moves_against_inventory_skew() -> None:
         alpha_bps=0.0,
         params=params,
     )
-    assert center_long > 100.0
-    assert center_short < 100.0
+    # Long inventory should skew center lower to entice sells; short does the opposite.
+    assert center_long < 100.0
+    assert center_short > 100.0

@@ -4,6 +4,7 @@ members = [
   "crates",
   "crates/adapters/architect_ax",
   "crates/adapters/binance",
+  "crates/aurora",
   "crates/adapters/bitmex",
   "crates/adapters/blockchain",
   "crates/adapters/bybit",
@@ -61,6 +62,7 @@ homepage = "https://nautilustrader.io"
 
 [workspace.dependencies]
 nautilus-analysis = { path = "crates/analysis", version = "0.53.0" }
+nautilus-aurora = { path = "crates/aurora", version = "0.53.0" }
 nautilus-backtest = { path = "crates/backtest", version = "0.53.0" }
 nautilus-cli = { path = "crates/cli", version = "0.53.0" }
 nautilus-common = { path = "crates/common", version = "0.53.0" }

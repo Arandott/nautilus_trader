@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from aurora_hdg.fill import HittingQueueFillModel, QueueStats
+from Aurora_Lattice.aurora_hdg.fill import HittingQueueFillModel, QueueStats
 from nautilus_trader.model.enums import OrderSide
 
 

@@ -2,7 +2,7 @@ import unittest
 
 from nautilus_trader.model.enums import OrderSide
 
-from aurora_hdg.fill import HittingQueueFillModel, QueueStats
+from Aurora_Lattice.aurora_hdg.fill import HittingQueueFillModel, QueueStats
 
 
 class FillModelTests(unittest.TestCase):

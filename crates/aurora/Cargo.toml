@@ -1,0 +1,32 @@
+[package]
+name = "nautilus-aurora"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Aurora strategy support primitives and reusable Rust logic"
+categories.workspace = true
+keywords.workspace = true
+documentation.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "nautilus_aurora"
+crate-type = ["rlib"]
+
+[features]
+default = []
+python = ["dep:pyo3"]
+extension-module = ["python", "pyo3/extension-module"]
+
+[dependencies]
+nautilus-model = { workspace = true }
+
+statrs = "0.16.1"
+pyo3 = { workspace = true, optional = true }

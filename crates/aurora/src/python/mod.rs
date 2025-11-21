@@ -1,5 +1,5 @@
 // -------------------------------------------------------------------------------------------------
-//  Copyright (C) 2015-2026 Nautech Systems Pty Ltd. All rights reserved.
+//  Copyright (C) 2015-2025 Nautech Systems Pty Ltd. All rights reserved.
 //  https://nautechsystems.io
 //
 //  Licensed under the GNU Lesser General Public License Version 3.0 (the "License");
@@ -13,8 +13,20 @@
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
 
-//! Order book specific indicators.
+//! PyO3 bindings for the Aurora support crate.
 
-pub mod imbalance;
-pub mod l1_factors;
-pub mod mid_price_vol;
+pub mod alpha;
+pub mod fill;
+pub mod grid;
+pub mod risk;
+
+use pyo3::prelude::*;
+
+#[pymodule]
+pub fn aurora(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    alpha::register(m)?;
+    fill::register(m)?;
+    grid::register(py, m)?;
+    risk::register(py, m)?;
+    Ok(())
+}

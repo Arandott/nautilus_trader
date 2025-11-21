@@ -7,7 +7,10 @@ from .config import (
     FillModelParams,
     GridParams,
     InventoryParams,
+    PositionRiskParams,
+    RegimeParams,
     RiskParams,
+    TakerParams,
     load_config,
     to_importable_config,
 )
@@ -23,5 +26,8 @@ __all__ = [
     "FillModelParams",
     "ExecParams",
     "RiskParams",
+    "RegimeParams",
+    "PositionRiskParams",
+    "TakerParams",
     "to_importable_config",
 ]

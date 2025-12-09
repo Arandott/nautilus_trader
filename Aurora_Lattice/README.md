@@ -71,8 +71,9 @@ The runner performs pre-flight checks (Python version, config path, required env
 each venue listed under `runtime.clients` as independent data/exec client（准确复刻官方多交易所示例），
 instantiates `AuroraHdgStrategy`, and finally executes
 `node.run()`/`node.dispose()` with graceful Ctrl+C handling。 启动脚本会在执行前自动加载 `.env`
-（使用 python-dotenv 且 **覆盖** 当前进程已有的同名变量，缺失时退回手工解析），因此无需手动 `source`。Logging output 默认写到
-`Aurora_Lattice/data/logs`（可用 `AURORA_LOG_DIR` 覆盖），parquet catalogs 写到
+（使用 python-dotenv 且 **覆盖** 当前进程已有的同名变量，缺失时退回手工解析），因此无需手动 `source`。每次运行会在
+`Aurora_Lattice/data/logs` 下创建一个以 `{strategy_id}_{UTC时间戳}` 命名的子目录，并将当次所有日志写入其中；
+可通过 `runtime.log_file_max_size` 控制按文件大小切分（示例配置为 100MB）。Parquet catalogs 写到
 `AURORA_CATALOG_PATH`（默认 `Aurora_Lattice/data/catalog`）；目录都会在启动时自动创建。
 
 ### Selecting Live vs Testnet

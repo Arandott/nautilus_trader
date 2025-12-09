@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -28,6 +29,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.model.identifiers import TraderId
 from nautilus_trader.persistence.config import DataCatalogConfig
 from nautilus_trader.persistence.config import StreamingConfig
+from nautilus_trader.serialization.arrow.serializer import list_schemas
 
 from Aurora_Lattice.aurora_hdg.config import (
     AuroraHDGConfig,
@@ -123,7 +125,11 @@ class AuroraRuntimeProfile:
     """Parsed runtime configuration tied to a single strategy run."""
 
     trader_id: str
+    strategy_name: str | None
     log_level: str
+    log_level_file: str
+    log_file_name: str | None
+    log_file_max_size: int | None
     log_directory: Path
     catalog_path: Path
     trading_mode: str
@@ -172,10 +178,22 @@ def build_runtime_profile(
     runtime_data: Mapping[str, Any],
     config_dir: Path,
     default_instrument: InstrumentId,
+    strategy_name: str | None = None,
 ) -> AuroraRuntimeProfile:
     trader_id = runtime_data.get("trader_id") or os.getenv("AURORA_TRADER_ID", "AURORA-HDG-LIVE")
     log_level = runtime_data.get("log_level") or os.getenv("AURORA_LOG_LEVEL", "INFO")
+    log_level_file = runtime_data.get("log_level_file") or log_level
+    log_file_name = runtime_data.get("log_file_name")
+    strategy_name = runtime_data.get("strategy_name", strategy_name)
     trading_mode = runtime_data.get("trading_mode", "testnet")
+    raw_log_max_size = runtime_data.get("log_file_max_size") or os.getenv("AURORA_LOG_FILE_MAX_SIZE")
+    log_file_max_size: int | None
+    if raw_log_max_size in (None, ""):
+        log_file_max_size = None
+    else:
+        log_file_max_size = int(raw_log_max_size)
+        if log_file_max_size <= 0:
+            raise ValueError("`log_file_max_size` must be positive when supplied.")
     log_dir = _resolve_path(
         runtime_data.get("log_directory"),
         config_dir,
@@ -209,9 +227,14 @@ def build_runtime_profile(
         if builder is None:
             raise ValueError(f"Unsupported venue `{venue}` for client `{key}`.")
 
-        client_testnet = client_data.get("testnet")
-        if client_testnet is None:
-            client_testnet = default_testnet
+        client_testnet = default_testnet
+        if "testnet" in client_data and client_data.get("testnet") is not None:
+            supplied_testnet = bool(client_data["testnet"])
+            if supplied_testnet != default_testnet:
+                raise ValueError(
+                    f"Client `{key}` testnet={supplied_testnet} conflicts with trading_mode={trading_mode}. "
+                    "Use trading_mode to control testnet/live selection.",
+                )
 
         instrument_ids_raw = client_data.get("instrument_ids") or []
         instrument_ids = _parse_instrument_ids(instrument_ids_raw, default_instrument)
@@ -239,7 +262,11 @@ def build_runtime_profile(
 
     return AuroraRuntimeProfile(
         trader_id=trader_id,
+        strategy_name=strategy_name,
         log_level=log_level,
+        log_level_file=log_level_file,
+        log_file_name=log_file_name,
+        log_file_max_size=log_file_max_size,
         log_directory=log_dir.expanduser().resolve(),
         catalog_path=catalog_path.expanduser().resolve(),
         trading_mode=trading_mode,
@@ -252,6 +279,9 @@ def apply_runtime_overrides(
     *,
     trader_id: str | None = None,
     log_level: str | None = None,
+    log_level_file: str | None = None,
+    log_file_name: str | None = None,
+    log_file_max_size: int | None = None,
     log_directory: Path | None = None,
     catalog_path: Path | None = None,
     futures_leverage: int | None = None,
@@ -261,6 +291,17 @@ def apply_runtime_overrides(
         updates["trader_id"] = trader_id
     if log_level:
         updates["log_level"] = log_level
+    if log_level_file:
+        updates["log_level_file"] = log_level_file
+    elif log_level and "log_level_file" not in updates:
+        # Keep file log level aligned with console override if not explicitly set.
+        updates["log_level_file"] = log_level
+    if log_file_name is not None:
+        updates["log_file_name"] = log_file_name
+    if log_file_max_size is not None:
+        if log_file_max_size <= 0:
+            raise ValueError("`log_file_max_size` must be positive when supplied.")
+        updates["log_file_max_size"] = log_file_max_size
     if log_directory:
         updates["log_directory"] = log_directory.expanduser().resolve()
     if catalog_path:
@@ -505,13 +546,25 @@ def build_trading_node_config(
         if exec_config:
             exec_clients[client.key] = exec_config
 
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    strategy_label = profile.strategy_name or profile.log_file_name or "aurora-hdg"
+    run_log_dir = profile.log_directory / f"{strategy_label}_{timestamp}"
+    run_log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file_base = profile.log_file_name or strategy_label
+    log_file_name = f"{log_file_base}-{timestamp}"
+
     return TradingNodeConfig(
         trader_id=TraderId(profile.trader_id),
         logging=LoggingConfig(
             log_level=profile.log_level,
-            log_directory=str(profile.log_directory),
+            log_level_file=profile.log_level_file,
+            log_directory=str(run_log_dir),
+            log_file_name=log_file_name,
             log_file_format="json",
+            log_file_max_size=profile.log_file_max_size,
             log_colors=True,
+            use_pyo3=True,
         ),
         data_engine=LiveDataEngineConfig(graceful_shutdown_on_exception=True),
         exec_engine=LiveExecEngineConfig(
@@ -542,6 +595,7 @@ def build_trading_node_config(
             catalog_path=str(profile.catalog_path),
             flush_interval_ms=30_000,
             replace_existing=True,
+            include_types=list(list_schemas()),  # Persist only registered Arrow types.
         ),
         data_clients=data_clients,
         exec_clients=exec_clients,
@@ -564,5 +618,6 @@ def load_run_bundle(path: str | Path) -> tuple[AuroraHDGConfig, AuroraRuntimePro
         runtime_raw,
         config_dir=p.parent,
         default_instrument=strategy_cfg.instrument_id,
+        strategy_name=strategy_cfg.strategy_id,
     )
     return strategy_cfg, runtime_profile

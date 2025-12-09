@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from Aurora_Lattice.aurora_hdg.config import InventoryParams
-from Aurora_Lattice.aurora_hdg.inventory import compute_center, compute_target_inventory
+from Aurora_Lattice.tests.inventory_helpers import compute_center, compute_target_inventory
 
 
 def _inventory_params() -> InventoryParams:

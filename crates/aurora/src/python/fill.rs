@@ -141,8 +141,14 @@ impl AuroraFillModel {
         horizon_s: f64,
         stats: Option<&AuroraQueueStats>,
     ) -> f64 {
-        self.inner
-            .p_touch(side, distance, mu, sigma_px, horizon_s, stats.map(|s| s.inner()))
+        self.inner.p_touch(
+            side,
+            distance,
+            mu,
+            sigma_px,
+            horizon_s,
+            stats.map(|s| s.inner()),
+        )
     }
 
     pub fn p_queue(&self, queue_ahead: f64, stats: &AuroraQueueStats, horizon_s: f64) -> f64 {
@@ -160,8 +166,15 @@ impl AuroraFillModel {
         queue_ahead: f64,
         stats: &AuroraQueueStats,
     ) -> f64 {
-        self.inner
-            .p_fill(side, distance, mu, sigma_px, horizon_s, queue_ahead, stats.inner())
+        self.inner.p_fill(
+            side,
+            distance,
+            mu,
+            sigma_px,
+            horizon_s,
+            queue_ahead,
+            stats.inner(),
+        )
     }
 }
 

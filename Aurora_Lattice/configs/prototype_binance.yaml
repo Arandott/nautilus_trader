@@ -1,16 +1,16 @@
 strategy:
   strategy_id: "AURORA-HDG"
   order_id_tag: "AHDG"
-  instrument_id: "KASUSDT-PERP.BINANCE"
+  instrument_id: "SOLUSDT-PERP.BINANCE"
   tick_size: 0.1
-  base_symbol: "KASUSDT"
+  base_symbol: "SOLUSDT"
 
   grid:
-    levels: 6
+    levels: 3
     k_sigma: 0.9
     k_s: 0.5
     k_f: 0.6
-    fee_buffer_bps: 3.0
+    fee_buffer_bps: 0
     delta_entry_ticks: 1.0
     exit_cost_bps: 0.0
     q_mm: 0.0
@@ -19,16 +19,16 @@ strategy:
     reanchor_timeout_ms: 400
 
   inventory:
-    i_max: 40
-    i_soft: 24
+    i_max: 0.02
+    i_soft: 0.012
     gamma: 2.0e-6
     kappa_alpha: 0.8
     beta_i: 0.6
     theta_i: 0.8
-    base_qty: 1.0
+    base_qty: 0.05
     eta: 0.35
-    q_min: 0.2
-    q_max: 2.0
+    q_min: 0.04
+    q_max: 0.1
 
   alpha:
     tau_ms: 300
@@ -51,10 +51,10 @@ strategy:
     taker_fee_bps: 2.0
 
   risk:
-    mode: "full"
+    mode: "normal_only"
     shock_mode_sigma_mult: 2.5
     hedge_cooldown_ms: 800
-    hedge_min_qty: 2.0
+    hedge_min_qty: 0.002
 
   regime:
     alpha_gate_bps: 1.2
@@ -76,25 +76,23 @@ strategy:
 
   taker:
     taker_budget_bps_per_hour: 8.0
-    taker_clip_qty: 2.0
+    taker_clip_qty: 0.004
     taker_max_slippage_bps: 3.0
     cooldown_ms: 500
 
 runtime:
-  trader_id: "AURORA-HDG-LIVE"
+  trader_id: "AURORA-HDG-BINANCE"
   log_level: "INFO"
-  log_file_max_size: 104857600  # rotate log files at ~100MB
+  log_level_file: "INFO"
+  log_file_name: "aurora-hdg"
+  log_file_max_size: 10485760  # rotate log files at ~100MB
   log_directory: "../data/logs"
   catalog_path: "../data/catalog"
-  trading_mode: "live"  # 改成 "live" 即可切换到实盘（CLI 不会覆盖此字段）
+  trading_mode: "live"
 
   clients:
     BINANCE_PERP:
       venue: "BINANCE"
-      testnet: false  # 缺省继承 trading_mode，显式指定可与其它 venue 混用
-      credentials:
-        api_key_env: "BINANCE_API_KEY"
-        api_secret_env: "BINANCE_API_SECRET"
       account_type: "USDT_FUTURES"
       use_data_client: true
       use_exec_client: true
@@ -106,4 +104,4 @@ runtime:
       retry_delay_initial_ms: 1000
       retry_delay_max_ms: 10000
       instrument_ids:
-        - "KASUSDT-PERP.BINANCE"
+        - "SOLUSDT-PERP.BINANCE"

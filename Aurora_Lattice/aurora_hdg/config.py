@@ -106,18 +106,23 @@ class ExecParams(NautilusConfig, frozen=True):
 
 
 class RiskParams(NautilusConfig, frozen=True):
+    mode: str = "full"  # full | normal_only
     shock_mode_sigma_mult: float = 2.5
     hedge_cooldown_ms: PositiveInt = 800
     hedge_min_qty: float = 1.0
 
 
 class RegimeParams(NautilusConfig, frozen=True):
-    mode: str = "full"  # full | normal_only
+    alpha_gate_bps: float = 1.2
     trend_delta_ratio_threshold: float = 0.6
     mo_imbalance_threshold: float = 2.5
-    alpha_gate_bps: float = 1.2
-    chaos_sigma_mult: float = 4.0
     hysteresis_ms: PositiveInt = 800
+    trend_opposite_clip_levels: PositiveInt = 1
+    trend_widen_mult: float = 1.15
+    trend_reduce_levels: PositiveInt = 1
+    chaos_widen_mult: float = 2.0
+    chaos_reduce_levels: PositiveInt = 2
+    pause_on_chaos: bool = True
 
 
 class PositionRiskParams(NautilusConfig, frozen=True):

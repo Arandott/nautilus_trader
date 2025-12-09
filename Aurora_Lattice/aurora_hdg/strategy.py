@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections import deque
-from dataclasses import dataclass
 from decimal import Decimal
-from typing import Deque, Tuple
 
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.core import nautilus_pyo3
@@ -22,17 +19,7 @@ from nautilus_trader.trading.strategy import Strategy
 
 from .config import AuroraHDGConfig
 from .fill import QueueStats
-from .inventory import base_delta, build_grid_planner
 from .position_risk import PositionRiskMonitor, calc_mo_slippage_price
-from .regime import Regime, RegimeMachine
-from .risk import RiskDecision, RiskState, RiskStateMachine
-
-
-@dataclass(slots=True)
-class AlphaSample:
-    ts_ns: int
-    mid: float
-    features: Tuple[float, ...]
 
 
 class AuroraHdgStrategy(Strategy):
@@ -47,37 +34,48 @@ class AuroraHdgStrategy(Strategy):
         self._book = nautilus_pyo3.OrderBook(self._pyo3_instrument_id, self._pyo3_book_type)
         self._book_factors = BookL1Factors()
         self._vol = BookMidPriceVolEstimator()
-        self._alpha_model = aurora_bindings.RlsAlpha(
-            dimension=4,
-            params=aurora_bindings.RlsParams(
-                forgetting=config.alpha.rls_forgetting,
-                ridge=1.0,
-                a_max_bps=config.alpha.a_max_bps,
-            ),
-        )
-        self._alpha_lag_ns: int = int(config.alpha.tau_ms * 1e6)
-        self._alpha_samples: Deque[AlphaSample] = deque()
+        self._alpha_engine: aurora_bindings.AlphaEngine | None = None
         self._queue_stats = {
             OrderSide.BUY: QueueStats(lambda_mo=2.0, lambda_cancel=1.0, mean_mo=1.0, var_mo=1.0),
             OrderSide.SELL: QueueStats(lambda_mo=2.0, lambda_cancel=1.0, mean_mo=1.0, var_mo=1.0),
         }
         self._queue_window_s = max(config.fill_model.lambda_window_ms, 1) / 1000.0
-        self._risk = RiskStateMachine(config.risk, config.inventory)
-        self._regime = RegimeMachine(config.regime)
+        regime_params = aurora_bindings.AuroraRegimeParams(
+            alpha_gate_bps=config.regime.alpha_gate_bps,
+            trend_delta_ratio_threshold=config.regime.trend_delta_ratio_threshold,
+            mo_imbalance_threshold=config.regime.mo_imbalance_threshold,
+            hysteresis_ms=config.regime.hysteresis_ms,
+            trend_opposite_clip_levels=config.regime.trend_opposite_clip_levels,
+            trend_widen_mult=config.regime.trend_widen_mult,
+            trend_reduce_levels=config.regime.trend_reduce_levels,
+            chaos_widen_mult=config.regime.chaos_widen_mult,
+            chaos_reduce_levels=config.regime.chaos_reduce_levels,
+            pause_on_chaos=config.regime.pause_on_chaos,
+        )
+        self._risk = aurora_bindings.AuroraRiskAdvisor(
+            vol_shock_sigma_mult=config.risk.shock_mode_sigma_mult,
+            inventory_soft_limit=config.inventory.i_soft,
+            hedge_cooldown_ms=config.risk.hedge_cooldown_ms,
+            hedge_min_qty=config.risk.hedge_min_qty,
+            regime_params=regime_params,
+            mode=config.risk.mode,
+        )
         self._pos_risk = PositionRiskMonitor(config.position_risk, config.taker, config.inventory.i_max)
-        self._grid_planner = build_grid_planner(config)
+        self._grid_planner = None
         self._inventory_qty: float = 0.0
         self._last_snapshot: dict | None = None  # stores scalar L1 values
         self._last_snapshot_ts: int = 0
         self._base_sigma: float = 1e-6
+        # Will be set to the instrument price increment on start.
+        self._tick_size: float = float(config.tick_size)
         self._tau_alpha_s: float = self.config.alpha.tau_ms / 1000.0
         self._tau_fill_s: float = self.config.fill_model.tau_ms / 1000.0
         self._order_ttl_ms: float = self.config.fill_model.ttl_ratio * self.config.fill_model.tau_ms
         self._last_refresh_ns: int = 0
         self._current_center: float | None = None
         self._last_trade_ts: int | None = None
-        self._last_risk_state: RiskState | None = None
-        self._last_regime: Regime | None = None
+        self._last_risk_state: aurora_bindings.AuroraRiskState | None = None
+        self._last_regime: aurora_bindings.AuroraRegime | None = None
 
     # --- lifecycle ---
 
@@ -88,8 +86,42 @@ class AuroraHdgStrategy(Strategy):
             self.stop()
             return
 
+        # Always use the instrument-defined tick size to align pricing.
+        self._tick_size = self.instrument.price_increment.as_double()
+        self.log.info(
+            f"Using instrument tick_size={self._tick_size:.8f}",
+            LogColor.YELLOW,
+        )
+
+        self._grid_planner = self._build_grid_planner()
         self._book.reset()
         self._book_factors.reset()
+        features = ["imbalance", "micro_skew", "sigma_rel"]
+        rls_model = aurora_bindings.RlsAlpha(
+            dimension=len(features),
+            params=aurora_bindings.RlsParams(
+                forgetting=self.config.alpha.rls_forgetting,
+                ridge=1.0,
+                a_max_bps=self.config.alpha.a_max_bps,
+            ),
+        )
+        alpha_params = aurora_bindings.AlphaEngineParams(
+            lag_ns=int(self.config.alpha.tau_ms * 1e6),
+            tick_size=self._tick_size,
+            i_max=self.config.inventory.i_max,
+            time_stride_ns=0,
+            count_stride=1,
+            min_updates_for_output=0,
+            label_queue_len=4096,
+            base_sigma=1e-6,
+            features=features,
+        )
+        self._alpha_engine = aurora_bindings.AlphaEngine(
+            model=rls_model,
+            instrument_id=self._pyo3_instrument_id,
+            book_type=self._pyo3_book_type,
+            params=alpha_params,
+        )
         self.subscribe_order_book_deltas(
             self.config.instrument_id,
             self._book_type,
@@ -136,7 +168,7 @@ class AuroraHdgStrategy(Strategy):
             "microprice": float(snapshot.microprice),
             "imbalance": float(snapshot.imbalance),
         }
-        self._process_snapshot(snapshot_values, deltas.ts_event)
+        self._process_snapshot(snapshot_values, deltas.ts_event, deltas)
 
     def on_trade_tick(self, tick: TradeTick) -> None:
         if tick.instrument_id != self.config.instrument_id:
@@ -147,7 +179,13 @@ class AuroraHdgStrategy(Strategy):
             dt = max((tick.ts_event - self._last_trade_ts) / 1e9, 1e-3)
         self._last_trade_ts = tick.ts_event
         lam = qty / dt
-        side = OrderSide.SELL if tick.aggressor_side == AggressorSide.BUY else OrderSide.BUY
+        aggr_side = tick.aggressor_side
+        if aggr_side == AggressorSide.BUYER:
+            side = OrderSide.SELL
+        elif aggr_side == AggressorSide.SELLER:
+            side = OrderSide.BUY
+        else:
+            return  # Ignore ticks with no aggressor to avoid misclassifying flow
         stats = self._queue_stats[side]
         decay = self._queue_decay(dt)
         stats.update(mo_rate=lam, cxl_rate=lam * 0.3, mean_mo=qty, var_mo=max(qty**2, 1.0), decay=decay)
@@ -175,61 +213,49 @@ class AuroraHdgStrategy(Strategy):
 
     # --- core logic ---
 
-    def _process_snapshot(self, snapshot: dict, ts_ns: int) -> None:
+    def _process_snapshot(self, snapshot: dict, ts_ns: int, deltas: nautilus_pyo3.OrderBookDeltas) -> None:
         mid = snapshot["mid"]
-        micro = snapshot["microprice"]
         bid_qty = snapshot["bid_qty"]
         ask_qty = snapshot["ask_qty"]
-        imbalance = snapshot["imbalance"]
 
         self._vol.update(mid)
-        sigma_px = max(self._vol.sigma_px(mid), self.config.tick_size)
+        sigma_px = max(self._vol.sigma_px(mid), self._tick_size)
         self._base_sigma = 0.995 * self._base_sigma + 0.005 * self._vol.sigma_rel
-        features = self._build_features(mid, micro, imbalance)
-        alpha_bps = self._alpha_model.predict(features)
-        self._alpha_samples.append(AlphaSample(ts_ns, mid, features))
-        self._drain_alpha_queue(ts_ns, mid)
+        alpha_bps = 0.0
+        if self._alpha_engine is not None:
+            try:
+                alpha_bps = self._alpha_engine.handle_order_book(ts_ns, deltas, self._inventory_qty)
+            except Exception as exc:  # noqa: BLE001
+                self.log.error(f"AlphaEngine handle_order_book failed: {exc}")
         self._update_queue_from_snapshot(snapshot, ts_ns, bid_qty, ask_qty)
 
-        fee_buffer_px = mid * self.config.grid.fee_buffer_bps / 10_000.0
-        delta_guess = base_delta(
-            sigma_px=sigma_px,
-            tick_size=self.config.tick_size,
-            params=self.config.grid,
-            fee_buffer_price=fee_buffer_px,
-            tau_fill_s=self._tau_fill_s,
-        )
-        mo_imbalance = (self._queue_stats[OrderSide.BUY].lambda_mo + 1e-9) / (
-            self._queue_stats[OrderSide.SELL].lambda_mo + 1e-9
-        )
-        delta_ratio = abs(micro - mid) / max(delta_guess, 1e-9)
-        regime_decision = self._regime.update(
-            alpha_bps=alpha_bps,
-            delta_ratio=delta_ratio,
-            mo_imbalance=mo_imbalance,
-            sigma_rel=self._vol.sigma_rel,
-            base_sigma=self._base_sigma,
-            ts_ns=ts_ns,
-        )
-        if regime_decision.regime != self._last_regime:
-            self.log.info(f"Regime transition {self._last_regime} -> {regime_decision.regime}")
-            self._last_regime = regime_decision.regime
+        base_delta = self._base_delta(sigma_px, mid)
+        delta_ratio = self._delta_ratio(base_delta)
+        mo_imbalance = self._mo_imbalance()
 
-        decision = self._risk.on_metrics(
+        decision = self._risk.advise(
             sigma_rel=self._vol.sigma_rel,
             base_sigma=self._base_sigma,
             inventory_qty=self._inventory_qty,
+            alpha_bps=alpha_bps,
+            delta_ratio=delta_ratio,
+            mo_imbalance=mo_imbalance,
             now_ns=ts_ns,
         )
-        if decision.state != self._last_risk_state:
-            self.log.info(f"Risk state transition {self._last_risk_state} -> {decision.state}")
+        if decision.state != self._last_risk_state or decision.regime != self._last_regime:
+            self.log.info(
+                f"Risk decision regime={decision.regime} state={decision.state} "
+                f"widen={decision.widen_factor:.2f} reduce={int(decision.reduce_levels)} "
+                f"reason={decision.reason}",
+            )
             self._last_risk_state = decision.state
+            self._last_regime = decision.regime
 
         if decision.hedge_qty:
             self.log.info(f"Risk hedge triggered qty={decision.hedge_qty:.4f}")
             self._maybe_hedge(decision.hedge_qty)
 
-        if decision.state == RiskState.PAUSE:
+        if decision.state == aurora_bindings.AuroraRiskState.PAUSE:
             self.log.info(f"Risk state PAUSE – cancelling all resting orders")
             self.cancel_all_orders(self.config.instrument_id)
             return
@@ -243,18 +269,34 @@ class AuroraHdgStrategy(Strategy):
             tau_alpha_s=self._tau_alpha_s,
             tau_fill_s=self._tau_fill_s,
             inventory_qty=self._inventory_qty,
-            widen_factor=decision.widen_factor * regime_decision.delta_multiplier,
-            reduce_levels=decision.reduce_levels + regime_decision.level_reduction,
+            widen_factor=decision.widen_factor,
+            reduce_levels=int(decision.reduce_levels),
             bid_stats=self._queue_stats[OrderSide.BUY],
             ask_stats=self._queue_stats[OrderSide.SELL],
         )
-        levels = grid_plan.orders()
-        center = grid_plan.center()
-        delta_eff = grid_plan.delta_eff()
-        target_inventory = grid_plan.target_inventory()
+        levels = list(grid_plan.orders())
+        levels = self._apply_regime_filters(
+            levels=levels,
+            delta_eff=grid_plan.delta_eff,
+            decision=decision,
+        )
+        center = grid_plan.center
+        delta_eff = grid_plan.delta_eff
+        target_inventory = grid_plan.target_inventory
 
-        levels = self._filter_by_regime(levels, delta_eff, regime_decision.regime)
+        if levels:
+            min_dist = min(level.distance for level in levels)
+            max_dist = max(level.distance for level in levels)
+            self.log.info(
+                f"EV filter kept {len(levels)} levels dist=[{min_dist:.8f},{max_dist:.8f}] "
+                f"delta={delta_eff:.8f} center-mid={center - mid:.8f}",
+            )
+        else:
+            self.log.info(
+                f"EV filter kept 0 levels (delta={delta_eff:.8f}, center={center:.8f}, center-mid={center - mid:.8f})",
+            )
 
+        regime_label = str(decision.regime)
         if not levels:
             if self._current_center is not None:
                 self.log.debug(f"No positive EV orders – clearing book (center={center:.8f})")
@@ -266,7 +308,7 @@ class AuroraHdgStrategy(Strategy):
         pos_decision = self._pos_risk.on_inventory(
             inventory_qty=self._inventory_qty,
             target_inventory=target_inventory,
-            regime=regime_decision.regime.name,
+            regime=regime_label,
             ts_ns=ts_ns,
         )
         if pos_decision.trigger:
@@ -279,7 +321,7 @@ class AuroraHdgStrategy(Strategy):
             self._last_refresh_ns = ts_ns
             self.log.info(
                 f"Re-anchored grid center={center:.8f} levels={len(levels)} "
-                f"delta={delta_eff:.8f} alpha={alpha_bps:.4f} "
+                f"delta={delta_eff:.8f} center-mid={center - mid:.8f} alpha={alpha_bps:.4f} "
                 f"target_inv={target_inventory:.4f}",
             )
 
@@ -293,21 +335,50 @@ class AuroraHdgStrategy(Strategy):
         timeout_ms = min(self.config.grid.reanchor_timeout_ms, ttl_ms)
         return elapsed_ms > timeout_ms
 
-    def _build_features(self, mid: float, microprice: float, imbalance: float) -> Tuple[float, ...]:
-        micro_skew = (microprice - mid) / max(self.config.tick_size, 1e-9)
-        sigma_rel = self._vol.sigma_rel
-        inv_ratio = self._inventory_qty / max(self.config.inventory.i_max, 1e-9)
-        return (imbalance, micro_skew, sigma_rel, inv_ratio)
+    def _base_delta(self, sigma_px: float, mid: float) -> float:
+        fee_buffer_px = mid * self.config.grid.fee_buffer_bps / 10_000.0
+        raw = (
+            self.config.grid.k_sigma * sigma_px * math.sqrt(max(self._tau_fill_s, 0.0))
+            + self.config.grid.k_s * self._tick_size
+            + self.config.grid.k_f * fee_buffer_px
+        )
+        if self._tick_size <= 0:
+            return raw
+        steps = max(int(round(raw / self._tick_size)), 1)
+        return steps * self._tick_size
 
-    def _drain_alpha_queue(self, ts_ns: int, current_mid: float) -> None:
-        while self._alpha_samples and ts_ns - self._alpha_samples[0].ts_ns >= self._alpha_lag_ns:
-            sample = self._alpha_samples.popleft()
-            if sample.mid <= 0:
-                continue
-            ret_bps = ((current_mid - sample.mid) / sample.mid) * 1e4
-            self._alpha_model.update(sample.features, ret_bps)
-        if self._alpha_samples:
-            self.log.debug(f"Alpha queue length={len(self._alpha_samples)}")
+    def _delta_ratio(self, base_delta: float) -> float:
+        if base_delta <= 0:
+            return 0.0
+        x1 = 0.5 * base_delta
+        entry_penalty = self.config.grid.delta_entry_ticks * self._tick_size
+        return entry_penalty / max(x1, 1e-9)
+
+    def _mo_imbalance(self) -> float:
+        bid_lam = float(self._queue_stats[OrderSide.BUY].lambda_mo)
+        ask_lam = float(self._queue_stats[OrderSide.SELL].lambda_mo)
+        return bid_lam / max(ask_lam, 1e-9)
+
+    def _apply_regime_filters(self, levels, delta_eff: float, decision) -> list:
+        bias = getattr(decision, "trend_bias", None)
+        if not levels or delta_eff <= 0 or bias is None:
+            return levels
+        clip = int(getattr(bias, "opposite_clip_levels", 0))
+        if clip <= 0:
+            return levels
+        with_trend_is_bid = bool(getattr(bias, "with_trend_is_bid", True))
+        keep_side = OrderSide.BUY if with_trend_is_bid else OrderSide.SELL
+        filtered = []
+        for level in levels:
+            idx = max(int(level.distance / max(delta_eff, 1e-9) - 0.5), 0)
+            if level.side == keep_side or idx >= clip:
+                filtered.append(level)
+        if len(filtered) != len(levels):
+            self.log.info(
+                f"Regime {decision.regime} clipped {len(levels) - len(filtered)} opposite-side levels",
+                LogColor.YELLOW,
+            )
+        return filtered
 
     def _update_queue_from_snapshot(self, snapshot: dict, ts_ns: int, bid_qty: float, ask_qty: float) -> None:
         if self._last_snapshot is None:
@@ -349,8 +420,34 @@ class AuroraHdgStrategy(Strategy):
             count += 1
         self.log.info(f"Submitted {count} resting orders")
 
+    def _meets_min_notional(self, price: float, qty: float) -> bool:
+        """Return True if price*qty meets venue min notional; otherwise False."""
+        if not self.instrument:
+            return False
+        notional = price * qty
+        min_notional = None
+        if self.instrument.min_notional:
+            self.log.info("Using instrument min notional requirement", LogColor.YELLOW)
+            min_notional = self.instrument.min_notional.as_double()
+        elif self.instrument.quote_currency.code in {"USDT", "BUSD", "FDUSD", "USDC"}:
+            # Binance USD-M futures commonly enforce 5 quote-min notional.
+            min_notional = 5.0
+        if min_notional is not None and notional < min_notional:
+            self.log.info(
+                f"Skip order notional below min: notional={notional:.6f} "
+                f"min_required={min_notional:.6f}",
+            )
+            return False
+        return True
+
     def _make_limit(self, side: OrderSide, price: float, qty: float) -> LimitOrder | None:
         if not self.instrument:
+            return None
+        min_qty = self.instrument.size_increment.as_double()
+        if qty < min_qty:
+            self.log.debug(f"Skip order qty below min: qty={qty:.6f} min_qty={min_qty:.6f}")
+            return None
+        if not self._meets_min_notional(price, qty):
             return None
         return self.order_factory.limit(
             instrument_id=self.config.instrument_id,
@@ -364,10 +461,19 @@ class AuroraHdgStrategy(Strategy):
     def _maybe_hedge(self, qty: float) -> None:
         if qty == 0 or not self.instrument:
             return
+        min_qty = self.instrument.size_increment.as_double()
+        abs_qty = abs(qty)
+        clip_steps = math.floor(abs_qty / min_qty) if min_qty > 0 else 0
+        send_qty = clip_steps * min_qty
+        if send_qty < min_qty:
+            self.log.debug(
+                f"Skip hedge qty below min size: raw_qty={abs_qty:.6f} min_qty={min_qty:.6f}",
+            )
+            return
         order: MarketOrder = self.order_factory.market(
             instrument_id=self.config.instrument_id,
             order_side=OrderSide.SELL if qty > 0 else OrderSide.BUY,
-            quantity=self.instrument.make_qty(Decimal(str(abs(qty)))),
+            quantity=self.instrument.make_qty(Decimal(str(send_qty))),
             time_in_force=TimeInForce.IOC,
         )
         self.submit_order(order)
@@ -375,22 +481,37 @@ class AuroraHdgStrategy(Strategy):
             f"Hedge order submitted side={order.side.name} qty={order.quantity.as_double():.6f}",
         )
 
-    def _filter_by_regime(self, levels, delta: float, regime: Regime):
-        if regime == Regime.NORMAL:
-            return levels
-        filtered = []
-        for level in levels:
-            if regime == Regime.CHAOS:
-                # Kill resting risk during chaos.
-                continue
-            if regime == Regime.TREND_UP:
-                # Keep sells near/mid, keep deep buys as take-profit only.
-                if level.side == OrderSide.SELL or level.distance >= 2 * delta:
-                    filtered.append(level)
-            elif regime == Regime.TREND_DOWN:
-                if level.side == OrderSide.BUY or level.distance >= 2 * delta:
-                    filtered.append(level)
-        return filtered
+    def _build_grid_planner(self):
+        """Build planner using q_min bumped to instrument min size."""
+        cfg = self.config
+        inv = cfg.inventory
+        min_qty = self.instrument.size_increment.as_double() if self.instrument else inv.q_min
+        eff_q_min = max(inv.q_min, min_qty)
+        return aurora_bindings.AuroraGridPlanner(
+            grid_levels=cfg.grid.levels,
+            k_sigma=cfg.grid.k_sigma,
+            k_s=cfg.grid.k_s,
+            k_f=cfg.grid.k_f,
+            fee_buffer_bps=cfg.grid.fee_buffer_bps,
+            delta_entry_ticks=cfg.grid.delta_entry_ticks,
+            exit_cost_bps=cfg.grid.exit_cost_bps,
+            q_mm=cfg.grid.q_mm,
+            unfilled_penalty_ticks=cfg.grid.unfilled_penalty_ticks,
+            i_max=inv.i_max,
+            i_soft=inv.i_soft,
+            gamma=inv.gamma,
+            kappa_alpha=inv.kappa_alpha,
+            beta_i=inv.beta_i,
+            theta_i=inv.theta_i,
+            base_qty=inv.base_qty,
+            eta=inv.eta,
+            q_min=eff_q_min,
+            q_max=inv.q_max,
+            msg_rate_budget=cfg.exec.msg_rate_budget,
+            tick_size=self._tick_size,
+            min_p_fill=cfg.fill_model.min_p_fill,
+            use_empirical_touch=cfg.fill_model.use_empirical_touch,
+        )
 
     def _maybe_taker_flatten(self, mid: float, target_qty: float, ts_ns: int) -> None:
         if not self.instrument:
@@ -400,9 +521,20 @@ class AuroraHdgStrategy(Strategy):
             return
         if not self._pos_risk.allow_taker(ts_ns):
             return
-        clip = min(abs(qty_gap), self.config.taker.taker_clip_qty)
+        min_qty = self.instrument.size_increment.as_double()
+        raw_clip = min(abs(qty_gap), self.config.taker.taker_clip_qty)
+        # Floor to the nearest valid size increment to avoid zero-quantity errors.
+        clip_steps = math.floor(raw_clip / min_qty) if min_qty > 0 else 0
+        clip = clip_steps * min_qty
+        if clip < min_qty:
+            self.log.debug(
+                f"Skip taker clip below min size: raw_clip={raw_clip:.6f} min_qty={min_qty:.6f}",
+            )
+            return
         side = OrderSide.SELL if qty_gap > 0 else OrderSide.BUY
         limit_px = calc_mo_slippage_price(mid, side.name, self.config.taker.taker_max_slippage_bps)
+        if not self._meets_min_notional(limit_px, clip):
+            return
         order: LimitOrder = self.order_factory.limit(
             instrument_id=self.config.instrument_id,
             order_side=side,

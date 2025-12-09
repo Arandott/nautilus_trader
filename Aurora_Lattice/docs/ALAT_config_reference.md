@@ -1,7 +1,7 @@
 Aurora Lattice 配置全表（当前代码版）
 ====================================
 
-本文覆盖 `Aurora_Lattice/configs/*.yaml` 中的 **所有** 配置项，含策略、风险、regime、position risk、taker、安全阀，以及 runtime/venue 运行参数。注：FillNet 尚未接入，EV 的部分项为占位符。
+本文覆盖 `Aurora_Lattice/configs/*.yaml` 中的 **所有** 配置项，含策略、风险、position risk、taker、安全阀，以及 runtime/venue 运行参数。注：FillNet 尚未接入，EV 的部分项为占位符。
 
 策略配置（`strategy` 节）
 -------------------------
@@ -41,7 +41,7 @@ Alpha（`alpha`）
 ---------------
 - `tau_ms`: α 标签窗口（ms）。
 - `a_max_bps`: 预测截断（bps）。
-- `a_gate_bps`: Regime 判定用 α 门限。
+- `a_gate_bps`: Regime 判定的 α gate（同时暴露在 `regime`）。
 - `beta_alpha`: 占位，预留用于 alpha 平滑/组合权重（当前未引用）。
 - `kappa_delta`: 占位，预留用于 Δ/档位动态裁剪敏感度（当前未引用）。
 - `rls_forgetting`: RLS 忘记因子。
@@ -62,18 +62,23 @@ Fill 模型（`fill_model`）
 
 风险护栏（`risk`）
 -----------------
+- `mode`: `full` | `normal_only`。normal_only 将 Regime 固定为 NORMAL，禁用 widen/reduce，仅保留 hedge。
 - `shock_mode_sigma_mult`: σ_rel/base_sigma 超阈进入 WIDEN/PAUSE。
 - `hedge_cooldown_ms`: 软库存 hedge 冷却。
 - `hedge_min_qty`: 软库存 hedge 的最小量。
 
 Regime（`regime`）
 -----------------
-- `mode`: `full` | `normal_only`。
+- `alpha_gate_bps`: α 绝对值超过 gate 才考虑 TREND。
 - `trend_delta_ratio_threshold`: δ₁/x₁ 阈值。
-- `mo_imbalance_threshold`: 市价单强度失衡阈值。
-- `alpha_gate_bps`: |α| 判定门限。
-- `chaos_sigma_mult`: σ_rel/base_sigma 判 CHAOS 的倍数。
+- `mo_imbalance_threshold`: ρ_MO 阈值。
 - `hysteresis_ms`: Regime 切换滞后。
+- `trend_opposite_clip_levels`: TREND 下裁掉逆势侧近档数量。
+- `trend_widen_mult`: TREND widen 倍数。
+- `trend_reduce_levels`: TREND 裁剪档位数量。
+- `chaos_widen_mult`: CHAOS widen 倍数。
+- `chaos_reduce_levels`: CHAOS 裁剪档位数量。
+- `pause_on_chaos`: CHAOS 是否直接暂停。
 
 Position Risk（`position_risk`）
 -------------------------------

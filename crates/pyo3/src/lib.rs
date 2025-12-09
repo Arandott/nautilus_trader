@@ -307,7 +307,6 @@ fn _libnautilus(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-
 #[cfg(feature = "cython-compat")]
 fn re_export_module_attributes(
     parent_module: &Bound<'_, PyModule>,

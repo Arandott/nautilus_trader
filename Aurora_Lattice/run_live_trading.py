@@ -49,6 +49,16 @@ def parse_args() -> argparse.Namespace:
         help="Override log level from the config file.",
     )
     parser.add_argument(
+        "--log-level-file",
+        default=None,
+        help="Override file log level from the config file.",
+    )
+    parser.add_argument(
+        "--log-file-name",
+        default=None,
+        help="Override log file name from the config file.",
+    )
+    parser.add_argument(
         "--log-dir",
         type=Path,
         default=None,
@@ -130,6 +140,8 @@ def main() -> None:
         runtime_profile,
         trader_id=args.trader_id,
         log_level=args.log_level,
+        log_level_file=args.log_level_file,
+        log_file_name=args.log_file_name,
         log_directory=args.log_dir,
         catalog_path=args.catalog_path,
         futures_leverage=args.futures_leverage,

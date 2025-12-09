@@ -13,19 +13,27 @@
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
 
-//! Aurora strategy support primitives implemented in pure Rust.
+//! Alpha model interfaces and implementations.
 
-pub mod alpha;
-pub mod fill;
-pub mod grid;
-pub mod risk;
+use anyhow::Result;
 
-pub use alpha::{AlphaEngine, AlphaModel, RlsAlpha, RlsParams};
-pub use fill::{FillModel, QueueStats};
-pub use grid::{GridLevel, GridParams, GridPlan, GridPlanner, GridPlannerConfig, InventoryParams};
-pub use risk::{
-    RegimeParams, RegimeState, RiskAdvisor, RiskDecision, RiskMode, RiskState, TrendBias,
-};
+mod engine;
+mod features;
+mod rls;
+#[cfg(test)]
+mod tests;
 
-#[cfg(feature = "python")]
-pub mod python;
+pub use engine::AlphaEngine;
+pub use rls::{RlsAlpha, RlsParams};
+
+/// Generic alpha model interface.
+pub trait AlphaModel: Send + Sync {
+    /// Predict alpha in basis points given a feature vector.
+    fn predict(&self, x: &[f64]) -> Result<f64>;
+    /// Online update with a labeled alpha (bps).
+    fn update(&mut self, x: &[f64], y_bps: f64) -> Result<()>;
+    /// Expected feature dimension.
+    fn dimension(&self) -> usize;
+    /// Current weights (bps per feature).
+    fn weights(&self) -> &[f64];
+}

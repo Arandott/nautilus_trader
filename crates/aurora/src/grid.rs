@@ -16,10 +16,8 @@
 //! Grid planning and level sizing logic.
 
 use crate::fill::{FillModel, QueueStats};
-use nautilus_model::{
-    enums::{OrderSide, OrderSideSpecified},
-    orderbook::OrderBook,
-};
+use log::info;
+use nautilus_model::{enums::OrderSide, orderbook::OrderBook};
 
 /// Static grid sizing parameters.
 #[derive(Debug, Clone)]
@@ -242,14 +240,36 @@ impl GridPlanner {
                 let entry_penalty = self.config.grid.delta_entry_ticks * self.config.tick_size;
                 let edge = distance - fee_buffer_px - pickoff - entry_penalty;
                 let exit_penalty = (1.0 - q_mm) * exit_cost_px;
-                let unfilled_penalty =
-                    (1.0 - p_fill) * self.config.grid.unfilled_penalty_ticks * self.config.tick_size;
+                let unfilled_penalty = (1.0 - p_fill)
+                    * self.config.grid.unfilled_penalty_ticks
+                    * self.config.tick_size;
                 let variance_penalty = (1.0 - p_fill)
                     * self.config.inventory.gamma
                     * inventory_qty.abs()
                     * sigma_px
                     * tau_fill_s.sqrt();
-                let expected_value = qty * (p_fill * (edge - exit_penalty) - variance_penalty - unfilled_penalty);
+                let expected_value =
+                    qty * (p_fill * (edge - exit_penalty) - variance_penalty - unfilled_penalty);
+                let side_str = match side {
+                    OrderSide::Buy => "BUY",
+                    OrderSide::Sell => "SELL",
+                    OrderSide::NoOrderSide => "NA",
+                };
+                info!(
+                    target: "aurora::grid_ev",
+                    "EV_DEBUG side={} idx={} price={:.8} dist={:.8} qty={:.8} p_fill={:.6} edge={:.8} exit_penalty={:.8} unfilled_penalty={:.8} variance_penalty={:.8} ev={:.8}",
+                    side_str,
+                    idx,
+                    price,
+                    distance,
+                    qty,
+                    p_fill,
+                    edge,
+                    exit_penalty,
+                    unfilled_penalty,
+                    variance_penalty,
+                    expected_value
+                );
                 if expected_value <= 0.0 {
                     continue;
                 }
@@ -287,12 +307,7 @@ fn base_delta(
     round_to_tick(raw.max(tick_size), tick_size)
 }
 
-fn target_inventory(
-    alpha_bps: f64,
-    sigma_px: f64,
-    tau_s: f64,
-    params: &InventoryParams,
-) -> f64 {
+fn target_inventory(alpha_bps: f64, sigma_px: f64, tau_s: f64, params: &InventoryParams) -> f64 {
     if sigma_px <= 0.0 || tau_s <= 0.0 {
         return 0.0;
     }
@@ -309,8 +324,7 @@ fn compute_center(
     alpha_bps: f64,
     params: &InventoryParams,
 ) -> f64 {
-    let inv_term =
-        params.beta_i * (current_inventory - target_inventory) / params.i_max.max(1e-9);
+    let inv_term = params.beta_i * (current_inventory - target_inventory) / params.i_max.max(1e-9);
     let alpha_term = params.theta_i * alpha_bps / 10_000.0;
     let skew = -inv_term + alpha_term;
     microprice + skew * delta

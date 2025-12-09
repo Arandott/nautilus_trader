@@ -1,7 +1,7 @@
 Aurora Lattice v3 – 模块与代码对照
 ===================================
 
-本文聚焦“代码怎么落地”与“参数/接口在哪”，内容覆盖 Grid/EV、Alpha、Fill、Regime、PositionRisk+Taker、运行路径。当前代码支持 v0.1/v0.2 prototype：Grid/Regime/TTL/安全阀已上线；Fill 仍为 heuristic，AuroraFillNet 待接入；δ_entry/q_MM/C_exit/J 以占位参数处理。
+本文聚焦“代码怎么落地”与“参数/接口在哪”，内容覆盖 Grid/EV、Alpha、Fill、Risk、PositionRisk+Taker、运行路径。当前代码支持 v0.1/v0.2 prototype：Grid/TTL/安全阀已上线；Fill 仍为 heuristic，AuroraFillNet 待接入；δ_entry/q_MM/C_exit/J 以占位参数处理。
 
 总体结构
 --------
@@ -9,11 +9,11 @@ Aurora Lattice v3 – 模块与代码对照
   - `alpha.rs`：RLS Alpha（trait `AlphaModel`，实现 `RlsAlpha`）。
   - `fill.rs`：触价+排队概率（heuristic）。
   - `grid.rs`：Δ/中心/数量/EV 计算。
-  - `risk.rs`：波动冲击 + 软库存 hedging。
-  - PyO3 绑定：`crates/aurora/src/python/{alpha,fill,grid,risk}.rs`.
+  - `risk.rs`：Regime 状态机（NORMAL/TREND/CHAOS）、波动冲击、软库存 hedge。
+  - PyO3 绑定：`crates/aurora/src/python/{alpha,fill,grid,risk}.rs`（暴露 `AuroraRegimeParams` 等）。
 - Python 策略：`Aurora_Lattice/aurora_hdg`
   - 入口策略 `strategy.py`（直接使用 `BookL1Factors`）。
-  - 绑定薄层：`fill.py`、`inventory.py`、`risk.py`、`regime.py`、`position_risk.py`。
+  - 绑定薄层：`fill.py`、`inventory.py`、`position_risk.py`（risk 已移除，直接用 PyO3）。
   - 配置：`config.py` + `configs/*.yaml`。
 - 文档：`reports/Aurora_Lattice/prototype_guide.md`（快速跑）、本文件（模块详解）。
 
@@ -48,40 +48,36 @@ Grid / EV / Inventory
 - Python：`aurora_hdg/inventory.py` 构造 planner；策略 `_grid_planner.plan` 传入 `tau_alpha_s` 与 `tau_fill_s`。
 - 配置：`grid.*` + 占位参数 `exit_cost_bps, q_mm, unfilled_penalty_ticks`。
 
-Regime 状态机
--------------
-- 代码：`aurora_hdg/regime.py`
-  - Regime: NORMAL / TREND_UP / TREND_DOWN / CHAOS，带 hysteresis（`hysteresis_ms`）。
-  - 判定：|α| 过 `alpha_gate_bps` 且 (δ₁/x₁ >= trend_delta_ratio_threshold 或 MO 失衡 >= 阈值) → TREND；σ_rel/base_sigma >= chaos_sigma_mult → CHAOS。
-  - 动作：TREND 放大 Δ、减档、裁剪档位（只留顺势侧/远侧止盈）；CHAOS 清空。
-  - 可通过 `regime.mode = normal_only` 关闭。
-
 Position Risk + Taker 安全阀
 ----------------------------
 - 代码：`aurora_hdg/position_risk.py`
   - 跟踪 `t_since_flat`（偏离 I* 时间，阈值 `t_since_flat_threshold_I_ratio * I_max` 归零）。
-  - Regime 对应 `H_max_*`；超时触发 taker 安全阀，目标是回到 I*。
+  - `H_max_*` 按 Regime 选择（strategy 直接传入 Rust 决策的 regime）。
   - Taker 限制：`taker_clip_qty`, `taker_max_slippage_bps`（构造保护价 IOC），`cooldown_ms`；预算 bps 暂为占位，需接成交成本扣减。
+  - 如果希望进一步去 Python 化，可迁到 `crates/aurora` 并通过 PyO3 暴露（Nautilus 自带的 `RiskEngine` 偏全局节流，不含 Regime/TTL 语义）。
 
 风险/波动护栏
 -------------
-- 代码：`crates/aurora/src/risk.rs` + `aurora_hdg/risk.py`
-  - σ 突增 → WIDEN/PAUSE；软库存超限触发最小 hedge_qty（仍可与 PositionRisk 并用）。
+- 代码：`crates/aurora/src/risk.rs`（PyO3 直接暴露，已无 Python 包装）
+  - Regime 判定：alpha_gate + δ₁/x₁ + ρ_MO + σ 突增 → NORMAL / TREND_UP / TREND_DOWN / CHAOS，含 `hysteresis_ms`。
+  - TREND：widen/reduce + opposite clip；CHAOS：widen + 可暂停；vol spike（< shock 阈）仅 widen。
+  - 软库存 hedge：`i_soft`、`hedge_cooldown_ms`、`hedge_min_qty`。
+  - 模式：`risk.mode = full | normal_only`。normal_only 将 Regime 固定 NORMAL，仅保留 hedge。
+  - 配置：`risk.*` + `regime.*`（gate/δ_ratio/ρ_MO/hysteresis/clip/widen/pause_on_chaos）。
 
 策略主循环（`aurora_hdg/strategy.py`）
 --------------------------------------
 1) 更新 vol/alpha/features；α/标签按 `alpha.tau_ms` 延迟。
-2) Regime 判定（alpha/δ_ratio/MO imbalance/σ 爆炸）。
-3) RiskAdvisor（波动）→ widen/暂停。
-4) GridPlanner：Δ/center/I*/EV -> 档位。
-5) Regime 裁剪档位；PositionRisk TTL -> taker 安全阀。
-6) Reanchor 节流：间隔 min(`reanchor_timeout_ms`, `ttl_ratio*tau_fill_ms`) 或中心漂移>ρΔ。
+2) Regime/RiskAdvisor（σ + α + ρ_MO）→ regime + widen/reduce/pause + trend clip；`normal_only` 固定 NORMAL。
+3) GridPlanner：Δ/center/I*/EV -> 档位（接受 widen/reduce）。
+4) PositionRisk TTL -> taker 安全阀（按 Regime 选 H_max）。
+5) Reanchor 节流：间隔 min(`reanchor_timeout_ms`, `ttl_ratio*tau_fill_ms`) 或中心漂移>ρΔ。
 
 运行指引
 --------
 - 配置：`Aurora_Lattice/configs/default.yaml` 或 `sample_okx.yaml`；调整 instrument/tick/base_qty/i_max/venue creds。
 - 启动（testnet）：`python Aurora_Lattice/run_live_trading.py --config <cfg> --env-file <env>`.
-- 监控：日志中的 “Regime transition”、“Re-anchored grid…”，安全阀触发日志，实际成交/库存曲线。
+- 监控：日志中的 “Re-anchored grid…”，风控 widen/pause 触发日志，安全阀触发日志，实际成交/库存曲线。
 
 下一步/待办
 -----------

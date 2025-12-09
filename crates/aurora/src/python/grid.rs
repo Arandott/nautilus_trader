@@ -18,8 +18,8 @@
 use crate::{
     fill::FillModel as CoreFillModel,
     grid::{
-        GridLevel as CoreGridLevel, GridPlan as CoreGridPlan, GridPlanner as CoreGridPlanner,
-        GridPlannerConfig, GridParams as CoreGridParams, InventoryParams as CoreInventoryParams,
+        GridLevel as CoreGridLevel, GridParams as CoreGridParams, GridPlan as CoreGridPlan,
+        GridPlanner as CoreGridPlanner, GridPlannerConfig, InventoryParams as CoreInventoryParams,
     },
 };
 use nautilus_model::{enums::OrderSide, orderbook::OrderBook};

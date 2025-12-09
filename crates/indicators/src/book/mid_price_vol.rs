@@ -100,11 +100,7 @@ impl BookMidPriceVolEstimator {
 
     #[allow(clippy::cast_precision_loss)]
     fn normalize_mid(mid: f64) -> f64 {
-        if mid.is_finite() {
-            mid
-        } else {
-            0.0
-        }
+        if mid.is_finite() { mid } else { 0.0 }
     }
 
     pub fn update(&mut self, mid: f64) {

@@ -51,17 +51,22 @@ strategy:
     taker_fee_bps: 2.0
 
   risk:
+    mode: "full"
     shock_mode_sigma_mult: 2.5
     hedge_cooldown_ms: 800
     hedge_min_qty: 2.0
 
   regime:
-    mode: "full"
+    alpha_gate_bps: 1.2
     trend_delta_ratio_threshold: 0.6
     mo_imbalance_threshold: 2.5
-    alpha_gate_bps: 1.2
-    chaos_sigma_mult: 4.0
     hysteresis_ms: 800
+    trend_opposite_clip_levels: 1
+    trend_widen_mult: 1.15
+    trend_reduce_levels: 1
+    chaos_widen_mult: 2.0
+    chaos_reduce_levels: 2
+    pause_on_chaos: true
 
   position_risk:
     H_max_normal_ms: 2500
@@ -78,6 +83,7 @@ strategy:
 runtime:
   trader_id: "AURORA-HDG-OKX"
   log_level: "INFO"
+  log_file_max_size: 104857600  # rotate log files at ~100MB
   log_directory: "../data/logs"
   catalog_path: "../data/catalog"
   trading_mode: "testnet"

@@ -17,13 +17,14 @@
 
 use anyhow::Result;
 
-mod engine;
+pub mod engine;
 mod features;
 mod rls;
 #[cfg(test)]
 mod tests;
 
 pub use engine::AlphaEngine;
+pub use engine::{PredictPolicyConfig, TriggerLogic, UpdatePolicyConfig};
 pub use rls::{RlsAlpha, RlsParams};
 
 /// Generic alpha model interface.

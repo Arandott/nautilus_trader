@@ -176,9 +176,10 @@ impl AuroraRegimeParams {
     }
 }
 
+#[derive(Clone, Debug)]
 #[pyclass(module = "nautilus_trader.core.nautilus_pyo3.aurora")]
 pub struct AuroraRiskAdvisor {
-    inner: CoreRiskAdvisor,
+    pub(crate) inner: CoreRiskAdvisor,
 }
 
 #[pymethods]

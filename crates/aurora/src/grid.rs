@@ -138,12 +138,17 @@ impl GridPlan {
 pub struct GridPlanner {
     config: GridPlannerConfig,
     fill_model: FillModel,
+    use_fill_model: bool,
 }
 
 impl GridPlanner {
     #[must_use]
-    pub fn new(config: GridPlannerConfig, fill_model: FillModel) -> Self {
-        Self { config, fill_model }
+    pub fn new(config: GridPlannerConfig, fill_model: FillModel, use_fill_model: bool) -> Self {
+        Self {
+            config,
+            fill_model,
+            use_fill_model,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -226,15 +231,19 @@ impl GridPlanner {
                 } else {
                     ask_stats
                 };
-                let p_fill = self.fill_model.p_fill(
-                    side,
-                    distance,
-                    0.0,
-                    sigma_px,
-                    tau_fill_s,
-                    queue_ahead,
-                    stats,
-                );
+                let p_fill = if self.use_fill_model {
+                    self.fill_model.p_fill(
+                        side,
+                        distance,
+                        0.0,
+                        sigma_px,
+                        tau_fill_s,
+                        queue_ahead,
+                        stats,
+                    )
+                } else {
+                    1.0
+                };
 
                 let pickoff = 0.5 * sigma_px;
                 let entry_penalty = self.config.grid.delta_entry_ticks * self.config.tick_size;

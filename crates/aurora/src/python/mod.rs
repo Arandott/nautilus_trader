@@ -16,8 +16,10 @@
 //! PyO3 bindings for the Aurora support crate.
 
 pub mod alpha;
+pub mod exec;
 pub mod fill;
 pub mod grid;
+pub mod orchestrator;
 pub mod risk;
 
 use pyo3::prelude::*;
@@ -25,8 +27,10 @@ use pyo3::prelude::*;
 #[pymodule]
 pub fn aurora(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     alpha::register(m)?;
+    exec::register(m)?;
     fill::register(m)?;
     grid::register(py, m)?;
+    orchestrator::register(py, m)?;
     risk::register(py, m)?;
     Ok(())
 }

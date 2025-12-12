@@ -89,9 +89,10 @@ impl GridPlan {
     }
 }
 
+#[derive(Clone, Debug)]
 #[pyclass(module = "nautilus_trader.core.nautilus_pyo3.aurora")]
 pub struct AuroraGridPlanner {
-    inner: CoreGridPlanner,
+    pub(crate) inner: CoreGridPlanner,
 }
 
 #[pymethods]
@@ -122,7 +123,8 @@ impl AuroraGridPlanner {
             msg_rate_budget,
             tick_size,
             min_p_fill,
-            use_empirical_touch
+            use_empirical_touch,
+            use_fill_model=true
         )
     )]
     pub fn new(
@@ -149,6 +151,7 @@ impl AuroraGridPlanner {
         tick_size: f64,
         min_p_fill: f64,
         use_empirical_touch: bool,
+        use_fill_model: bool,
     ) -> Self {
         let config = GridPlannerConfig {
             grid: CoreGridParams {
@@ -179,7 +182,7 @@ impl AuroraGridPlanner {
         };
         let fill_model = CoreFillModel::new(min_p_fill, tick_size, use_empirical_touch);
         Self {
-            inner: CoreGridPlanner::new(config, fill_model),
+            inner: CoreGridPlanner::new(config, fill_model, use_fill_model),
         }
     }
 

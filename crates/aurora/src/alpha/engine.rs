@@ -19,12 +19,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use anyhow::{Result, anyhow, bail};
-use nautilus_model::{
-    data::{OrderBookDeltas, TradeTick},
-    enums::BookType,
-    identifiers::InstrumentId,
-    orderbook::OrderBook,
-};
+use nautilus_model::{data::TradeTick, orderbook::OrderBook};
 
 use super::{
     AlphaModel,
@@ -69,6 +64,27 @@ pub enum PredictReason {
     InventoryDelta,
     ColdStart,
     MidInvalid,
+}
+
+#[derive(Debug, Clone)]
+pub struct PredictPolicyConfig {
+    pub mid_move_bps: Option<f64>,
+    pub sigma_jump: Option<f64>,
+    pub inventory_delta: Option<f64>,
+    pub require_mid_valid: bool,
+    pub trigger_logic: TriggerLogic,
+}
+
+impl Default for PredictPolicyConfig {
+    fn default() -> Self {
+        Self {
+            mid_move_bps: None,
+            sigma_jump: None,
+            inventory_delta: None,
+            require_mid_valid: true,
+            trigger_logic: TriggerLogic::Any,
+        }
+    }
 }
 
 impl PredictPolicy {
@@ -200,6 +216,29 @@ pub enum UpdateReason {
     MidInvalid,
 }
 
+#[derive(Debug, Clone)]
+pub struct UpdatePolicyConfig {
+    pub min_update_interval_ns: i64,
+    pub count_stride: usize,
+    pub sample_rate: f64,
+    pub label_clip_bps: Option<f64>,
+    pub label_min_abs_bps: Option<f64>,
+    pub mid_required: bool,
+}
+
+impl Default for UpdatePolicyConfig {
+    fn default() -> Self {
+        Self {
+            min_update_interval_ns: 0,
+            count_stride: 1,
+            sample_rate: 1.0,
+            label_clip_bps: None,
+            label_min_abs_bps: None,
+            mid_required: true,
+        }
+    }
+}
+
 impl UpdatePolicy {
     pub fn new(lag_ns: i64) -> Self {
         Self {
@@ -280,7 +319,6 @@ struct FeatureSample {
 
 #[derive(Debug)]
 pub struct AlphaEngine<M: AlphaModel> {
-    book: OrderBook,
     model: M,
     // Per-feature indicator states + mapping to output slots.
     feature_states: Vec<FeatureState>,
@@ -303,8 +341,6 @@ pub struct AlphaEngine<M: AlphaModel> {
 impl<M: AlphaModel> AlphaEngine<M> {
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_model(
-        instrument_id: InstrumentId,
-        book_type: BookType,
         lag_ns: i64,
         tick_size: f64,
         i_max: f64,
@@ -314,12 +350,12 @@ impl<M: AlphaModel> AlphaEngine<M> {
         min_updates_for_output: usize,
         max_queue_len: usize,
         base_sigma: f64,
+        predict_cfg: PredictPolicyConfig,
+        update_cfg: UpdatePolicyConfig,
         feature_names: Option<Vec<String>>,
     ) -> Result<Self> {
         let names = Self::resolve_feature_names(feature_names)?;
         Self::init(
-            instrument_id,
-            book_type,
             lag_ns,
             tick_size,
             i_max,
@@ -329,14 +365,14 @@ impl<M: AlphaModel> AlphaEngine<M> {
             min_updates_for_output,
             max_queue_len,
             base_sigma,
+            predict_cfg,
+            update_cfg,
             names,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_ctor(
-        instrument_id: InstrumentId,
-        book_type: BookType,
         lag_ns: i64,
         tick_size: f64,
         i_max: f64,
@@ -346,14 +382,14 @@ impl<M: AlphaModel> AlphaEngine<M> {
         min_updates_for_output: usize,
         max_queue_len: usize,
         base_sigma: f64,
+        predict_cfg: PredictPolicyConfig,
+        update_cfg: UpdatePolicyConfig,
         feature_names: Option<Vec<String>>,
     ) -> Result<Self> {
         let names = Self::resolve_feature_names(feature_names)?;
         let total_dim: usize = names.len();
         let model = model_ctor(total_dim)?;
         Self::init(
-            instrument_id,
-            book_type,
             lag_ns,
             tick_size,
             i_max,
@@ -363,14 +399,14 @@ impl<M: AlphaModel> AlphaEngine<M> {
             min_updates_for_output,
             max_queue_len,
             base_sigma,
+            predict_cfg,
+            update_cfg,
             names,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
     fn init(
-        instrument_id: InstrumentId,
-        book_type: BookType,
         lag_ns: i64,
         tick_size: f64,
         i_max: f64,
@@ -380,15 +416,15 @@ impl<M: AlphaModel> AlphaEngine<M> {
         min_updates_for_output: usize,
         max_queue_len: usize,
         base_sigma: f64,
+        predict_cfg: PredictPolicyConfig,
+        update_cfg: UpdatePolicyConfig,
         feature_names: Vec<String>,
     ) -> Result<Self> {
         let total_dim: usize = feature_names.len();
         Self::validate_dimension(&model, total_dim)?;
-        let book = OrderBook::new(instrument_id, book_type);
         let queue_cap = max_queue_len.max(1);
         let (feature_states, feature_handles) = Self::build_features(&feature_names)?;
         Ok(Self {
-            book,
             model,
             feature_states,
             feature_handles,
@@ -402,15 +438,26 @@ impl<M: AlphaModel> AlphaEngine<M> {
                 time_stride_ns: time_stride_ns.max(0),
                 count_stride: count_stride.max(1),
                 min_updates_for_output,
-                mid_move_bps: None,
-                sigma_jump: None,
-                inventory_delta: None,
-                require_mid_valid: true,
-                trigger_logic: TriggerLogic::Any,
+                mid_move_bps: predict_cfg.mid_move_bps,
+                sigma_jump: predict_cfg.sigma_jump,
+                inventory_delta: predict_cfg.inventory_delta,
+                require_mid_valid: predict_cfg.require_mid_valid,
+                trigger_logic: predict_cfg.trigger_logic,
                 last_trigger_ns: 0,
                 last_trigger_mid: 0.0,
             },
-            update_policy: UpdatePolicy::new(lag_ns.max(0)),
+            update_policy: UpdatePolicy {
+                lag_ns: lag_ns.max(0),
+                min_update_interval_ns: update_cfg.min_update_interval_ns.max(0),
+                count_stride: update_cfg.count_stride.max(1),
+                sample_rate: update_cfg.sample_rate.clamp(0.0, 1.0),
+                label_clip_bps: update_cfg.label_clip_bps,
+                label_min_abs_bps: update_cfg.label_min_abs_bps,
+                mid_required: update_cfg.mid_required,
+                last_update_ns: 0,
+                since_last: 0,
+                rng_state: 0x9E37_79B9_7F4A_7C15,
+            },
             snapshot_since_last: 0,
             last_alpha_bps: 0.0,
             updates: 0,
@@ -418,26 +465,22 @@ impl<M: AlphaModel> AlphaEngine<M> {
         })
     }
 
-    /// Handle a batch of order book deltas, return latest alpha prediction (bps).
+    /// Evaluate on an externally maintained order book, return latest alpha prediction (bps).
     pub fn handle_order_book(
         &mut self,
         ts_ns: i64,
-        deltas: &OrderBookDeltas,
+        book: &OrderBook,
         inventory_qty: f64,
     ) -> Result<f64> {
-        self.book
-            .apply_deltas(deltas)
-            .map_err(|err| anyhow!("apply_deltas failed: {err}"))?;
-
         let inputs = FeatureInputs {
-            book: &self.book,
+            book,
             inventory_qty,
             tick_size: self.tick_size,
             i_max: self.i_max,
             base_sigma: self.base_sigma,
         };
         Self::update_features_on_book(&mut self.feature_states, inputs.book);
-        let mid = Self::mid_price(&self.book);
+        let mid = Self::mid_price(inputs.book);
 
         if mid <= 0.0 {
             return Ok(self.last_alpha_bps);
@@ -478,11 +521,16 @@ impl<M: AlphaModel> AlphaEngine<M> {
     }
 
     /// Optional trade handler (placeholder for future MO/cancel features).
-    pub fn handle_trade(&mut self, ts_ns: i64, trade: &TradeTick) -> Result<Option<f64>> {
+    pub fn handle_trade(
+        &mut self,
+        ts_ns: i64,
+        trade: &TradeTick,
+        book: &OrderBook,
+    ) -> Result<Option<f64>> {
         Self::update_features_on_trade(&mut self.feature_states, trade);
-        let mid = Self::mid_price(&self.book);
+        let mid = Self::mid_price(book);
         let inputs = FeatureInputs {
-            book: &self.book,
+            book,
             inventory_qty: 0.0,
             tick_size: self.tick_size,
             i_max: self.i_max,
@@ -699,6 +747,7 @@ mod tests {
     use nautilus_model::{
         data::{stubs::stub_trade_ethusdt_buyer, OrderBookDeltas},
         enums::BookType,
+        identifiers::InstrumentId,
     };
     use crate::alpha::{RlsAlpha, RlsParams};
 
@@ -740,14 +789,13 @@ mod tests {
     #[test]
     fn engine_trains_on_book_updates() {
         let instrument_id = InstrumentId::from("TEST.TEST");
+        let mut book = OrderBook::new(instrument_id.clone(), BookType::L2_MBP);
         let params = RlsParams {
             a_max_bps: 1e6,
             ..Default::default()
         };
         let model = RlsAlpha::new(1, params).expect("model init");
         let mut engine = AlphaEngine::new_with_model(
-            instrument_id,
-            BookType::L2_MBP,
             1,                 // lag_ns to defer label to next snapshot
             0.01,              // tick_size
             1.0,               // i_max
@@ -757,16 +805,21 @@ mod tests {
             0,                 // min_updates_for_output
             16,                // max_queue_len
             0.0,               // base_sigma
+            PredictPolicyConfig::default(),
+            UpdatePolicyConfig::default(),
             Some(vec!["test_shared_book".to_string()]),
         )
         .expect("engine init");
 
         let deltas1 = snapshot(&instrument_id, 100.0, 100.0);
-        let _ = engine.handle_order_book(1, &deltas1, 0.0).unwrap();
+        book.apply_deltas(&deltas1).unwrap();
+        let _ = engine.handle_order_book(1, &book, 0.0).unwrap();
         let deltas2 = snapshot(&instrument_id, 101.0, 101.0);
-        let _ = engine.handle_order_book(2, &deltas2, 0.0).unwrap();
+        book.apply_deltas(&deltas2).unwrap();
+        let _ = engine.handle_order_book(2, &book, 0.0).unwrap();
         let deltas3 = snapshot(&instrument_id, 102.0, 102.0);
-        let alpha3 = engine.handle_order_book(3, &deltas3, 0.0).unwrap();
+        book.apply_deltas(&deltas3).unwrap();
+        let alpha3 = engine.handle_order_book(3, &book, 0.0).unwrap();
 
         // By the third snapshot, the first sample has been labeled with a positive return,
         // so the model should have learned a non-zero weight and emit a positive alpha.
@@ -776,14 +829,13 @@ mod tests {
     #[test]
     fn trade_event_triggers_evaluation() {
         let instrument_id = InstrumentId::from("TEST.TRADE");
+        let mut book = OrderBook::new(instrument_id.clone(), BookType::L2_MBP);
         let params = RlsParams {
             a_max_bps: 1e6,
             ..Default::default()
         };
         let model = RlsAlpha::new(2, params).expect("model init");
         let mut engine = AlphaEngine::new_with_model(
-            instrument_id,
-            BookType::L2_MBP,
             1,
             0.01,
             1.0,
@@ -793,6 +845,8 @@ mod tests {
             0,
             16,
             0.0,
+            PredictPolicyConfig::default(),
+            UpdatePolicyConfig::default(),
             Some(vec![
                 "test_shared_book".to_string(),
                 "test_shared_trade".to_string(),
@@ -802,11 +856,12 @@ mod tests {
 
         // Seed book so mid is valid.
         let deltas = snapshot(&instrument_id, 100.0, 100.0);
-        let _ = engine.handle_order_book(1, &deltas, 0.0).unwrap();
+        book.apply_deltas(&deltas).unwrap();
+        let _ = engine.handle_order_book(1, &book, 0.0).unwrap();
 
         // Trade should update shared state and trigger evaluation with updated timestamp.
         let trade = stub_trade_ethusdt_buyer();
-        let _ = engine.handle_trade(2, &trade).unwrap();
+        let _ = engine.handle_trade(2, &trade, &book).unwrap();
         assert_eq!(engine.predict_policy.last_trigger_ns, 2);
         // trade callback increments trade_called; value function returns that counter.
         let trade_state = &engine.feature_states[engine.feature_handles[1].state_idx];
@@ -864,11 +919,9 @@ mod tests {
 
     #[test]
     fn new_with_model_rejects_dimension_mismatch() {
-        let instrument_id = InstrumentId::from("TEST.MISMATCH");
+        let _instrument_id = InstrumentId::from("TEST.MISMATCH");
         let model = DummyModel::new(1);
         let result = AlphaEngine::new_with_model(
-            instrument_id,
-            BookType::L2_MBP,
             1,
             0.01,
             1.0,
@@ -878,12 +931,153 @@ mod tests {
             0,
             16,
             0.0,
+            PredictPolicyConfig::default(),
+            UpdatePolicyConfig::default(),
             Some(vec![
                 "test_shared_book".to_string(),
                 "test_shared_trade".to_string(),
             ]),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn predict_triggers_on_mid_move_threshold() {
+        let instrument_id = InstrumentId::from("TEST.MIDMOVE");
+        let mut book = OrderBook::new(instrument_id.clone(), BookType::L2_MBP);
+        let params = RlsParams {
+            a_max_bps: 1e6,
+            ..Default::default()
+        };
+        let model = RlsAlpha::new(1, params).expect("model init");
+        let predict_cfg = PredictPolicyConfig {
+            mid_move_bps: Some(10.0), // 10 bps threshold
+            ..PredictPolicyConfig::default()
+        };
+        let mut engine = AlphaEngine::new_with_model(
+            1,
+            0.01,
+            1.0,
+            model,
+            1_000_000_000, // time_stride_ns (large to rely on mid trigger after first)
+            100,           // count_stride large to rely on mid trigger
+            0,
+            16,
+            0.0,
+            predict_cfg,
+            UpdatePolicyConfig::default(),
+            Some(vec!["test_shared_book".to_string()]),
+        )
+        .expect("engine init");
+
+        // First snapshot triggers (cold start), sets baseline mid=100.
+        let deltas1 = snapshot(&instrument_id, 100.0, 100.0);
+        book.apply_deltas(&deltas1).unwrap();
+        let _ = engine.handle_order_book(1, &book, 0.0).unwrap();
+        assert_eq!(engine.predict_policy.last_trigger_ns, 1);
+
+        // Small mid move (<10 bps) should not trigger.
+        let deltas2 = snapshot(&instrument_id, 100.05, 100.05); // 5 bps move
+        book.apply_deltas(&deltas2).unwrap();
+        let _ = engine.handle_order_book(2, &book, 0.0).unwrap();
+        assert_eq!(engine.predict_policy.last_trigger_ns, 1);
+
+        // Large mid move (>10 bps) should trigger.
+        let deltas3 = snapshot(&instrument_id, 101.5, 101.5); // 150 bps move
+        book.apply_deltas(&deltas3).unwrap();
+        let _ = engine.handle_order_book(3, &book, 0.0).unwrap();
+        assert_eq!(engine.predict_policy.last_trigger_ns, 3);
+    }
+
+    #[derive(Debug, Clone)]
+    struct RecordingModel {
+        dim: usize,
+        weights: Vec<f64>,
+        last_label: f64,
+        updates: usize,
+    }
+
+    impl RecordingModel {
+        fn new(dim: usize) -> Self {
+            Self {
+                dim,
+                weights: vec![0.0; dim],
+                last_label: 0.0,
+                updates: 0,
+            }
+        }
+    }
+
+    impl AlphaModel for RecordingModel {
+        fn predict(&self, x: &[f64]) -> AnyResult<f64> {
+            if x.len() != self.dimension() {
+                bail!(
+                    "feature dimension mismatch: expected {}, got {}",
+                    self.dimension(),
+                    x.len()
+                );
+            }
+            Ok(0.0)
+        }
+
+        fn update(&mut self, x: &[f64], y_bps: f64) -> AnyResult<()> {
+            if x.len() != self.dimension() {
+                bail!(
+                    "feature dimension mismatch: expected {}, got {}",
+                    self.dimension(),
+                    x.len()
+                );
+            }
+            self.last_label = y_bps;
+            self.updates += 1;
+            Ok(())
+        }
+
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+
+        fn weights(&self) -> &[f64] {
+            &self.weights
+        }
+    }
+
+    #[test]
+    fn update_policy_clips_labels() {
+        let instrument_id = InstrumentId::from("TEST.UPDATE");
+        let mut book = OrderBook::new(instrument_id.clone(), BookType::L2_MBP);
+        let model = RecordingModel::new(1);
+        let mut engine = AlphaEngine::new_with_model(
+            1,    // lag
+            0.01,
+            1.0,
+            model,
+            0,
+            1,
+            0,
+            16,
+            0.0,
+            PredictPolicyConfig::default(),
+            UpdatePolicyConfig {
+                label_clip_bps: Some(1.0), // clip labels to +/-1 bps
+                ..UpdatePolicyConfig::default()
+            },
+            Some(vec!["test_shared_book".to_string()]),
+        )
+        .expect("engine init");
+
+        // First snapshot seeds queue.
+        let deltas1 = snapshot(&instrument_id, 100.0, 100.0);
+        book.apply_deltas(&deltas1).unwrap();
+        let _ = engine.handle_order_book(1, &book, 0.0).unwrap();
+        // Second snapshot produces large positive return; should be clipped to 1.0 bps.
+        let deltas2 = snapshot(&instrument_id, 110.0, 110.0);
+        book.apply_deltas(&deltas2).unwrap();
+        let _ = engine.handle_order_book(2, &book, 0.0).unwrap();
+
+        let rec = &engine.model;
+        assert_eq!(rec.updates, 1);
+        assert!((rec.last_label - 1.0).abs() < 1e-9);
     }
 
     fn snapshot(instrument_id: &InstrumentId, bid: f64, ask: f64) -> OrderBookDeltas {

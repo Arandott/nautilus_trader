@@ -22,7 +22,7 @@ crate-type = ["rlib"]
 
 [features]
 default = []
-python = ["dep:pyo3"]
+python = ["dep:pyo3", "nautilus-core/python", "nautilus-model/python"]
 extension-module = ["python", "pyo3/extension-module"]
 
 [dependencies]

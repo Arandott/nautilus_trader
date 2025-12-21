@@ -54,6 +54,7 @@ class AlphaLiveLearner(Strategy):
         self.instrument = None
         self._book_type = BookType.L2_MBP
         self._alpha_engine: aurora_bindings.AlphaEngine | None = None
+        self._book: nautilus_pyo3.OrderBook | None = None
         self._tick_size: float = float(self.config.tick_size)
         self._log_every = max(log_every, 1)
         self._updates = 0
@@ -81,19 +82,20 @@ class AlphaLiveLearner(Strategy):
             lag_ns=int(self.config.alpha.tau_ms * 1e6),
             tick_size=self._tick_size,
             i_max=self.config.inventory.i_max,
-            time_stride_ns=0,
-            count_stride=1,
+            time_stride_ns=500_000_000,
+            count_stride=0,
             min_updates_for_output=0,
             label_queue_len=4096,
             base_sigma=1e-6,
             features=features,
         )
         self._alpha_engine = aurora_bindings.AlphaEngine(
-            model=rls_model,
-            instrument_id=self._pyo3_instrument_id,
-            book_type=self._pyo3_book_type,
-            params=alpha_params,
+            rls_model,
+            self._pyo3_instrument_id,
+            self._pyo3_book_type,
+            alpha_params,
         )
+        self._book = nautilus_pyo3.OrderBook(self._pyo3_instrument_id, self._pyo3_book_type)
 
         # 仅订阅行情（订单簿 + 成交），不注册执行客户端。
         self.subscribe_order_book_deltas(
@@ -116,7 +118,11 @@ class AlphaLiveLearner(Strategy):
         if deltas.instrument_id.value != self.config.instrument_id.value:
             return
 
-        pred_bps = self._alpha_engine.handle_order_book(deltas.ts_event, deltas, 0.0)
+        if self._alpha_engine is None or self._book is None:
+            return
+
+        self._book.apply_deltas(deltas)
+        pred_bps = self._alpha_engine.handle_order_book(self._book, deltas.ts_event, 0.0)
 
         self._updates += 1
         if self._updates % self._log_every == 0:

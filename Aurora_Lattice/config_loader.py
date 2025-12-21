@@ -578,8 +578,8 @@ def build_trading_node_config(
         risk_engine=LiveRiskEngineConfig(
             graceful_shutdown_on_exception=True,
             bypass=False,
-            max_order_submit_rate="40/00:00:01",
-            max_order_modify_rate="20/00:00:01",
+            max_order_submit_rate="200/00:00:01",
+            max_order_modify_rate="200/00:00:01",
         ),
         cache=CacheConfig(
             timestamps_as_iso8601=True,

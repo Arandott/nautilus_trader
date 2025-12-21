@@ -137,10 +137,10 @@ class AuroraHdgStrategy(Strategy):
             self.log.error(f"Failed to fetch open orders for cancel matching: {exc}")
             return []
 
-        by_id = {o.client_order_id.value: o for o in open_orders if getattr(o, \"client_order_id\", None)}
+        by_id = {o.client_order_id.value: o for o in open_orders if getattr(o, "client_order_id", None)}
         remaining = []
         for o in open_orders:
-            coid = getattr(o, \"client_order_id\", None)
+            coid = getattr(o, "client_order_id", None)
             if coid is None or coid.value not in by_id:
                 remaining.append(o)
 
@@ -155,7 +155,7 @@ class AuroraHdgStrategy(Strategy):
                 for o in remaining:
                     if o.side != req.side:
                         continue
-                    price = float(o.price.as_double()) if getattr(o, \"price\", None) else 0.0
+                    price = float(o.price.as_double()) if getattr(o, "price", None) else 0.0
                     if abs(price - req.price) <= 0.5 * tick:
                         order = o
                         remaining.remove(o)

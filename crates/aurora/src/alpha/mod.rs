@@ -19,13 +19,21 @@ use anyhow::Result;
 
 pub mod engine;
 mod features;
-mod rls;
-#[cfg(test)]
-mod tests;
+mod metrics;
+pub mod models;
+pub mod training;
 
 pub use engine::AlphaEngine;
-pub use engine::{PredictPolicyConfig, TriggerLogic, UpdatePolicyConfig};
-pub use rls::{RlsAlpha, RlsParams};
+pub use engine::{PredictPolicyConfig, SamplePolicyConfig, TriggerLogic};
+pub use metrics::{AlphaMetrics, OnlineCorr, VersionedAlphaMetrics};
+pub use models::{
+    ArcSwapModelHandle, InMemoryModelRegistry, ModelEntry, ModelHandle, ModelMetadata, ModelRegistry,
+    OnnxPredictor, OnnxSession, Predictor, RlsAlpha, RlsParams, StaticPredictor, SwappableModel,
+};
+pub use training::{
+    Labeler, LabeledSample, NoopTrainer, RlsTrainer, Sample, Trainer, UpdateDecision, UpdatePolicy,
+    UpdatePolicyConfig, UpdateReason,
+};
 
 /// Generic alpha model interface.
 pub trait AlphaModel: Send + Sync {

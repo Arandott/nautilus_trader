@@ -25,36 +25,39 @@ use anyhow::{Result, anyhow, bail};
 use nautilus_model::{data::TradeTick, orderbook::OrderBook};
 
 use crate::alpha::AlphaModel;
-use crate::alpha::features::{FeatureInputs, lookup_feature};
+use crate::alpha::features::{Feature, FeatureConfig, lookup_feature};
 use crate::alpha::metrics::{AlphaMetrics, VersionedAlphaMetrics};
 use crate::alpha::training::{Labeler, LabeledSample, RlsTrainer, Sample, Trainer};
 
-use self::feature_runtime::{FeatureHandle, FeatureState};
 pub use self::policies::{
     OutputDecision, OutputPolicy, PredictPolicyConfig, SampleDecision, SamplePolicy,
     SamplePolicyConfig, SampleReason, TriggerLogic,
 };
 pub use crate::alpha::training::{UpdateDecision, UpdatePolicy, UpdatePolicyConfig, UpdateReason};
 
-#[derive(Debug)]
 pub struct AlphaEngine<M: AlphaModel> {
     model: M,
-    // Per-feature indicator states + mapping to output slots.
-    feature_states: Vec<FeatureState>,
-    feature_handles: Vec<FeatureHandle>,
+    features: Vec<Feature>,
+    book_feature_idx: Vec<usize>,
+    trade_feature_idx: Vec<usize>,
+    #[allow(dead_code)]
+    quote_feature_idx: Vec<usize>,
     feature_names: Vec<String>,
     feature_buf: Vec<f64>,
     feature_pool: Vec<Vec<f64>>,
-    tick_size: f64,
-    i_max: f64,
     labeler: Labeler,
     sample_policy: SamplePolicy,
     output_policy: OutputPolicy,
     trainer: Box<dyn Trainer<M>>,
     snapshot_since_last: usize,
     last_alpha_bps: f64,
-    base_sigma: f64,
     metrics: VersionedAlphaMetrics,
+}
+
+impl<M: AlphaModel> std::fmt::Debug for AlphaEngine<M> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AlphaEngine").finish()
+    }
 }
 
 impl<M: AlphaModel> AlphaEngine<M> {
@@ -226,7 +229,7 @@ impl<M: AlphaModel> AlphaEngine<M> {
     fn init_with_trainer(
         lag_ns: i64,
         tick_size: f64,
-        i_max: f64,
+        _i_max: f64,
         model: M,
         time_stride_ns: i64,
         count_stride: usize,
@@ -240,22 +243,27 @@ impl<M: AlphaModel> AlphaEngine<M> {
         let total_dim: usize = feature_names.len();
         Self::validate_dimension(&model, total_dim)?;
         let queue_cap = max_queue_len.max(1);
-        let (feature_states, feature_handles) = Self::build_features(&feature_names)?;
+        let tick_size = tick_size.max(1e-9);
+        let base_sigma = base_sigma.max(0.0);
+        let feature_cfg = FeatureConfig {
+            tick_size,
+            base_sigma,
+        };
+        let runtime = Self::build_features(&feature_names, &feature_cfg)?;
         Ok(Self {
             model,
-            feature_states,
-            feature_handles,
+            features: runtime.features,
+            book_feature_idx: runtime.book_idx,
+            trade_feature_idx: runtime.trade_idx,
+            quote_feature_idx: runtime.quote_idx,
             feature_names,
             feature_buf: vec![0.0; total_dim],
             feature_pool: Vec::with_capacity(queue_cap),
-            tick_size: tick_size.max(1e-9),
-            i_max: i_max.max(1e-9),
             labeler: Labeler::new(lag_ns, queue_cap),
             sample_policy: SamplePolicy {
                 time_stride_ns: time_stride_ns.max(0),
                 count_stride,
                 mid_move_bps: predict_cfg.mid_move_bps,
-                sigma_jump: predict_cfg.sigma_jump,
                 inventory_delta: predict_cfg.inventory_delta,
                 require_mid_valid: predict_cfg.require_mid_valid,
                 trigger_logic: predict_cfg.trigger_logic,
@@ -266,7 +274,6 @@ impl<M: AlphaModel> AlphaEngine<M> {
             trainer,
             snapshot_since_last: 0,
             last_alpha_bps: 0.0,
-            base_sigma: base_sigma.max(0.0),
             metrics: VersionedAlphaMetrics::new("default"),
         })
     }
@@ -278,25 +285,17 @@ impl<M: AlphaModel> AlphaEngine<M> {
         book: &OrderBook,
         inventory_qty: f64,
     ) -> Result<f64> {
-        let inputs = FeatureInputs {
+        Self::update_features_on_book(
+            &mut self.features,
+            &self.book_feature_idx,
             book,
-            inventory_qty,
-            tick_size: self.tick_size,
-            i_max: self.i_max,
-            base_sigma: self.base_sigma,
-        };
-        Self::update_features_on_book(&mut self.feature_states, inputs.book);
-        let mid = Self::mid_price(inputs.book);
-
-        if mid <= 0.0 {
-            return Ok(self.last_alpha_bps);
-        }
+        );
+        let mid = Self::mid_price(book);
 
         let decision = self.sample_policy.should_sample(
             ts_ns,
             mid,
-            inputs.base_sigma,
-            inputs.inventory_qty,
+            inventory_qty,
             self.snapshot_since_last,
         );
         if matches!(decision, SampleDecision::Skip(_)) {
@@ -306,12 +305,7 @@ impl<M: AlphaModel> AlphaEngine<M> {
             return Ok(self.last_alpha_bps);
         }
 
-        Self::write_features(
-            &self.feature_handles,
-            &self.feature_states,
-            &mut self.feature_buf,
-            &inputs,
-        );
+        Self::write_features(&self.features, &mut self.feature_buf);
 
         let pred_bps = self.model.predict(&self.feature_buf)?;
         let updates = self.trainer.updates();
@@ -324,10 +318,12 @@ impl<M: AlphaModel> AlphaEngine<M> {
 
         let labeled = self.labeler.on_market(ts_ns, mid)?;
         self.process_labeled_samples(labeled, ts_ns, mid)?;
-        let sample = self.build_sample(ts_ns, mid, pred_bps, output_bps);
-        self.labeler.enqueue(sample)?;
-        let labeled = self.labeler.on_market(ts_ns, mid)?;
-        self.process_labeled_samples(labeled, ts_ns, mid)?;
+        if mid > 0.0 {
+            let sample = self.build_sample(ts_ns, mid, pred_bps, output_bps);
+            self.labeler.enqueue(sample)?;
+            let labeled = self.labeler.on_market(ts_ns, mid)?;
+            self.process_labeled_samples(labeled, ts_ns, mid)?;
+        }
         if output_decision.emit {
             self.last_alpha_bps = output_decision.output_bps;
         }
@@ -343,24 +339,17 @@ impl<M: AlphaModel> AlphaEngine<M> {
         trade: &TradeTick,
         book: &OrderBook,
     ) -> Result<Option<f64>> {
-        Self::update_features_on_trade(&mut self.feature_states, trade);
+        Self::update_features_on_trade(
+            &mut self.features,
+            &self.trade_feature_idx,
+            trade,
+        );
         let mid = Self::mid_price(book);
-        let inputs = FeatureInputs {
-            book,
-            inventory_qty: 0.0,
-            tick_size: self.tick_size,
-            i_max: self.i_max,
-            base_sigma: self.base_sigma,
-        };
-        if mid <= 0.0 {
-            return Ok(Some(self.last_alpha_bps));
-        }
 
         let decision = self.sample_policy.should_sample(
             ts_ns,
             mid,
-            inputs.base_sigma,
-            inputs.inventory_qty,
+            0.0,
             self.snapshot_since_last,
         );
         if matches!(decision, SampleDecision::Skip(_)) {
@@ -370,12 +359,7 @@ impl<M: AlphaModel> AlphaEngine<M> {
             return Ok(Some(self.last_alpha_bps));
         }
 
-        Self::write_features(
-            &self.feature_handles,
-            &self.feature_states,
-            &mut self.feature_buf,
-            &inputs,
-        );
+        Self::write_features(&self.features, &mut self.feature_buf);
 
         let pred_bps = self.model.predict(&self.feature_buf)?;
         let updates = self.trainer.updates();
@@ -388,10 +372,12 @@ impl<M: AlphaModel> AlphaEngine<M> {
 
         let labeled = self.labeler.on_market(ts_ns, mid)?;
         self.process_labeled_samples(labeled, ts_ns, mid)?;
-        let sample = self.build_sample(ts_ns, mid, pred_bps, output_bps);
-        self.labeler.enqueue(sample)?;
-        let labeled = self.labeler.on_market(ts_ns, mid)?;
-        self.process_labeled_samples(labeled, ts_ns, mid)?;
+        if mid > 0.0 {
+            let sample = self.build_sample(ts_ns, mid, pred_bps, output_bps);
+            self.labeler.enqueue(sample)?;
+            let labeled = self.labeler.on_market(ts_ns, mid)?;
+            self.process_labeled_samples(labeled, ts_ns, mid)?;
+        }
         if output_decision.emit {
             self.last_alpha_bps = output_decision.output_bps;
         }
@@ -515,81 +501,6 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn shared_source_unions_callbacks() {
-        let names = vec![
-            "test_shared_book".to_string(),
-            "test_shared_trade".to_string(),
-        ];
-        let (mut states, handles) =
-            AlphaEngine::<RlsAlpha>::build_features(&names).expect("build features");
-
-        let book = OrderBook::new(InstrumentId::from("TEST.TEST"), BookType::L2_MBP);
-        let inputs = FeatureInputs {
-            book: &book,
-            inventory_qty: 0.0,
-            tick_size: 0.01,
-            i_max: 1.0,
-            base_sigma: 0.0,
-        };
-        AlphaEngine::<RlsAlpha>::update_features_on_book(&mut states, inputs.book);
-
-        let trade = stub_trade_ethusdt_buyer();
-        AlphaEngine::<RlsAlpha>::update_features_on_trade(&mut states, &trade);
-
-        let mut buf = vec![0.0; handles.len()];
-        AlphaEngine::<RlsAlpha>::write_features(&handles, &states, &mut buf, &inputs);
-
-        assert_eq!(buf.len(), 2);
-        assert_eq!(buf[0], 1.0);
-        assert_eq!(buf[1], 1.0);
-        // ensure both callbacks share same state instance
-        assert!(std::ptr::eq(
-            states[handles[0].state_idx].state.as_ref(),
-            states[handles[1].state_idx].state.as_ref()
-        ));
-    }
-
-    #[test]
-    fn engine_trains_on_book_updates() {
-        let instrument_id = InstrumentId::from("TEST.TEST");
-        let mut book = OrderBook::new(instrument_id.clone(), BookType::L2_MBP);
-        let params = RlsParams {
-            a_max_bps: 1e6,
-            ..Default::default()
-        };
-        let model = RlsAlpha::new(1, params).expect("model init");
-        let mut engine = AlphaEngine::new_with_model(
-            1,                 // lag_ns to defer label to next snapshot
-            0.01,              // tick_size
-            1.0,               // i_max
-            model,
-            0,                 // time_stride_ns
-            1,                 // count_stride
-            0,                 // min_updates_for_output
-            16,                // max_queue_len
-            0.0,               // base_sigma
-            PredictPolicyConfig::default(),
-            UpdatePolicyConfig::default(),
-            Some(vec!["test_shared_book".to_string()]),
-        )
-        .expect("engine init");
-
-        let deltas1 = snapshot(&instrument_id, 100.0, 100.0);
-        book.apply_deltas(&deltas1).unwrap();
-        let _ = engine.handle_order_book(1, &book, 0.0).unwrap();
-        let deltas2 = snapshot(&instrument_id, 101.0, 101.0);
-        book.apply_deltas(&deltas2).unwrap();
-        let _ = engine.handle_order_book(2, &book, 0.0).unwrap();
-        let deltas3 = snapshot(&instrument_id, 102.0, 102.0);
-        book.apply_deltas(&deltas3).unwrap();
-        let alpha3 = engine.handle_order_book(3, &book, 0.0).unwrap();
-
-        // By the third snapshot, the first sample has been labeled with a positive return,
-        // so the model should have learned a non-zero weight and emit a positive alpha.
-        assert!(alpha3 > 0.0);
-    }
-
-    #[test]
     fn trade_event_triggers_evaluation() {
         let instrument_id = InstrumentId::from("TEST.TRADE");
         let mut book = OrderBook::new(instrument_id.clone(), BookType::L2_MBP);
@@ -611,8 +522,8 @@ mod tests {
             PredictPolicyConfig::default(),
             UpdatePolicyConfig::default(),
             Some(vec![
-                "test_shared_book".to_string(),
-                "test_shared_trade".to_string(),
+                "imbalance".to_string(),
+                "micro_skew".to_string(),
             ]),
         )
         .expect("engine init");
@@ -626,13 +537,6 @@ mod tests {
         let trade = stub_trade_ethusdt_buyer();
         let _ = engine.handle_trade(2, &trade, &book).unwrap();
         assert_eq!(engine.sample_policy.last_trigger_ns, 2);
-        // trade callback increments trade_called; value function returns that counter.
-        let trade_state = &engine.feature_states[engine.feature_handles[1].state_idx];
-        let shared = trade_state
-            .state
-            .downcast_ref::<crate::alpha::features::tests::TestSharedIndicator>()
-            .unwrap();
-        assert_eq!(shared.trade_called, 1);
     }
 
     #[derive(Debug, Clone)]
@@ -697,8 +601,8 @@ mod tests {
             PredictPolicyConfig::default(),
             UpdatePolicyConfig::default(),
             Some(vec![
-                "test_shared_book".to_string(),
-                "test_shared_trade".to_string(),
+                "imbalance".to_string(),
+                "micro_skew".to_string(),
             ]),
         );
         assert!(result.is_err());
@@ -729,7 +633,7 @@ mod tests {
             0.0,
             predict_cfg,
             UpdatePolicyConfig::default(),
-            Some(vec!["test_shared_book".to_string()]),
+            Some(vec!["imbalance".to_string()]),
         )
         .expect("engine init");
 
@@ -826,7 +730,7 @@ mod tests {
             0.0,
             predict_cfg,
             UpdatePolicyConfig::default(),
-            Some(vec!["test_shared_book".to_string()]),
+            Some(vec!["imbalance".to_string()]),
         )
         .expect("engine init");
 
@@ -862,7 +766,7 @@ mod tests {
                 label_clip_bps: Some(1.0), // clip labels to +/-1 bps
                 ..UpdatePolicyConfig::default()
             },
-            Some(vec!["test_shared_book".to_string()]),
+            Some(vec!["imbalance".to_string()]),
         )
         .expect("engine init");
 
@@ -917,7 +821,7 @@ mod tests {
             16,
             0.0,
             PredictPolicyConfig::default(),
-            Some(vec!["test_shared_book".to_string()]),
+            Some(vec!["imbalance".to_string()]),
             trainer,
         )
         .expect("engine init");

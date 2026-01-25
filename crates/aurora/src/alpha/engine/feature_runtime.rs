@@ -15,110 +15,91 @@
 
 //! Feature runtime helpers for AlphaEngine.
 
-use std::collections::HashMap;
-
 use anyhow::{Result, anyhow};
 use nautilus_model::{data::TradeTick, orderbook::OrderBook};
 
 use crate::alpha::AlphaModel;
-use crate::alpha::features::{FeatureEntry, FeatureInputs, lookup_feature};
+use crate::alpha::features::{Feature, FeatureConfig, Inputs, build_feature};
 
 use super::AlphaEngine;
 
-#[derive(Debug)]
-// Backing indicator instance; may serve multiple feature names that share one source.
-pub(super) struct FeatureState {
-    pub(super) state: Box<dyn std::any::Any + Send + Sync>,
-    pub(super) on_book: Option<fn(&mut dyn std::any::Any, &OrderBook)>,
-    pub(super) on_trade: Option<fn(&mut dyn std::any::Any, &TradeTick)>,
-}
-
-#[derive(Debug)]
-// Mapping from requested feature to its shared state and value function.
-pub(super) struct FeatureHandle {
-    pub(super) entry: &'static FeatureEntry,
-    pub(super) state_idx: usize,
+pub(super) struct FeatureRuntime {
+    pub(super) features: Vec<Feature>,
+    pub(super) book_idx: Vec<usize>,
+    pub(super) trade_idx: Vec<usize>,
+    pub(super) quote_idx: Vec<usize>,
 }
 
 impl<M: AlphaModel> AlphaEngine<M> {
     pub(super) fn build_features(
         feature_names: &[String],
-    ) -> Result<(Vec<FeatureState>, Vec<FeatureHandle>)> {
-        // Group by (source, type) so a single indicator instance can back multiple feature names
-        // (e.g. L1 imbalance + micro_skew) while keeping book/trade callbacks unified.
-        let mut states: Vec<FeatureState> = Vec::new();
-        let mut handles: Vec<FeatureHandle> = Vec::new();
-        let mut source_to_state: HashMap<&'static str, (std::any::TypeId, usize)> = HashMap::new();
+        config: &FeatureConfig,
+    ) -> Result<FeatureRuntime> {
+        let mut features: Vec<Feature> = Vec::with_capacity(feature_names.len());
+        let mut book_idx = Vec::new();
+        let mut trade_idx = Vec::new();
+        let mut quote_idx = Vec::new();
 
         for name in feature_names {
             let canonical = name.replace('-', "_");
-            let entry = lookup_feature(name.as_str())
-                .or_else(|| lookup_feature(&canonical))
+            let (feature, inputs) = build_feature(name.as_str(), config)
+                .or_else(|| build_feature(&canonical, config))
                 .ok_or_else(|| anyhow!("unknown feature name '{name}'"))?;
-
-            let state_idx = match source_to_state.get_mut(entry.source) {
-                Some((ty, idx)) => {
-                    if *ty != entry.type_id {
-                        return Err(anyhow!(
-                            "feature source '{}' registered with multiple types (existing={:?}, new={:?})",
-                            entry.source,
-                            ty,
-                            entry.type_id
-                        ));
-                    }
-                    let state = &mut states[*idx];
-                    if state.on_book.is_none() && entry.on_book.is_some() {
-                        state.on_book = entry.on_book;
-                    }
-                    if state.on_trade.is_none() && entry.on_trade.is_some() {
-                        state.on_trade = entry.on_trade;
-                    }
-                    *idx
-                }
-                None => {
-                    let idx = states.len();
-                    states.push(FeatureState {
-                        state: (entry.make)(),
-                        on_book: entry.on_book,
-                        on_trade: entry.on_trade,
-                    });
-                    source_to_state.insert(entry.source, (entry.type_id, idx));
-                    idx
-                }
-            };
-
-            handles.push(FeatureHandle { entry, state_idx });
-        }
-
-        Ok((states, handles))
-    }
-
-    pub(super) fn update_features_on_book(states: &mut [FeatureState], book: &OrderBook) {
-        for state in states {
-            if let Some(on_book) = state.on_book {
-                on_book(state.state.as_mut(), book);
+            let idx = features.len();
+            features.push(feature);
+            if inputs.contains(Inputs::BOOK) {
+                book_idx.push(idx);
+            }
+            if inputs.contains(Inputs::TRADE) {
+                trade_idx.push(idx);
+            }
+            if inputs.contains(Inputs::QUOTE) {
+                quote_idx.push(idx);
             }
         }
+        Ok(FeatureRuntime {
+            features,
+            book_idx,
+            trade_idx,
+            quote_idx,
+        })
     }
 
-    pub(super) fn update_features_on_trade(states: &mut [FeatureState], trade: &TradeTick) {
-        for state in states {
-            if let Some(on_trade) = state.on_trade {
-                on_trade(state.state.as_mut(), trade);
-            }
-        }
-    }
-
-    pub(super) fn write_features(
-        handles: &[FeatureHandle],
-        states: &[FeatureState],
-        feature_buf: &mut [f64],
-        inputs: &FeatureInputs,
+    pub(super) fn update_features_on_book(
+        features: &mut [Feature],
+        book_idx: &[usize],
+        book: &OrderBook,
     ) {
-        debug_assert!(feature_buf.len() == handles.len());
-        for (idx, handle) in handles.iter().enumerate() {
-            let state = &states[handle.state_idx];
-            feature_buf[idx] = (handle.entry.value)(state.state.as_ref(), inputs);
+        for &idx in book_idx {
+            features[idx].on_book(book);
+        }
+    }
+
+    pub(super) fn update_features_on_trade(
+        features: &mut [Feature],
+        trade_idx: &[usize],
+        trade: &TradeTick,
+    ) {
+        for &idx in trade_idx {
+            features[idx].on_trade(trade);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn update_features_on_quote(
+        features: &mut [Feature],
+        quote_idx: &[usize],
+        quote: &nautilus_model::data::QuoteTick,
+    ) {
+        for &idx in quote_idx {
+            features[idx].on_quote(quote);
+        }
+    }
+
+    pub(super) fn write_features(features: &[Feature], feature_buf: &mut [f64]) {
+        debug_assert!(feature_buf.len() == features.len());
+        for (idx, feature) in features.iter().enumerate() {
+            feature_buf[idx] = feature.value();
         }
     }
 }

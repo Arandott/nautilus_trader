@@ -5,8 +5,8 @@
 ## 代码与角色
 - `engine/mod.rs`：`AlphaEngine<M>` 主流程，持有簿、特征状态、策略、模型；公开 `handle_order_book/handle_trade`。
 - `engine/policies.rs`：采样与输出策略（`SamplePolicy`/`OutputPolicy`）。
-- `engine/feature_runtime.rs`：特征状态、共享 source 绑定与写入逻辑。
-- `features.rs`：特征注册表，声明源 indicator、回调、取值函数；特征自行管理频率/窗口，Engine 不做节流。
+- `engine/feature_runtime.rs`：特征状态更新与写入逻辑（按输入标签路由到特征子集）。
+- `features.rs`：特征注册表（宏表生成 `Feature` 枚举与 `build_feature/lookup_feature`），每个特征标注 `Inputs`（BOOK/TRADE/QUOTE）；特征自行管理频率/窗口，Engine 不做节流。
 - `models/rls.rs`：默认模型 `RlsAlpha`（RLS），`RlsParams` 参数校验与权重裁剪。
 - `training/trainer.rs`：训练器抽象（`Trainer`/`RlsTrainer`）与 `UpdatePolicy`，集中管理更新节流/采样/裁剪。
 - `training/labeler.rs`：延迟标签 `Labeler` 与 `Sample/LabeledSample` 定义。
@@ -19,16 +19,16 @@
 
 ## 事件流（handle_order_book 为例）
 1. 上层传入 **已应用 deltas 的簿引用**：`handle_order_book(ts_ns, &book, inventory_qty)`（AlphaEngine 不再持有簿，也不再调用 `apply_deltas`）。
-2. 特征状态更新：对每个共享 `FeatureState` 调用 `on_book`/`on_trade` 回调。
-3. 采样判定：`SamplePolicy::should_sample` 根据时间/计数节流 + 可选 mid/sigma/inventory 阈值（`TriggerLogic::{Any,All}`）决定是否构建样本；冷启动输出由 `OutputPolicy` 处理。
-4. 特征写入：`write_features` 将各 `FeatureHandle` 的值填入 `feature_buf`，调用 `model.predict`，`last_alpha_bps` 更新。
+2. 特征状态更新：按输入标签对特征子集调用 `on_book`/`on_trade` 回调。
+3. 采样判定：`SamplePolicy::should_sample` 根据时间/计数节流 + 可选 mid/inventory 阈值（`TriggerLogic::{Any,All}`）决定是否构建样本；冷启动输出由 `OutputPolicy` 处理。
+4. 特征写入：`write_features` 读取每个特征 `value()` 填入 `feature_buf`，调用 `model.predict`，`last_alpha_bps` 更新。
 5. 入队待标注样本：Labeler 保存 `(ts_ns, mid, features)`，溢出时返回错误。
 6. 标签出队与训练：**每个事件**调用 Labeler（全量 mid feed），当 `ts_now - sample.ts >= lag_ns` 就用当前 mid 计算 `((mid_t - mid_0) / mid_0) * 1e4 bps`，由 `Trainer::on_labeled`（默认 `RlsTrainer` + `UpdatePolicy`）决定是否更新并调用 `model.update`。
 
-`handle_trade` 复用了同样的预测/训练逻辑，只是默认特征没有 trade 源，更多交易特征可在注册表里扩展。
+`handle_trade` 复用了同样的预测/训练逻辑；默认特征仅标注 `BOOK`，需要交易/报价特征时在注册表里标注 `TRADE`/`QUOTE`。
 
 ## 采样策略（SamplePolicy / SamplePolicyConfig）
-- 触发条件：`time_stride_ns`（0=关闭）、`count_stride`（0=关闭）、可选 `mid_move_bps`、`sigma_jump`、`inventory_delta`，用 `trigger_logic` 组合。
+- 触发条件：`time_stride_ns`（0=关闭）、`count_stride`（0=关闭）、可选 `mid_move_bps`、`inventory_delta`，用 `trigger_logic` 组合。
 - 状态：`last_trigger_ns`、`last_trigger_mid`、`snapshots_since_last` 由 Engine 维护。
 - 绑定字段映射：`predict_*`、`predict_trigger_logic` 来自 `AlphaEngineParams`。
 
@@ -43,12 +43,13 @@
 - 状态：`last_update_ns`、`since_last`、`rng_state`；`rng_state` 为内置 LCG，避免额外 RNG 依赖。
 
 ## 默认特征（features.rs）
-- 注册表用 `register_indicator!` 绑定 indicator、回调与取值函数；同一 `source` 共享一个 indicator 状态以避免重复计算。
+- 注册表由宏表生成；`lookup_feature` 用于校验名称并返回 `Inputs` 标签，`build_feature` 返回 `(Feature, Inputs)`。
+- 引擎根据 `Inputs` 维护 `book_idx/trade_idx/quote_idx`，只对对应子集调用回调，避免触发未实现的 `Indicator` 默认方法。
 - 内置特征（默认 `["imbalance", "micro_skew", "sigma_rel"]`）：
   - `imbalance`：基于 `BookL1Factors`，`(bid_qty - ask_qty) / (bid_qty + ask_qty)`，无市场时输出 0。
   - `micro_skew`：`(microprice - mid) / tick_size`，tick 小于 1e-9 时会被钳制。
   - `sigma_rel`：`BookMidPriceVolEstimator::sigma_rel()`；若样本不足则回退 `base_sigma`。
-- 新特征步骤：在 `features.rs` 注册（可重用 existing indicator 或自定义），声明 `name`、`source`、回调与 `value`，确保名字能被 `lookup_feature` 找到（`-` 会自动转 `_`）。需要额外 Python 配置时，在 Python 侧传入对应名称即可。
+- 新特征步骤：在 `define_features!` 宏表添加条目，声明 `name`、`variant`、`inputs`、`init`（必要时绑定 `FeatureConfig`），确保名字能被 `lookup_feature` 找到（`-` 会自动转 `_`）。仅在实现了对应回调时才标注 `TRADE/QUOTE`。
 
 ## 模型接口与默认 RLS（models/rls.rs）
 - `AlphaModel`：`predict(&[f64]) -> bps`、`update(&[f64], label_bps)`、`dimension()`、`weights()`。
@@ -128,7 +129,7 @@ engine.set_model_version("v2", true);
 
 ## 扩展与注意事项
 - AlphaEngine 不再持有簿；调用方负责维护唯一簿、应用 deltas，并传入引用。
-- tick_size/i_max/base_sigma 均会被钳到非负，避免无效输入导致 NaN。
+- tick_size/base_sigma 均会被钳到非负，避免无效输入导致 NaN。
 - Labeler 队列长度由 `label_queue_len` 控制；超长会返回错误，避免静默丢样。
 - mid<=0 时预测直接返回上一值，更新侧在 `mid_required`=true 时跳过。
 - 离线模型可用 `SwappableModel` + `NoopTrainer` + `ArcSwapModelHandle`；引擎侧仍使用统一的 `AlphaEngine`。

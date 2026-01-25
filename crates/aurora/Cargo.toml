@@ -30,7 +30,6 @@ anyhow = { workspace = true }
 nautilus-model = { workspace = true }
 nautilus-core = { workspace = true }
 nautilus-indicators = { workspace = true }
-once_cell = "1.21.3"
 arc-swap = "1.7.1"
 
 statrs = "0.16.1"

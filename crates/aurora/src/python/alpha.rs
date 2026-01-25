@@ -16,13 +16,17 @@
 //! PyO3 bindings for the Aurora alpha models.
 
 use crate::alpha::{
-    AlphaEngine as CoreAlphaEngine, AlphaModel, PredictPolicyConfig, RlsAlpha as CoreRlsAlpha,
-    RlsParams as CoreRlsParams, TriggerLogic, UpdatePolicyConfig,
+    AlphaEngine as CoreAlphaEngine, AlphaModel, LinearAlpha as CoreLinearAlpha,
+    PredictPolicyConfig, RlsAlpha as CoreRlsAlpha, RlsParams as CoreRlsParams, TriggerLogic,
+    UpdatePolicyConfig,
 };
 use nautilus_core::python::to_pyvalue_err;
 use nautilus_model::{data::TradeTick, enums::BookType, identifiers::InstrumentId, orderbook::OrderBook};
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
+use pyo3::types::PyAny;
 type CoreRlsEngine = CoreAlphaEngine<CoreRlsAlpha>;
+type CoreLinearEngine = CoreAlphaEngine<CoreLinearAlpha>;
 #[pyclass(module = "nautilus_trader.core.nautilus_pyo3.aurora")]
 #[derive(Clone, Debug)]
 pub struct RlsParams {
@@ -92,9 +96,55 @@ impl RlsAlpha {
     }
 }
 
+#[pyclass(module = "nautilus_trader.core.nautilus_pyo3.aurora")]
+#[derive(Clone, Debug)]
+pub struct LinearAlpha {
+    inner: CoreLinearAlpha,
+}
+
+#[pymethods]
+impl LinearAlpha {
+    #[new]
+    #[pyo3(signature = (weights, bias_bps=0.0, a_max_bps=None))]
+    pub fn new(weights: Vec<f64>, bias_bps: f64, a_max_bps: Option<f64>) -> PyResult<Self> {
+        let model = CoreLinearAlpha::new(weights, bias_bps, a_max_bps).map_err(to_pyvalue_err)?;
+        Ok(Self { inner: model })
+    }
+
+    pub fn predict(&self, features: Vec<f64>) -> PyResult<f64> {
+        self.inner.predict(&features).map_err(to_pyvalue_err)
+    }
+
+    pub fn update(&mut self, features: Vec<f64>, target_bps: f64) -> PyResult<()> {
+        self.inner
+            .update(&features, target_bps)
+            .map_err(to_pyvalue_err)
+    }
+
+    pub fn weights(&self) -> Vec<f64> {
+        self.inner.weights().to_vec()
+    }
+
+    #[getter]
+    pub fn dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+
+    #[getter]
+    pub fn bias_bps(&self) -> f64 {
+        self.inner.bias()
+    }
+
+    #[getter]
+    pub fn a_max_bps(&self) -> Option<f64> {
+        self.inner.a_max_bps()
+    }
+}
+
 #[derive(Debug)]
 enum EngineVariant {
     Rls(CoreRlsEngine),
+    Linear(CoreLinearEngine),
 }
 
 #[pyclass(module = "nautilus_trader.core.nautilus_pyo3.aurora")]
@@ -120,8 +170,6 @@ pub struct AlphaEngineParams {
     features: Option<Vec<String>>,
     #[pyo3(get)]
     predict_mid_move_bps: Option<f64>,
-    #[pyo3(get)]
-    predict_sigma_jump: Option<f64>,
     #[pyo3(get)]
     predict_inventory_delta: Option<f64>,
     #[pyo3(get)]
@@ -155,7 +203,6 @@ impl Default for AlphaEngineParams {
             base_sigma: 1e-6,
             features: None,
             predict_mid_move_bps: None,
-            predict_sigma_jump: None,
             predict_inventory_delta: None,
             predict_require_mid_valid: true,
             predict_trigger_logic: "any".to_string(),
@@ -184,7 +231,6 @@ impl AlphaEngineParams {
             base_sigma=1e-6,
             features=None,
             predict_mid_move_bps=None,
-            predict_sigma_jump=None,
             predict_inventory_delta=None,
             predict_require_mid_valid=true,
             predict_trigger_logic="any",
@@ -207,7 +253,6 @@ impl AlphaEngineParams {
         base_sigma: f64,
         features: Option<Vec<String>>,
         predict_mid_move_bps: Option<f64>,
-        predict_sigma_jump: Option<f64>,
         predict_inventory_delta: Option<f64>,
         predict_require_mid_valid: bool,
         predict_trigger_logic: &str,
@@ -229,7 +274,6 @@ impl AlphaEngineParams {
             base_sigma,
             features,
             predict_mid_move_bps,
-            predict_sigma_jump,
             predict_inventory_delta,
             predict_require_mid_valid,
             predict_trigger_logic: predict_trigger_logic.to_string(),
@@ -254,7 +298,7 @@ impl AlphaEngine {
     #[new]
     #[pyo3(signature = (model, _instrument_id, _book_type, params=None))]
     pub fn new(
-        model: Py<RlsAlpha>,
+        model: &Bound<'_, PyAny>,
         _instrument_id: InstrumentId,
         _book_type: BookType,
         params: Option<AlphaEngineParams>,
@@ -263,7 +307,6 @@ impl AlphaEngine {
         let feature_names = parse_features(params.features.as_ref());
         let predict_cfg = PredictPolicyConfig {
             mid_move_bps: params.predict_mid_move_bps,
-            sigma_jump: params.predict_sigma_jump,
             inventory_delta: params.predict_inventory_delta,
             require_mid_valid: params.predict_require_mid_valid,
             trigger_logic: match params.predict_trigger_logic.to_lowercase().as_str() {
@@ -279,24 +322,51 @@ impl AlphaEngine {
             label_min_abs_bps: params.update_label_min_abs_bps,
             mid_required: params.update_mid_required,
         };
-        let core_model = Python::with_gil(|py| model.borrow(py).inner.clone());
-        let inner = CoreRlsEngine::new_with_model(
-            params.lag_ns,
-            params.tick_size,
-            params.i_max,
-            core_model,
-            params.time_stride_ns,
-            params.count_stride,
-            params.min_updates_for_output,
-            params.label_queue_len,
-            params.base_sigma,
-            predict_cfg,
-            update_cfg,
-            feature_names,
-        )
-        .map(EngineVariant::Rls)
-        .map_err(to_pyvalue_err)?;
-        Ok(Self { inner })
+        if let Ok(model) = model.extract::<Py<RlsAlpha>>() {
+            let core_model = Python::with_gil(|py| model.borrow(py).inner.clone());
+            let inner = CoreRlsEngine::new_with_model(
+                params.lag_ns,
+                params.tick_size,
+                params.i_max,
+                core_model,
+                params.time_stride_ns,
+                params.count_stride,
+                params.min_updates_for_output,
+                params.label_queue_len,
+                params.base_sigma,
+                predict_cfg,
+                update_cfg,
+                feature_names,
+            )
+            .map(EngineVariant::Rls)
+            .map_err(to_pyvalue_err)?;
+            return Ok(Self { inner });
+        }
+
+        if let Ok(model) = model.extract::<Py<LinearAlpha>>() {
+            let core_model = Python::with_gil(|py| model.borrow(py).inner.clone());
+            let inner = CoreLinearEngine::new_with_model(
+                params.lag_ns,
+                params.tick_size,
+                params.i_max,
+                core_model,
+                params.time_stride_ns,
+                params.count_stride,
+                params.min_updates_for_output,
+                params.label_queue_len,
+                params.base_sigma,
+                predict_cfg,
+                update_cfg,
+                feature_names,
+            )
+            .map(EngineVariant::Linear)
+            .map_err(to_pyvalue_err)?;
+            return Ok(Self { inner });
+        }
+
+        Err(PyTypeError::new_err(
+            "model must be an aurora.RlsAlpha or aurora.LinearAlpha",
+        ))
     }
 
     pub fn handle_order_book(
@@ -307,6 +377,7 @@ impl AlphaEngine {
     ) -> PyResult<f64> {
         match &mut self.inner {
             EngineVariant::Rls(engine) => engine.handle_order_book(ts_ns, book, inventory_qty),
+            EngineVariant::Linear(engine) => engine.handle_order_book(ts_ns, book, inventory_qty),
         }
         .map_err(to_pyvalue_err)
     }
@@ -319,6 +390,7 @@ impl AlphaEngine {
     ) -> PyResult<Option<f64>> {
         match &mut self.inner {
             EngineVariant::Rls(engine) => engine.handle_trade(ts_ns, trade, book),
+            EngineVariant::Linear(engine) => engine.handle_trade(ts_ns, trade, book),
         }
         .map_err(to_pyvalue_err)
     }
@@ -327,6 +399,7 @@ impl AlphaEngine {
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RlsParams>()?;
     m.add_class::<RlsAlpha>()?;
+    m.add_class::<LinearAlpha>()?;
     m.add_class::<AlphaEngineParams>()?;
     m.add_class::<AlphaEngine>()?;
     Ok(())
@@ -343,7 +416,6 @@ pub(crate) fn build_rls_engine(
     let feature_names = parse_features(params.features.as_ref());
     let predict_cfg = PredictPolicyConfig {
         mid_move_bps: params.predict_mid_move_bps,
-        sigma_jump: params.predict_sigma_jump,
         inventory_delta: params.predict_inventory_delta,
         require_mid_valid: params.predict_require_mid_valid,
         trigger_logic: match params.predict_trigger_logic.to_lowercase().as_str() {

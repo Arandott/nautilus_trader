@@ -25,10 +25,12 @@ pub mod training;
 
 pub use engine::AlphaEngine;
 pub use engine::{PredictPolicyConfig, SamplePolicyConfig, TriggerLogic};
+pub use features::all_feature_names;
 pub use metrics::{AlphaMetrics, OnlineCorr, VersionedAlphaMetrics};
 pub use models::{
-    ArcSwapModelHandle, InMemoryModelRegistry, ModelEntry, ModelHandle, ModelMetadata, ModelRegistry,
-    OnnxPredictor, OnnxSession, Predictor, RlsAlpha, RlsParams, StaticPredictor, SwappableModel,
+    ArcSwapModelHandle, InMemoryModelRegistry, LinearAlpha, ModelEntry, ModelHandle, ModelMetadata,
+    ModelRegistry, OnnxPredictor, OnnxSession, Predictor, RlsAlpha, RlsParams, StaticPredictor,
+    SwappableModel,
 };
 pub use training::{
     Labeler, LabeledSample, NoopTrainer, RlsTrainer, Sample, Trainer, UpdateDecision, UpdatePolicy,

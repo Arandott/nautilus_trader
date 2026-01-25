@@ -709,6 +709,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
+name = "approx"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "arc-swap"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1598,6 +1607,12 @@ name = "bytecount"
 version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
+
+[[package]]
+name = "bytemuck"
+version = "1.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fbdf580320f38b612e485521afda1ee26d10cc9884efaaa750d383e13e3c5f4"
 
 [[package]]
 name = "byteorder"
@@ -4734,30 +4749,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
-<<<<<<< HEAD
-=======
-name = "multiversion"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4851161a11d3ad0bf9402d90ffc3967bf231768bfd7aeb61755ad06dbf1a142"
-dependencies = [
- "multiversion-macros",
- "target-features",
-]
-
-[[package]]
-name = "multiversion-macros"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79a74ddee9e0c27d2578323c13905793e91622148f138ba29738f9dddb835e90"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
- "target-features",
-]
-
-[[package]]
 name = "nalgebra"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4787,7 +4778,6 @@ dependencies = [
 ]
 
 [[package]]
->>>>>>> cf3f375fd (feat: add aurora PyO3 bindings and multi-venue HDG runtime)
 name = "nautilus-analysis"
 version = "0.53.0"
 dependencies = [
@@ -4801,7 +4791,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
 name = "nautilus-architect"
 version = "0.53.0"
 dependencies = [
@@ -4845,9 +4834,11 @@ dependencies = [
  "url",
  "ustr",
  "zeroize",
-=======
+]
+
+[[package]]
 name = "nautilus-aurora"
-version = "0.51.0"
+version = "0.53.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4855,10 +4846,8 @@ dependencies = [
  "nautilus-core",
  "nautilus-indicators",
  "nautilus-model",
- "once_cell",
  "pyo3",
  "statrs",
->>>>>>> cf3f375fd (feat: add aurora PyO3 bindings and multi-venue HDG runtime)
 ]
 
 [[package]]
@@ -5745,12 +5734,9 @@ name = "nautilus-pyo3"
 version = "0.53.0"
 dependencies = [
  "nautilus-analysis",
-<<<<<<< HEAD
  "nautilus-architect",
- "nautilus-binance",
-=======
  "nautilus-aurora",
->>>>>>> cf3f375fd (feat: add aurora PyO3 bindings and multi-venue HDG runtime)
+ "nautilus-binance",
  "nautilus-bitmex",
  "nautilus-blockchain",
  "nautilus-bybit",
@@ -6038,6 +6024,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1429034a0490724d0075ebb2bc9e875d6503c3cf69e235a8941aa757d83ef5bf"
 dependencies = [
  "autocfg",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-rational"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
+dependencies = [
  "num-integer",
  "num-traits",
 ]
@@ -8482,8 +8478,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-<<<<<<< HEAD
-=======
 name = "statrs"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8497,28 +8491,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "streaming-decompression"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf6cc3b19bfb128a8ad11026086e31d3ce9ad23f8ea37354b31383a187c44cf3"
-dependencies = [
- "fallible-streaming-iterator",
-]
-
-[[package]]
-name = "streaming-iterator"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
-
-[[package]]
-name = "strength_reduce"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe895eb47f22e2ddd4dabc02bce419d2e643c8e3b585c78158b349195bc24d82"
-
-[[package]]
->>>>>>> cf3f375fd (feat: add aurora PyO3 bindings and multi-venue HDG runtime)
 name = "stringprep"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

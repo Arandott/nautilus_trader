@@ -21,7 +21,6 @@ pub struct SamplePolicy {
     pub time_stride_ns: i64,          // 0 disables time-based triggering
     pub count_stride: usize,          // 0 disables count-based triggering; 1 means every event triggers
     pub mid_move_bps: Option<f64>,    // relative mid move threshold in bps; None to disable
-    pub sigma_jump: Option<f64>,      // optional volatility jump trigger threshold
     pub inventory_delta: Option<f64>, // optional inventory magnitude trigger
     pub require_mid_valid: bool,      // if false, allows mid<=0 to still trigger
     pub trigger_logic: TriggerLogic,  // combine conditions with Any/All
@@ -48,7 +47,6 @@ pub enum SampleReason {
     TimeStride,
     CountStride,
     MidMove,
-    SigmaJump,
     InventoryDelta,
     MidInvalid,
 }
@@ -56,7 +54,6 @@ pub enum SampleReason {
 #[derive(Debug, Clone)]
 pub struct SamplePolicyConfig {
     pub mid_move_bps: Option<f64>,
-    pub sigma_jump: Option<f64>,
     pub inventory_delta: Option<f64>,
     pub require_mid_valid: bool,
     pub trigger_logic: TriggerLogic,
@@ -68,7 +65,6 @@ impl Default for SamplePolicyConfig {
     fn default() -> Self {
         Self {
             mid_move_bps: None,
-            sigma_jump: None,
             inventory_delta: None,
             require_mid_valid: true,
             trigger_logic: TriggerLogic::Any,
@@ -82,7 +78,6 @@ impl SamplePolicy {
             time_stride_ns,
             count_stride,
             mid_move_bps: None,
-            sigma_jump: None,
             inventory_delta: None,
             require_mid_valid: true,
             trigger_logic: TriggerLogic::Any,
@@ -96,7 +91,6 @@ impl SamplePolicy {
         &mut self,
         ts_ns: i64,
         mid: f64,
-        sigma: f64,
         inventory: f64,
         snapshots_since_last: usize,
     ) -> SampleDecision {
@@ -107,7 +101,6 @@ impl SamplePolicy {
         let time_enabled = self.time_stride_ns > 0;
         let count_enabled = self.count_stride > 0;
         let mid_enabled = self.mid_move_bps.is_some();
-        let sigma_enabled = self.sigma_jump.is_some();
         let inv_enabled = self.inventory_delta.is_some();
 
         let time_ok = time_enabled && ts_ns - self.last_trigger_ns >= self.time_stride_ns;
@@ -120,8 +113,6 @@ impl SamplePolicy {
             let move_bps = ((mid - self.last_trigger_mid) / self.last_trigger_mid) * 1e4;
             move_bps.abs() >= thr
         });
-
-        let sigma_ok = self.sigma_jump.map_or(false, |thr| sigma.abs() >= thr);
 
         let inv_ok = self
             .inventory_delta
@@ -145,11 +136,6 @@ impl SamplePolicy {
             any |= mid_ok;
             all &= mid_ok;
         }
-        if sigma_enabled {
-            enabled += 1;
-            any |= sigma_ok;
-            all &= sigma_ok;
-        }
         if inv_enabled {
             enabled += 1;
             any |= inv_ok;
@@ -170,8 +156,6 @@ impl SamplePolicy {
                 SampleReason::CountStride
             } else if mid_ok {
                 SampleReason::MidMove
-            } else if sigma_ok {
-                SampleReason::SigmaJump
             } else if inv_ok {
                 SampleReason::InventoryDelta
             } else {

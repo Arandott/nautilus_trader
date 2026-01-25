@@ -19,8 +19,10 @@ pub mod model_handle;
 pub mod model_registry;
 pub mod onnx;
 pub mod rls;
+pub mod linear;
 
 pub use model_handle::{ArcSwapModelHandle, ModelHandle, Predictor, StaticPredictor, SwappableModel};
 pub use model_registry::{InMemoryModelRegistry, ModelEntry, ModelMetadata, ModelRegistry};
 pub use onnx::{OnnxPredictor, OnnxSession};
+pub use linear::LinearAlpha;
 pub use rls::{RlsAlpha, RlsParams};

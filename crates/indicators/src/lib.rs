@@ -60,12 +60,18 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod average;
+pub mod aurora_indicators;
 pub mod book;
 pub mod indicator;
 pub mod momentum;
 pub mod ratio;
 pub mod testing;
 pub mod volatility;
+
+pub use aurora_indicators::{
+    flow::{FlowFactor, FlowFactorKind},
+    ImbalanceFactor, MicroSkewFactor, SigmaRelFactor, ValueIndicator,
+};
 
 #[cfg(test)]
 mod stubs;

@@ -18,6 +18,7 @@ use std::{collections::HashMap, time::Duration};
 use nautilus_model::{
     enums::{BarAggregation, BarIntervalType},
     identifiers::ClientId,
+    orderbook::L2BookBackendKind,
 };
 
 /// Configuration for `DataEngine` instances.
@@ -42,6 +43,10 @@ pub struct DataEngineConfig {
     pub validate_data_sequence: bool,
     /// If order book deltas should be buffered until the `F_LAST` flag is set for a delta.
     pub buffer_deltas: bool,
+    /// Internal backend to use for managed L2_MBP order books.
+    pub l2_book_backend: L2BookBackendKind,
+    /// Optional internal backend to run in shadow mode for managed L2_MBP books.
+    pub l2_book_shadow_backend: Option<L2BookBackendKind>,
     /// The client IDs declared for external stream processing.
     /// The data engine will not attempt to send data commands to these client IDs.
     pub external_clients: Option<Vec<ClientId>>,
@@ -61,6 +66,8 @@ impl DataEngineConfig {
         time_bars_origins: HashMap<BarAggregation, Duration>,
         validate_data_sequence: bool,
         buffer_deltas: bool,
+        l2_book_backend: L2BookBackendKind,
+        l2_book_shadow_backend: Option<L2BookBackendKind>,
         external_clients: Option<Vec<ClientId>>,
         debug: bool,
     ) -> Self {
@@ -73,6 +80,8 @@ impl DataEngineConfig {
             time_bars_origins,
             validate_data_sequence,
             buffer_deltas,
+            l2_book_backend,
+            l2_book_shadow_backend,
             external_clients,
             debug,
         }
@@ -87,6 +96,8 @@ impl Default for DataEngineConfig {
             time_bars_interval_type: BarIntervalType::LeftOpen,
             validate_data_sequence: false,
             buffer_deltas: false,
+            l2_book_backend: L2BookBackendKind::Generic,
+            l2_book_shadow_backend: None,
             external_clients: None,
             debug: false,
             time_bars_skip_first_non_full_bar: false,

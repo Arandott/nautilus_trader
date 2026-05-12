@@ -213,6 +213,8 @@ cdef class SimulatedExchange:
     """The exchange order management system type.\n\n:returns: `OmsType`"""
     cdef readonly BookType book_type
     """The exchange default order book type.\n\n:returns: `BookType`"""
+    cdef readonly str l2_book_backend
+    """The exchange L2_MBP order book backend.\n\n:returns: `str`"""
     cdef readonly MessageBus msgbus
     """The message bus wired to the exchange.\n\n:returns: `MessageBus`"""
     cdef readonly Cache cache
@@ -390,6 +392,8 @@ cdef class OrderMatchingEngine:
     """The instruments raw integer ID for the exchange.\n\n:returns: `int`"""
     cdef readonly BookType book_type
     """The order book type for the matching engine.\n\n:returns: `BookType`"""
+    cdef readonly str l2_book_backend
+    """The L2_MBP order book backend for the matching engine.\n\n:returns: `str`"""
     cdef readonly OmsType oms_type
     """The order management system type for the matching engine.\n\n:returns: `OmsType`"""
     cdef readonly AccountType account_type

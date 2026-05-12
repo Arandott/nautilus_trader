@@ -513,6 +513,7 @@ cdef class BacktestEngine:
         fee_model: FeeModel | None = None,
         latency_model: LatencyModel | None = None,
         book_type: BookType = BookType.L1_MBP,
+        str l2_book_backend = "generic",
         routing: bool = False,
         reject_stop_orders: bool = True,
         support_gtd_orders: bool = True,
@@ -671,6 +672,7 @@ cdef class BacktestEngine:
             fee_model=fee_model,
             latency_model=latency_model,
             book_type=book_type,
+            l2_book_backend=l2_book_backend,
             clock=self._kernel.clock,
             frozen_account=frozen_account,
             reject_stop_orders=reject_stop_orders,
@@ -2751,6 +2753,7 @@ cdef class SimulatedExchange:
         LatencyModel latency_model = None,
         MarginModel margin_model = None,
         BookType book_type = BookType.L1_MBP,
+        str l2_book_backend = "generic",
         bint frozen_account = False,
         bint reject_stop_orders = True,
         bint support_gtd_orders = True,
@@ -2787,6 +2790,7 @@ cdef class SimulatedExchange:
         self.oms_type = oms_type
         self._log.info(f"OmsType={oms_type_to_str(oms_type)}")
         self.book_type = book_type
+        self.l2_book_backend = l2_book_backend
 
         self.msgbus = msgbus
         self.cache = cache
@@ -2964,6 +2968,7 @@ cdef class SimulatedExchange:
             fill_model=self.fill_model,
             fee_model=self.fee_model,
             book_type=self.book_type,
+            l2_book_backend=self.l2_book_backend,
             oms_type=self.oms_type,
             account_type=self.account_type,
             msgbus=self.msgbus,
@@ -3857,6 +3862,7 @@ cdef class OrderMatchingEngine:
         MessageBus msgbus not None,
         CacheFacade cache not None,
         TestClock clock not None,
+        str l2_book_backend = "generic",
         bint reject_stop_orders = True,
         bint support_gtd_orders = True,
         bint support_contingent_orders = True,
@@ -3882,6 +3888,7 @@ cdef class OrderMatchingEngine:
         self.instrument = instrument
         self.raw_id = raw_id
         self.book_type = book_type
+        self.l2_book_backend = l2_book_backend
         self.oms_type = oms_type
         self.account_type = account_type
         self.market_status = MarketStatus.OPEN
@@ -3910,6 +3917,7 @@ cdef class OrderMatchingEngine:
         self._book = OrderBook(
             instrument_id=instrument.id,
             book_type=book_type,
+            l2_backend=l2_book_backend,
         )
 
         self._account_ids: dict[TraderId, AccountId]  = {}

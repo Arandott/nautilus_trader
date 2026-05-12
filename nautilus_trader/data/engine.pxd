@@ -130,6 +130,7 @@ cdef class DataEngine(Component):
     cdef readonly bint _buffer_deltas
     cdef readonly bint _emit_quotes_from_book
     cdef readonly bint _emit_quotes_from_book_depths
+    cdef readonly str _l2_book_backend
 
     cdef readonly bint debug
     """If debug mode is active (will provide extra debug logging).\n\n:returns: `bool`"""
@@ -194,7 +195,7 @@ cdef class DataEngine(Component):
     cpdef void _handle_subscribe_instrument(self, MarketDataClient client, SubscribeInstrument command)
     cpdef void _handle_subscribe_order_book(self, MarketDataClient client, SubscribeOrderBook command)
     cpdef void _setup_order_book(self, MarketDataClient client, SubscribeOrderBook command)
-    cpdef void _create_new_book(self, InstrumentId instrument_id, BookType book_type)
+    cpdef void _create_new_book(self, InstrumentId instrument_id, BookType book_type, str l2_book_backend=*)
     cpdef void _handle_subscribe_quote_ticks(self, MarketDataClient client, SubscribeQuoteTicks command)
     cpdef void _handle_subscribe_synthetic_quote_ticks(self, InstrumentId instrument_id)
     cpdef void _handle_subscribe_trade_ticks(self, MarketDataClient client, SubscribeTradeTicks command)

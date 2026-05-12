@@ -1,0 +1,29 @@
+{
+  "parse_only": {
+    "avg_elapsed_ns": 37505811497,
+    "avg_peak_resident_bytes": 29200384,
+    "avg_query_ns": 0,
+    "avg_updates_per_sec": 266625.3468692412,
+    "max_query_ns": 0,
+    "runs": 1,
+    "total_deltas": 10000000
+  },
+  "replay_only": {
+    "avg_elapsed_ns": 54544488646,
+    "avg_peak_resident_bytes": 53411840,
+    "avg_query_ns": 0,
+    "avg_updates_per_sec": 183336.57988621268,
+    "max_query_ns": 0,
+    "runs": 1,
+    "total_deltas": 10000000
+  },
+  "replay_periodic_query_q1000": {
+    "avg_elapsed_ns": 53966027265,
+    "avg_peak_resident_bytes": 53460992,
+    "avg_query_ns": 4926,
+    "avg_updates_per_sec": 185301.76310542616,
+    "max_query_ns": 25222,
+    "runs": 1,
+    "total_deltas": 10000000
+  }
+}

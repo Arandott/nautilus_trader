@@ -186,6 +186,44 @@ class TestOrderMatchingEngine:
         assert matching_engine_l2.best_ask_price() == depth.asks[0].price
         assert matching_engine_l2.best_bid_price() == depth.bids[0].price
 
+    def test_l2_tree_backend_depth10_feeds_market_order_matching(self) -> None:
+        matching_engine_l2 = OrderMatchingEngine(
+            instrument=self.instrument,
+            raw_id=0,
+            fill_model=FillModel(),
+            fee_model=MakerTakerFeeModel(),
+            book_type=BookType.L2_MBP,
+            l2_book_backend="tree",
+            oms_type=OmsType.NETTING,
+            account_type=AccountType.MARGIN,
+            reject_stop_orders=True,
+            trade_execution=True,
+            msgbus=self.msgbus,
+            cache=self.cache,
+            clock=self.clock,
+        )
+        depth = TestDataStubs.order_book_depth10(instrument=self.instrument)
+        messages: list[Any] = []
+        self.msgbus.register("ExecEngine.process", messages.append)
+
+        matching_engine_l2.process_order_book_depth10(depth)
+        order = TestExecStubs.market_order(
+            instrument=self.instrument,
+            order_side=OrderSide.BUY,
+            quantity=self.instrument.make_qty(30.0),
+            client_order_id=TestIdStubs.client_order_id(1),
+        )
+        matching_engine_l2.process_order(order, self.account_id)
+        matching_engine_l2.iterate(timestamp_ns=1)
+
+        filled_events = [m for m in messages if isinstance(m, OrderFilled)]
+        assert matching_engine_l2.l2_book_backend == "tree"
+        assert matching_engine_l2.get_book().l2_backend == "tree"
+        assert matching_engine_l2.best_ask_price() == depth.asks[0].price
+        assert len(filled_events) == 1
+        assert filled_events[0].last_px == depth.asks[0].price
+        assert filled_events[0].last_qty == self.instrument.make_qty(30.0)
+
     def test_process_trade_buyer_aggressor(self) -> None:
         # Arrange
         trade = TestDataStubs.trade_tick(

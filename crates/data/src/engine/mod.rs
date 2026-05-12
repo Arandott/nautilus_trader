@@ -85,7 +85,7 @@ use nautilus_model::{
     enums::{AggregationSource, BarAggregation, BookType, PriceType, RecordFlag},
     identifiers::{ClientId, InstrumentId, Venue},
     instruments::{Instrument, InstrumentAny, SyntheticInstrument},
-    orderbook::OrderBook,
+    orderbook::{L2BookBackendKind, OrderBook},
 };
 #[cfg(feature = "streaming")]
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
@@ -145,6 +145,58 @@ impl Debug for BarAggregatorSubscription {
                 .field("handler_id", &handler.id())
                 .finish(),
         }
+    }
+}
+
+fn l2_backend_from_params_key(
+    params: Option<&nautilus_core::Params>,
+    key: &str,
+    default: L2BookBackendKind,
+) -> L2BookBackendKind {
+    let Some(params) = params else {
+        return default;
+    };
+
+    let Some(value) = params.get(key) else {
+        return default;
+    };
+
+    let value = value
+        .as_str()
+        .map_or_else(|| value.to_string(), ToString::to_string)
+        .to_ascii_lowercase();
+
+    match value.as_str() {
+        "generic" => L2BookBackendKind::Generic,
+        "tree" => L2BookBackendKind::Tree,
+        "vec" => L2BookBackendKind::Vec,
+        "grid" => L2BookBackendKind::Grid,
+        other => {
+            log::warn!(
+                "Unknown l2_book_backend param '{other}', falling back to {}",
+                default.as_str()
+            );
+            default
+        }
+    }
+}
+
+fn l2_backend_from_params(
+    params: Option<&nautilus_core::Params>,
+    default: L2BookBackendKind,
+) -> L2BookBackendKind {
+    l2_backend_from_params_key(params, "l2_book_backend", default)
+}
+
+fn l2_shadow_backend_from_params(
+    params: Option<&nautilus_core::Params>,
+    default: Option<L2BookBackendKind>,
+) -> Option<L2BookBackendKind> {
+    let default_backend = default.unwrap_or(L2BookBackendKind::Generic);
+    let backend = l2_backend_from_params_key(params, "l2_book_shadow_backend", default_backend);
+    match backend {
+        L2BookBackendKind::Generic => default,
+        _ => Some(backend),
     }
 }
 
@@ -1102,7 +1154,17 @@ impl DataEngine {
         }
 
         self.book_deltas_subs.insert(cmd.instrument_id);
-        self.setup_book_updater(&cmd.instrument_id, cmd.book_type, true, cmd.managed)?;
+        let l2_backend = l2_backend_from_params(cmd.params.as_ref(), self.config.l2_book_backend);
+        let l2_shadow_backend =
+            l2_shadow_backend_from_params(cmd.params.as_ref(), self.config.l2_book_shadow_backend);
+        self.setup_book_updater(
+            &cmd.instrument_id,
+            cmd.book_type,
+            true,
+            cmd.managed,
+            l2_backend,
+            l2_shadow_backend,
+        )?;
 
         Ok(())
     }
@@ -1113,7 +1175,17 @@ impl DataEngine {
         }
 
         self.book_depth10_subs.insert(cmd.instrument_id);
-        self.setup_book_updater(&cmd.instrument_id, cmd.book_type, false, cmd.managed)?;
+        let l2_backend = l2_backend_from_params(cmd.params.as_ref(), self.config.l2_book_backend);
+        let l2_shadow_backend =
+            l2_shadow_backend_from_params(cmd.params.as_ref(), self.config.l2_book_shadow_backend);
+        self.setup_book_updater(
+            &cmd.instrument_id,
+            cmd.book_type,
+            false,
+            cmd.managed,
+            l2_backend,
+            l2_shadow_backend,
+        )?;
 
         Ok(())
     }
@@ -1180,7 +1252,20 @@ impl DataEngine {
 
         // Only set up book updater if not already subscribed to deltas
         if !self.subscribed_book_deltas().contains(&cmd.instrument_id) {
-            self.setup_book_updater(&cmd.instrument_id, cmd.book_type, false, true)?;
+            let l2_backend =
+                l2_backend_from_params(cmd.params.as_ref(), self.config.l2_book_backend);
+            let l2_shadow_backend = l2_shadow_backend_from_params(
+                cmd.params.as_ref(),
+                self.config.l2_book_shadow_backend,
+            );
+            self.setup_book_updater(
+                &cmd.instrument_id,
+                cmd.book_type,
+                false,
+                true,
+                l2_backend,
+                l2_shadow_backend,
+            )?;
         }
 
         if let Some(client_id) = cmd.client_id.as_ref()
@@ -1496,10 +1581,12 @@ impl DataEngine {
         book_type: BookType,
         only_deltas: bool,
         managed: bool,
+        l2_backend: L2BookBackendKind,
+        l2_shadow_backend: Option<L2BookBackendKind>,
     ) -> anyhow::Result<()> {
         let mut cache = self.cache.borrow_mut();
         if managed && !cache.has_order_book(instrument_id) {
-            let book = OrderBook::new(*instrument_id, book_type);
+            let book = OrderBook::new_with_l2_backend(*instrument_id, book_type, l2_backend);
             log::debug!("Created {book}");
             cache.add_order_book(book)?;
         }
@@ -1508,7 +1595,14 @@ impl DataEngine {
         let updater = self
             .book_updaters
             .entry(*instrument_id)
-            .or_insert_with(|| Rc::new(BookUpdater::new(instrument_id, self.cache.clone())))
+            .or_insert_with(|| {
+                Rc::new(BookUpdater::new(
+                    instrument_id,
+                    book_type,
+                    self.cache.clone(),
+                    l2_shadow_backend,
+                ))
+            })
             .clone();
 
         // Subscribe to deltas (typed router handles duplicates)

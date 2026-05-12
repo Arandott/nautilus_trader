@@ -1,0 +1,74 @@
+{
+  "baseline::replay_only": {
+    "avg_elapsed_ns": 53308580991,
+    "avg_peak_resident_bytes": 53547008,
+    "avg_query_ns": 0,
+    "avg_updates_per_sec": 187590.00542481392,
+    "book": "baseline",
+    "max_query_ns": 0,
+    "mode": "replay_only",
+    "query_interval": null,
+    "repeats": 3,
+    "total_deltas": 10000000
+  },
+  "baseline::replay_periodic_query::q100": {
+    "avg_elapsed_ns": 53719855240,
+    "avg_peak_resident_bytes": 53559296,
+    "avg_query_ns": 3228,
+    "avg_updates_per_sec": 186151.5648570153,
+    "book": "baseline",
+    "max_query_ns": 158805,
+    "mode": "replay_periodic_query",
+    "query_interval": 100,
+    "repeats": 3,
+    "total_deltas": 10000000
+  },
+  "baseline::replay_periodic_query::q1000": {
+    "avg_elapsed_ns": 53368341863,
+    "avg_peak_resident_bytes": 53538816,
+    "avg_query_ns": 4888,
+    "avg_updates_per_sec": 187379.40435977688,
+    "book": "baseline",
+    "max_query_ns": 25289,
+    "mode": "replay_periodic_query",
+    "query_interval": 1000,
+    "repeats": 3,
+    "total_deltas": 10000000
+  },
+  "l2tree::replay_only": {
+    "avg_elapsed_ns": 41435965696,
+    "avg_peak_resident_bytes": 33061546,
+    "avg_query_ns": 0,
+    "avg_updates_per_sec": 241336.8737769624,
+    "book": "l2tree",
+    "max_query_ns": 0,
+    "mode": "replay_only",
+    "query_interval": null,
+    "repeats": 3,
+    "total_deltas": 10000000
+  },
+  "l2tree::replay_periodic_query::q100": {
+    "avg_elapsed_ns": 42183676481,
+    "avg_peak_resident_bytes": 33043797,
+    "avg_query_ns": 2095,
+    "avg_updates_per_sec": 237071.93420148885,
+    "book": "l2tree",
+    "max_query_ns": 32189,
+    "mode": "replay_periodic_query",
+    "query_interval": 100,
+    "repeats": 3,
+    "total_deltas": 10000000
+  },
+  "l2tree::replay_periodic_query::q1000": {
+    "avg_elapsed_ns": 41748352314,
+    "avg_peak_resident_bytes": 33072469,
+    "avg_query_ns": 2603,
+    "avg_updates_per_sec": 239531.16320880034,
+    "book": "l2tree",
+    "max_query_ns": 21366,
+    "mode": "replay_periodic_query",
+    "query_interval": 1000,
+    "repeats": 3,
+    "total_deltas": 10000000
+  }
+}

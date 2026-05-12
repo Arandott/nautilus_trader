@@ -392,6 +392,7 @@ class BacktestNode:
                 leverages=get_leverages(venue_config),
                 margin_model=get_margin_model(venue_config),
                 book_type=get_book_type(venue_config),
+                l2_book_backend=venue_config.l2_book_backend,
                 routing=venue_config.routing,
                 modules=[ActorFactory.create(module) for module in (venue_config.modules or [])],
                 fill_model=get_fill_model(venue_config),

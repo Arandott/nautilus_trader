@@ -23,8 +23,13 @@ use nautilus_core::{UnixNanos, correctness::FAILED};
 use rust_decimal::Decimal;
 
 use super::{
-    BookViewError, aggregation::pre_process_order, analysis, display::pprint_book,
-    level::BookLevel, own::OwnOrderBook,
+    BookViewError,
+    aggregation::pre_process_order,
+    analysis,
+    display::pprint_book,
+    l2::{L2BookBackendKind, L2BookOps, L2TreeBook},
+    level::BookLevel,
+    own::OwnOrderBook,
 };
 use crate::{
     data::{BookOrder, OrderBookDelta, OrderBookDeltas, OrderBookDepth10, QuoteTick, TradeTick},
@@ -63,6 +68,8 @@ pub struct OrderBook {
     pub ts_last: UnixNanos,
     /// The current count of updates applied to the order book.
     pub update_count: u64,
+    pub(crate) l2_backend: L2BookBackendKind,
+    pub(crate) l2_tree: Option<L2TreeBook>,
     pub(crate) bids: BookLadder,
     pub(crate) asks: BookLadder,
 }
@@ -92,19 +99,107 @@ impl OrderBook {
     /// Creates a new [`OrderBook`] instance.
     #[must_use]
     pub fn new(instrument_id: InstrumentId, book_type: BookType) -> Self {
+        Self::new_with_l2_backend(instrument_id, book_type, L2BookBackendKind::Generic)
+    }
+
+    /// Creates a new [`OrderBook`] instance with an explicit L2 backend.
+    ///
+    /// The backend setting only applies to `BookType::L2_MBP`; other book types
+    /// always use the generic ladders because their semantics are not price-level
+    /// L2 books. `Vec` and `Grid` are accepted as config values but intentionally
+    /// fall back to generic until their production API surface is completed.
+    #[must_use]
+    pub fn new_with_l2_backend(
+        instrument_id: InstrumentId,
+        book_type: BookType,
+        l2_backend: L2BookBackendKind,
+    ) -> Self {
+        let effective_backend = match (book_type, l2_backend) {
+            (BookType::L2_MBP, L2BookBackendKind::Tree) => L2BookBackendKind::Tree,
+            (BookType::L2_MBP, L2BookBackendKind::Generic) => L2BookBackendKind::Generic,
+            (BookType::L2_MBP, backend @ (L2BookBackendKind::Vec | L2BookBackendKind::Grid)) => {
+                log::warn!(
+                    "L2 backend '{}' is experimental and not wired into the OrderBook facade yet; falling back to generic (instrument_id={})",
+                    backend.as_str(),
+                    instrument_id
+                );
+                L2BookBackendKind::Generic
+            }
+            (_, L2BookBackendKind::Generic) => L2BookBackendKind::Generic,
+            (_, backend) => {
+                log::warn!(
+                    "Ignoring L2 backend '{}' for non-L2_MBP book_type={} (instrument_id={})",
+                    backend.as_str(),
+                    book_type,
+                    instrument_id
+                );
+                L2BookBackendKind::Generic
+            }
+        };
+
         Self {
             instrument_id,
             book_type,
             sequence: 0,
             ts_last: UnixNanos::default(),
             update_count: 0,
+            l2_backend: effective_backend,
+            l2_tree: (effective_backend == L2BookBackendKind::Tree)
+                .then(|| L2TreeBook::new(instrument_id)),
             bids: BookLadder::new(OrderSideSpecified::Buy, book_type),
             asks: BookLadder::new(OrderSideSpecified::Sell, book_type),
         }
     }
 
+    /// Returns the internal L2 backend selected for this order book.
+    #[must_use]
+    pub fn l2_backend(&self) -> L2BookBackendKind {
+        self.l2_backend
+    }
+
+    fn rebuild_l2_tree_from_ladders(&mut self) {
+        let Some(tree) = &mut self.l2_tree else {
+            return;
+        };
+
+        tree.reset();
+
+        for level in self.bids.levels.values() {
+            tree.upsert_level(
+                OrderSideSpecified::Buy,
+                level.price.value,
+                Quantity::from_raw(
+                    level.size_raw(),
+                    level.first().map(|order| order.size.precision).unwrap_or(0),
+                ),
+                self.sequence,
+                self.ts_last,
+            );
+        }
+
+        for level in self.asks.levels.values() {
+            tree.upsert_level(
+                OrderSideSpecified::Sell,
+                level.price.value,
+                Quantity::from_raw(
+                    level.size_raw(),
+                    level.first().map(|order| order.size.precision).unwrap_or(0),
+                ),
+                self.sequence,
+                self.ts_last,
+            );
+        }
+
+        tree.sequence = self.sequence;
+        tree.ts_last = self.ts_last;
+        tree.update_count = self.update_count;
+    }
+
     /// Resets the order book to its initial empty state.
     pub fn reset(&mut self) {
+        if let Some(tree) = &mut self.l2_tree {
+            tree.reset();
+        }
         self.bids.clear();
         self.asks.clear();
         self.sequence = 0;
@@ -115,6 +210,22 @@ impl OrderBook {
     /// Adds an order to the book after preprocessing based on book type.
     pub fn add(&mut self, order: BookOrder, flags: u8, sequence: u64, ts_event: UnixNanos) {
         let order = pre_process_order(self.book_type, order, flags);
+
+        if let Some(tree) = &mut self.l2_tree {
+            let delta = OrderBookDelta::new(
+                self.instrument_id,
+                BookAction::Add,
+                order,
+                flags,
+                sequence,
+                ts_event,
+                ts_event,
+            );
+            if let Err(e) = tree.apply_delta_unchecked(&delta) {
+                log::error!("Failed to apply add to L2 tree backend: {e}");
+            }
+        }
+
         match order.side.as_specified() {
             OrderSideSpecified::Buy => self.bids.add(order, flags),
             OrderSideSpecified::Sell => self.asks.add(order, flags),
@@ -126,6 +237,22 @@ impl OrderBook {
     /// Updates an existing order in the book after preprocessing based on book type.
     pub fn update(&mut self, order: BookOrder, flags: u8, sequence: u64, ts_event: UnixNanos) {
         let order = pre_process_order(self.book_type, order, flags);
+
+        if let Some(tree) = &mut self.l2_tree {
+            let delta = OrderBookDelta::new(
+                self.instrument_id,
+                BookAction::Update,
+                order,
+                flags,
+                sequence,
+                ts_event,
+                ts_event,
+            );
+            if let Err(e) = tree.apply_delta_unchecked(&delta) {
+                log::error!("Failed to apply update to L2 tree backend: {e}");
+            }
+        }
+
         match order.side.as_specified() {
             OrderSideSpecified::Buy => self.bids.update(order, flags),
             OrderSideSpecified::Sell => self.asks.update(order, flags),
@@ -137,6 +264,22 @@ impl OrderBook {
     /// Deletes an order from the book after preprocessing based on book type.
     pub fn delete(&mut self, order: BookOrder, flags: u8, sequence: u64, ts_event: UnixNanos) {
         let order = pre_process_order(self.book_type, order, flags);
+
+        if let Some(tree) = &mut self.l2_tree {
+            let delta = OrderBookDelta::new(
+                self.instrument_id,
+                BookAction::Delete,
+                order,
+                flags,
+                sequence,
+                ts_event,
+                ts_event,
+            );
+            if let Err(e) = tree.apply_delta_unchecked(&delta) {
+                log::error!("Failed to apply delete to L2 tree backend: {e}");
+            }
+        }
+
         match order.side.as_specified() {
             OrderSideSpecified::Buy => self.bids.delete(order, sequence, ts_event),
             OrderSideSpecified::Sell => self.asks.delete(order, sequence, ts_event),
@@ -147,6 +290,9 @@ impl OrderBook {
 
     /// Clears all orders from both sides of the book.
     pub fn clear(&mut self, sequence: u64, ts_event: UnixNanos) {
+        if let Some(tree) = &mut self.l2_tree {
+            tree.clear(sequence, ts_event);
+        }
         self.bids.clear();
         self.asks.clear();
         self.increment(sequence, ts_event);
@@ -154,12 +300,18 @@ impl OrderBook {
 
     /// Clears all bid orders from the book.
     pub fn clear_bids(&mut self, sequence: u64, ts_event: UnixNanos) {
+        if let Some(tree) = &mut self.l2_tree {
+            tree.clear_bids(sequence, ts_event);
+        }
         self.bids.clear();
         self.increment(sequence, ts_event);
     }
 
     /// Clears all ask orders from the book.
     pub fn clear_asks(&mut self, sequence: u64, ts_event: UnixNanos) {
+        if let Some(tree) = &mut self.l2_tree {
+            tree.clear_asks(sequence, ts_event);
+        }
         self.asks.clear();
         self.increment(sequence, ts_event);
     }
@@ -247,6 +399,7 @@ impl OrderBook {
         }
 
         self.increment(self.sequence, self.ts_last);
+        self.rebuild_l2_tree_from_ladders();
 
         if removed_levels.is_empty() {
             None
@@ -480,6 +633,10 @@ impl OrderBook {
         &mut self,
         depth: &OrderBookDepth10,
     ) -> Result<(), BookIntegrityError> {
+        if let Some(tree) = &mut self.l2_tree {
+            tree.apply_depth_unchecked(depth)?;
+        }
+
         self.bids.clear();
         self.asks.clear();
 

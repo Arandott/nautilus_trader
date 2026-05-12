@@ -1,0 +1,38 @@
+{
+  "parse_only": {
+    "avg_elapsed_ns": 37145420624,
+    "avg_peak_resident_bytes": 29218133,
+    "avg_query_ns": 0,
+    "avg_updates_per_sec": 269220.8076058341,
+    "max_query_ns": 0,
+    "runs": 3,
+    "total_deltas": 10000000
+  },
+  "replay_only": {
+    "avg_elapsed_ns": 54166744829,
+    "avg_peak_resident_bytes": 53476010,
+    "avg_query_ns": 0,
+    "avg_updates_per_sec": 184617.3429997747,
+    "max_query_ns": 0,
+    "runs": 3,
+    "total_deltas": 10000000
+  },
+  "replay_periodic_query_q100": {
+    "avg_elapsed_ns": 55005624580,
+    "avg_peak_resident_bytes": 53414570,
+    "avg_query_ns": 3217,
+    "avg_updates_per_sec": 181800.112719842,
+    "max_query_ns": 225100,
+    "runs": 3,
+    "total_deltas": 10000000
+  },
+  "replay_periodic_query_q1000": {
+    "avg_elapsed_ns": 54244800138,
+    "avg_peak_resident_bytes": 53437781,
+    "avg_query_ns": 4909,
+    "avg_updates_per_sec": 184351.44676732764,
+    "max_query_ns": 23470,
+    "runs": 3,
+    "total_deltas": 10000000
+  }
+}

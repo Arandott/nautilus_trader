@@ -80,6 +80,11 @@ class BacktestVenueConfig(NautilusConfig, frozen=True):
         The fee model for the venue.
     book_type : str, default 'L1_MBP'
         The default order book type.
+    l2_book_backend : str, default 'generic'
+        The internal backend to use for L2_MBP matching books.
+        Valid values are 'generic', 'tree', 'vec', and 'grid'. Only 'tree' is
+        currently wired through the production facade; 'vec' and 'grid' fall
+        back to generic.
     routing : bool, default False
         If multi-venue routing should be enabled for the execution client.
     reject_stop_orders : bool, default True
@@ -151,6 +156,7 @@ class BacktestVenueConfig(NautilusConfig, frozen=True):
     latency_model: ImportableLatencyModelConfig | None = None
     fee_model: ImportableFeeModelConfig | None = None
     book_type: BookType | str = "L1_MBP"
+    l2_book_backend: str = "generic"
     routing: bool = False
     reject_stop_orders: bool = True
     support_gtd_orders: bool = True

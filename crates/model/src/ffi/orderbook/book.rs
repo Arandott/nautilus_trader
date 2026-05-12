@@ -27,7 +27,7 @@ use crate::{
     },
     enums::{BookType, OrderSide, OrderSideSpecified},
     identifiers::InstrumentId,
-    orderbook::{OrderBook, analysis::book_check_integrity, ladder::BookPrice},
+    orderbook::{L2BookBackendKind, OrderBook, analysis::book_check_integrity, ladder::BookPrice},
     types::{ERROR_PRICE, Price, Quantity, price::PriceRaw},
 };
 
@@ -64,6 +64,19 @@ pub extern "C" fn orderbook_new(instrument_id: InstrumentId, book_type: BookType
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn orderbook_new_with_l2_backend(
+    instrument_id: InstrumentId,
+    book_type: BookType,
+    l2_backend: u8,
+) -> OrderBook_API {
+    OrderBook_API(Box::new(OrderBook::new_with_l2_backend(
+        instrument_id,
+        book_type,
+        L2BookBackendKind::from_u8(l2_backend),
+    )))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn orderbook_drop(book: OrderBook_API) {
     drop(book); // Memory freed here
 }
@@ -81,6 +94,11 @@ pub extern "C" fn orderbook_instrument_id(book: &OrderBook_API) -> InstrumentId 
 #[unsafe(no_mangle)]
 pub extern "C" fn orderbook_book_type(book: &OrderBook_API) -> BookType {
     book.book_type
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn orderbook_l2_backend(book: &OrderBook_API) -> u8 {
+    book.l2_backend().as_u8()
 }
 
 #[unsafe(no_mangle)]

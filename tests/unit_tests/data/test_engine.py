@@ -853,6 +853,36 @@ class TestDataEngine:
         # Assert
         assert self.data_engine.subscribed_order_book_deltas() == [ETHUSDT_BINANCE.id]
 
+    def test_execute_subscribe_order_book_depth10_with_tree_backend_updates_managed_book(self):
+        # Arrange
+        self.data_engine.register_client(self.binance_client)
+        self.binance_client.start()
+
+        self.data_engine.process(ETHUSDT_BINANCE)
+        subscribe = SubscribeOrderBook(
+            book_data_type=OrderBookDepth10,
+            client_id=None,  # Will route to the Binance venue
+            venue=BINANCE,
+            instrument_id=ETHUSDT_BINANCE.id,
+            book_type=BookType.L2_MBP,
+            depth=10,
+            managed=True,
+            params={"l2_book_backend": "tree"},
+            command_id=UUID4(),
+            ts_init=self.clock.timestamp_ns(),
+        )
+        depth = TestDataStubs.order_book_depth10(instrument=ETHUSDT_BINANCE)
+
+        # Act
+        self.data_engine.execute(subscribe)
+        self.data_engine.process(depth)
+
+        # Assert
+        book = self.cache.order_book(ETHUSDT_BINANCE.id)
+        assert book.l2_backend == "tree"
+        assert book.best_bid_price() == depth.bids[0].price
+        assert book.best_ask_price() == depth.asks[0].price
+
     def test_execute_unsubscribe_order_book_deltas_then_removes_handler(self):
         # Arrange
         self.data_engine.register_client(self.binance_client)

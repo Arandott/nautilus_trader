@@ -62,6 +62,7 @@ arrow = { workspace = true }
 async-stream = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
+clap = { workspace = true }
 csv = { workspace = true }
 derive_builder = { workspace = true }
 flate2 = { workspace = true }
@@ -115,6 +116,26 @@ doc = false
 [[bin]]
 name = "stream_deltas_bench"
 path = "bin/stream_deltas_bench.rs"
+doc = false
+
+[[bin]]
+name = "tardis-l2-baseline"
+path = "bin/l2_baseline.rs"
+doc = false
+
+[[bin]]
+name = "tardis-l2-grid-diagnostics"
+path = "bin/l2_grid_diagnostics.rs"
+doc = false
+
+[[bin]]
+name = "tardis-l2-vec-diagnostics"
+path = "bin/l2_vec_diagnostics.rs"
+doc = false
+
+[[bin]]
+name = "tardis-l2-synthetic-matrix"
+path = "bin/l2_synthetic_matrix.rs"
 doc = false
 
 # Run with `cargo run --example tardis-data-tester -p nautilus-tardis`

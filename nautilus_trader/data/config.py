@@ -50,6 +50,11 @@ class DataEngineConfig(NautilusConfig, frozen=True):
         If quotes should be emitted on order book updates.
     emit_quotes_from_book_depths : bool, default False
         If quotes should be emitted on order book depth updates.
+    l2_book_backend : str, default 'generic'
+        The internal backend to use for managed L2_MBP order books.
+        Valid values are 'generic', 'tree', 'vec', and 'grid'. Only 'tree' is
+        currently wired through the production facade; 'vec' and 'grid' fall
+        back to generic until their full API surfaces are complete.
     external_clients : list[ClientId], optional
         Client IDs representing external data streams.
         Commands with these client IDs will be published on the message bus only;
@@ -69,5 +74,6 @@ class DataEngineConfig(NautilusConfig, frozen=True):
     buffer_deltas: bool = False
     emit_quotes_from_book: bool = False
     emit_quotes_from_book_depths: bool = False
+    l2_book_backend: str = "generic"
     external_clients: list[ClientId] | None = None
     debug: bool = False

@@ -1,0 +1,16 @@
+{
+  "name": "final_defense_deck",
+  "version": "1.0.0",
+  "description": "",
+  "main": "final_defense_l2_book_v2.js",
+  "scripts": {
+    "build": "node final_defense_l2_book_v2.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}

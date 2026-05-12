@@ -38,6 +38,7 @@ from nautilus_trader.model.orders.base cimport Order
 cdef class OrderBook(Data):
     cdef OrderBook_API _mem
     cdef BookType _book_type
+    cdef str _l2_backend
 
     cpdef void reset(self)
     cpdef void add(self, BookOrder order, uint64_t ts_event, uint8_t flags=*, uint64_t sequence=*)

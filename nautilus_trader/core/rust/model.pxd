@@ -2034,6 +2034,10 @@ cdef extern from "../includes/model.h":
 
     OrderBook_API orderbook_new(InstrumentId_t instrument_id, BookType book_type);
 
+    OrderBook_API orderbook_new_with_l2_backend(InstrumentId_t instrument_id,
+                                                BookType book_type,
+                                                uint8_t l2_backend);
+
     void orderbook_drop(OrderBook_API book);
 
     void orderbook_reset(OrderBook_API *book);
@@ -2041,6 +2045,8 @@ cdef extern from "../includes/model.h":
     InstrumentId_t orderbook_instrument_id(const OrderBook_API *book);
 
     BookType orderbook_book_type(const OrderBook_API *book);
+
+    uint8_t orderbook_l2_backend(const OrderBook_API *book);
 
     uint64_t orderbook_sequence(const OrderBook_API *book);
 

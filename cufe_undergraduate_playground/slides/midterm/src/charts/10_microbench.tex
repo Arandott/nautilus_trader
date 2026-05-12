@@ -1,0 +1,36 @@
+\documentclass[tikz,border=4pt]{standalone}
+\usepackage{ctex}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+\definecolor{PrimaryBlue}{HTML}{1E3A5F}
+\definecolor{PrimaryTeal}{HTML}{0F766E}
+\definecolor{AccentOrange}{HTML}{C26D2D}
+\definecolor{AccentGray}{HTML}{64748B}
+
+\begin{document}
+\begin{tikzpicture}
+  \begin{axis}[
+    width=16cm,
+    height=8.8cm,
+    ybar,
+    bar width=9pt,
+    ymin=0,
+    ylabel={ns},
+    symbolic x coords={update,insert,delete,best,top10},
+    xtick=data,
+    xticklabels={更新已有价位,插入新价位,删除已有价位,最优价查询,Top-10 查询},
+    xticklabel style={font=\small,rotate=16,anchor=east},
+    ymajorgrids=true,
+    grid style={dashed,gray!30},
+    legend style={at={(0.5,1.02)},anchor=south,legend columns=4,font=\small},
+    enlarge x limits=0.14,
+  ]
+    \addplot+[fill=AccentGray!65,draw=AccentGray!90] table[x=label,y=baseline,col sep=comma]{../data/microbench_ns.csv};
+    \addplot+[fill=PrimaryBlue!70,draw=PrimaryBlue] table[x=label,y=l2tree,col sep=comma]{../data/microbench_ns.csv};
+    \addplot+[fill=AccentOrange!80,draw=AccentOrange!95] table[x=label,y=l2vec,col sep=comma]{../data/microbench_ns.csv};
+    \addplot+[fill=PrimaryTeal!75,draw=PrimaryTeal!95] table[x=label,y=l2grid,col sep=comma]{../data/microbench_ns.csv};
+    \legend{Baseline,L2TreeBook,L2VecBook,L2GridBook}
+  \end{axis}
+\end{tikzpicture}
+\end{document}

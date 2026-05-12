@@ -3050,6 +3050,10 @@ struct Price_t synthetic_instrument_calculate(struct SyntheticInstrument_API *sy
 
 struct OrderBook_API orderbook_new(struct InstrumentId_t instrument_id, enum BookType book_type);
 
+struct OrderBook_API orderbook_new_with_l2_backend(struct InstrumentId_t instrument_id,
+                                                   enum BookType book_type,
+                                                   uint8_t l2_backend);
+
 void orderbook_drop(struct OrderBook_API book);
 
 void orderbook_reset(struct OrderBook_API *book);
@@ -3057,6 +3061,8 @@ void orderbook_reset(struct OrderBook_API *book);
 struct InstrumentId_t orderbook_instrument_id(const struct OrderBook_API *book);
 
 enum BookType orderbook_book_type(const struct OrderBook_API *book);
+
+uint8_t orderbook_l2_backend(const struct OrderBook_API *book);
 
 uint64_t orderbook_sequence(const struct OrderBook_API *book);
 

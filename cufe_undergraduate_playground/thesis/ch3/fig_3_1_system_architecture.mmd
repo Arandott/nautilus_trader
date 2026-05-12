@@ -1,0 +1,71 @@
+flowchart LR
+    raw["原始 L2 数据集<br/>交易所增量盘口数据"]
+    parse["数据读取与解析<br/>生成统一增量语义"]
+    delta["统一增量流<br/>OrderBookDelta / OrderBookDeltas<br/>source of truth"]
+
+    subgraph run["运行与驱动层"]
+        replay["Replay Runner<br/>真实回放 / 周期查询"]
+        bench["Benchmark Harness<br/>Criterion / Microbench"]
+    end
+
+    subgraph system["基于 NautilusTrader 的本地 L2 订单簿维护系统"]
+        iface["L2BookOps 统一抽象<br/>创建 / 更新 / 查询 / 重置"]
+
+        subgraph impl["订单簿实现层"]
+            baseline["baseline<br/>OrderBook(BookType::L2_MBP)"]
+            tree["L2TreeBook"]
+            vec["L2VecBook"]
+            grid["L2GridBook"]
+        end
+
+        query["核心查询接口<br/>best bid / best ask / top-N"]
+        check["正确性校验<br/>parity / checksum / 状态对照"]
+        metric["性能测量<br/>throughput / query latency / peak RSS"]
+    end
+
+    subgraph output["结果整理与分析层"]
+        export["结构化结果输出<br/>runner logs / criterion output / JSON"]
+        agg["结果汇总与摘要生成<br/>comparison summary"]
+        thesis["第五章实验分析材料"]
+    end
+
+    raw --> parse --> delta
+    delta --> replay
+    delta --> bench
+
+    replay --> iface
+    bench --> iface
+
+    iface --> baseline
+    iface --> tree
+    iface --> vec
+    iface --> grid
+
+    baseline --> query
+    tree --> query
+    vec --> query
+    grid --> query
+
+    baseline --> check
+    tree --> check
+    vec --> check
+    grid --> check
+
+    replay --> metric
+    bench --> metric
+    query --> metric
+    check --> export
+    metric --> export
+    export --> agg --> thesis
+
+    classDef source fill:#f7f3e8,stroke:#b7791f,color:#1a202c;
+    classDef runtime fill:#ebf8ff,stroke:#2b6cb0,color:#1a202c;
+    classDef core fill:#edfdf3,stroke:#2f855a,color:#1a202c;
+    classDef impl fill:#fff7e6,stroke:#d69e2e,color:#1a202c;
+    classDef output fill:#f4f4f5,stroke:#4a5568,color:#1a202c;
+
+    class raw,parse,delta source;
+    class replay,bench runtime;
+    class iface,query,check,metric core;
+    class baseline,tree,vec,grid impl;
+    class export,agg,thesis output;

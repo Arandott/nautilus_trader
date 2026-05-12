@@ -26,8 +26,10 @@ use nautilus_common::{
 };
 use nautilus_model::{
     data::{OrderBookDeltas, OrderBookDepth10},
+    enums::{BookType, OrderSide},
     identifiers::{InstrumentId, Venue},
     instruments::Instrument,
+    orderbook::{L2BookBackendKind, L2BookOps, OrderBook},
 };
 use ustr::Ustr;
 
@@ -52,15 +54,111 @@ pub struct BookUpdater {
     pub id: Ustr,
     pub instrument_id: InstrumentId,
     pub cache: Rc<RefCell<Cache>>,
+    shadow_book: Option<RefCell<OrderBook>>,
 }
 
 impl BookUpdater {
     /// Creates a new [`BookUpdater`] instance.
-    pub fn new(instrument_id: &InstrumentId, cache: Rc<RefCell<Cache>>) -> Self {
+    pub fn new(
+        instrument_id: &InstrumentId,
+        book_type: BookType,
+        cache: Rc<RefCell<Cache>>,
+        shadow_l2_backend: Option<L2BookBackendKind>,
+    ) -> Self {
+        let shadow_book = shadow_l2_backend
+            .filter(|backend| {
+                book_type == BookType::L2_MBP && *backend != L2BookBackendKind::Generic
+            })
+            .map(|backend| {
+                RefCell::new(OrderBook::new_with_l2_backend(
+                    *instrument_id,
+                    book_type,
+                    backend,
+                ))
+            });
+
         Self {
             id: Ustr::from(&format!("{}-{}", stringify!(BookUpdater), instrument_id)),
             instrument_id: *instrument_id,
             cache,
+            shadow_book,
+        }
+    }
+
+    fn shadow_apply_deltas(&self, primary: &OrderBook, deltas: &OrderBookDeltas) {
+        let Some(shadow_book) = &self.shadow_book else {
+            return;
+        };
+
+        let mut shadow = shadow_book.borrow_mut();
+        if let Err(e) = shadow.apply_deltas(deltas) {
+            log::error!(
+                "Failed to apply deltas to shadow order book (instrument_id={}): {e}",
+                self.instrument_id
+            );
+            return;
+        }
+
+        self.compare_shadow(primary, &shadow, "deltas");
+    }
+
+    fn shadow_apply_depth(&self, primary: &OrderBook, depth: &OrderBookDepth10) {
+        let Some(shadow_book) = &self.shadow_book else {
+            return;
+        };
+
+        let mut shadow = shadow_book.borrow_mut();
+        if let Err(e) = shadow.apply_depth(depth) {
+            log::error!(
+                "Failed to apply depth to shadow order book (instrument_id={}): {e}",
+                self.instrument_id
+            );
+            return;
+        }
+
+        self.compare_shadow(primary, &shadow, "depth10");
+    }
+
+    fn compare_shadow(&self, primary: &OrderBook, shadow: &OrderBook, context: &str) {
+        let primary_top10_bids = primary.top_n_levels(OrderSide::Buy, 10);
+        let shadow_top10_bids = shadow.top_n_levels(OrderSide::Buy, 10);
+        let primary_top10_asks = primary.top_n_levels(OrderSide::Sell, 10);
+        let shadow_top10_asks = shadow.top_n_levels(OrderSide::Sell, 10);
+
+        if primary.sequence != shadow.sequence
+            || primary.ts_last != shadow.ts_last
+            || primary.update_count != shadow.update_count
+            || primary.best_bid_price() != shadow.best_bid_price()
+            || primary.best_ask_price() != shadow.best_ask_price()
+            || primary.best_bid_size() != shadow.best_bid_size()
+            || primary.best_ask_size() != shadow.best_ask_size()
+            || primary_top10_bids != shadow_top10_bids
+            || primary_top10_asks != shadow_top10_asks
+        {
+            log::error!(
+                "L2 shadow divergence after {context} (instrument_id={}, primary_backend={}, shadow_backend={}, primary_sequence={}, shadow_sequence={}, primary_ts_last={}, shadow_ts_last={}, primary_update_count={}, shadow_update_count={}, primary_best_bid={:?}/{:?}, shadow_best_bid={:?}/{:?}, primary_best_ask={:?}/{:?}, shadow_best_ask={:?}/{:?}, primary_bids={:?}, shadow_bids={:?}, primary_asks={:?}, shadow_asks={:?})",
+                self.instrument_id,
+                primary.l2_backend().as_str(),
+                shadow.l2_backend().as_str(),
+                primary.sequence,
+                shadow.sequence,
+                primary.ts_last,
+                shadow.ts_last,
+                primary.update_count,
+                shadow.update_count,
+                primary.best_bid_price(),
+                primary.best_bid_size(),
+                shadow.best_bid_price(),
+                shadow.best_bid_size(),
+                primary.best_ask_price(),
+                primary.best_ask_size(),
+                shadow.best_ask_price(),
+                shadow.best_ask_size(),
+                primary_top10_bids,
+                shadow_top10_bids,
+                primary_top10_asks,
+                shadow_top10_asks,
+            );
         }
     }
 }
@@ -75,9 +173,12 @@ impl Handler<OrderBookDeltas> for BookUpdater {
             .cache
             .borrow_mut()
             .order_book_mut(&deltas.instrument_id)
-            && let Err(e) = book.apply_deltas(deltas)
         {
-            log::error!("Failed to apply deltas: {e}");
+            if let Err(e) = book.apply_deltas(deltas) {
+                log::error!("Failed to apply deltas: {e}");
+                return;
+            }
+            self.shadow_apply_deltas(book, deltas);
         }
     }
 }
@@ -88,10 +189,12 @@ impl Handler<OrderBookDepth10> for BookUpdater {
     }
 
     fn handle(&self, depth: &OrderBookDepth10) {
-        if let Some(book) = self.cache.borrow_mut().order_book_mut(&depth.instrument_id)
-            && let Err(e) = book.apply_depth(depth)
-        {
-            log::error!("Failed to apply depth: {e}");
+        if let Some(book) = self.cache.borrow_mut().order_book_mut(&depth.instrument_id) {
+            if let Err(e) = book.apply_depth(depth) {
+                log::error!("Failed to apply depth: {e}");
+                return;
+            }
+            self.shadow_apply_depth(book, depth);
         }
     }
 }

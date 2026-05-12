@@ -80,6 +80,11 @@ path = "benches/book_iai.rs"
 harness = false
 
 [[bench]]
+name = "l2_book_baseline_criterion"
+path = "benches/l2_book_baseline_criterion.rs"
+harness = false
+
+[[bench]]
 name = "fixed_precision_criterion"
 path = "benches/fixed_precision_criterion.rs"
 harness = false

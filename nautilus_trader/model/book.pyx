@@ -71,8 +71,10 @@ from nautilus_trader.core.rust.model cimport orderbook_get_worst_px_for_quantity
 from nautilus_trader.core.rust.model cimport orderbook_has_ask
 from nautilus_trader.core.rust.model cimport orderbook_has_bid
 from nautilus_trader.core.rust.model cimport orderbook_instrument_id
+from nautilus_trader.core.rust.model cimport orderbook_l2_backend
 from nautilus_trader.core.rust.model cimport orderbook_midpoint
 from nautilus_trader.core.rust.model cimport orderbook_new
+from nautilus_trader.core.rust.model cimport orderbook_new_with_l2_backend
 from nautilus_trader.core.rust.model cimport orderbook_pprint_to_cstr
 from nautilus_trader.core.rust.model cimport orderbook_reset
 from nautilus_trader.core.rust.model cimport orderbook_sequence
@@ -101,6 +103,31 @@ from nautilus_trader.model.objects cimport Price
 from nautilus_trader.model.objects cimport Quantity
 
 
+cdef uint8_t _l2_backend_to_u8(str l2_backend) except *:
+    cdef str normalized = l2_backend.lower()
+    if normalized == "generic":
+        return 0
+    if normalized == "tree":
+        return 1
+    if normalized == "vec":
+        return 2
+    if normalized == "grid":
+        return 3
+    raise ValueError(
+        "invalid l2_backend, expected one of 'generic', 'tree', 'vec', or 'grid'"
+    )
+
+
+cdef str _l2_backend_from_u8(uint8_t l2_backend):
+    if l2_backend == 1:
+        return "tree"
+    if l2_backend == 2:
+        return "vec"
+    if l2_backend == 3:
+        return "grid"
+    return "generic"
+
+
 cdef class OrderBook(Data):
     """
     Provides an order book which can handle L1/L2/L3 granularity data.
@@ -118,12 +145,19 @@ cdef class OrderBook(Data):
         self,
         InstrumentId instrument_id not None,
         BookType book_type,
+        str l2_backend = "generic",
     ) -> None:
+        cdef uint8_t l2_backend_id = _l2_backend_to_u8(l2_backend)
+        if book_type != BookType.L2_MBP and l2_backend_id != 0:
+            raise ValueError("l2_backend can only be set for L2_MBP order books")
+
         self._book_type = book_type
-        self._mem = orderbook_new(
+        self._mem = orderbook_new_with_l2_backend(
             instrument_id._mem,
             book_type,
+            l2_backend_id,
         )
+        self._l2_backend = _l2_backend_from_u8(orderbook_l2_backend(&self._mem))
 
     def __del__(self) -> None:
         if self._mem._0 != NULL:
@@ -147,15 +181,20 @@ cdef class OrderBook(Data):
             self.ts_last,
             self.sequence,
             pickle.dumps(orders),
+            self.l2_backend,
         )
 
     def __setstate__(self, state):
         cdef InstrumentId instrument_id = InstrumentId.from_str_c(state[0])
         self._book_type = state[1]
-        self._mem = orderbook_new(
+        cdef str l2_backend = state[5] if len(state) > 5 else "generic"
+        cdef uint8_t l2_backend_id = _l2_backend_to_u8(l2_backend)
+        self._mem = orderbook_new_with_l2_backend(
             instrument_id._mem,
             state[1],
+            l2_backend_id,
         )
+        self._l2_backend = _l2_backend_from_u8(orderbook_l2_backend(&self._mem))
         cdef int64_t ts_last = state[2]
         cdef int64_t sequence = state[3]
         cdef list orders = pickle.loads(state[4])
@@ -187,6 +226,18 @@ cdef class OrderBook(Data):
 
         """
         return self._book_type
+
+    @property
+    def l2_backend(self) -> str:
+        """
+        Return the internal L2 book backend.
+
+        Returns
+        -------
+        str
+
+        """
+        return self._l2_backend
 
     @property
     def sequence(self) -> int:

@@ -1,0 +1,27 @@
+{
+  "best_bid_ask": {
+    "baseline_mean_ns": 19.448115259433152,
+    "improvement_pct": 14.9774773623179,
+    "l2tree_mean_ns": 16.53527819905406
+  },
+  "delete_existing_level": {
+    "baseline_mean_ns": 206.1977756541151,
+    "improvement_pct": 61.481353218023926,
+    "l2tree_mean_ns": 79.42459287650004
+  },
+  "insert_new_level": {
+    "baseline_mean_ns": 261.0862314045473,
+    "improvement_pct": 71.76460148468993,
+    "l2tree_mean_ns": 73.71873790567854
+  },
+  "top_10_query": {
+    "baseline_mean_ns": 106.09571773089341,
+    "improvement_pct": 28.438672661510072,
+    "l2tree_mean_ns": 75.92350385752493
+  },
+  "update_existing_level": {
+    "baseline_mean_ns": 77.21533117055536,
+    "improvement_pct": 77.37286919502954,
+    "l2tree_mean_ns": 17.471613985452695
+  }
+}

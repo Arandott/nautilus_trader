@@ -1,0 +1,206 @@
+phase: 2
+date: 2026-04-09
+status: frozen
+result_root: cufe_undergraduate_playground/results/comparisons/l2_grid_phase2
+
+workloads:
+  - id: real_shallow_control
+    type: real_replay
+    status: executable_now
+    question: 当前真实、稀疏、浅查询控制组下，grid 的负面结论是否仍然成立
+    hypothesis: 这不是 grid 的主场，保留它是为了防止 cherry-pick
+    primary_metrics:
+      - updates_per_sec
+      - peak_resident_bytes
+      - book_update_count
+    entrypoint:
+      kind: existing
+      file: crates/adapters/tardis/bin/l2_baseline.rs
+      bin: tardis-l2-baseline
+    primary_params:
+      dataset: /home/ubuntu/michael/binance-futures_incremental_book_L2_2024-12-10_BTCUSDT.csv.gz
+      mode: replay_only
+      depth: 10
+      limit: 10000000
+      books:
+        - baseline
+        - l2tree
+        - l2vec
+        - l2grid
+    output_dir: real_shallow_control_btcusdt_10m
+    command_template: |
+      source .venv/bin/activate && \
+      LD_LIBRARY_PATH=/home/ubuntu/.local/share/uv/python/cpython-3.13.9-linux-x86_64-gnu/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
+      cargo run -p nautilus-tardis --bin tardis-l2-baseline -- \
+        --dataset /home/ubuntu/michael/binance-futures_incremental_book_L2_2024-12-10_BTCUSDT.csv.gz \
+        --mode replay_only \
+        --book <baseline|l2tree|l2vec|l2grid> \
+        --depth 10 \
+        --limit 10000000 \
+        --output cufe_undergraduate_playground/results/comparisons/l2_grid_phase2/real_shallow_control_btcusdt_10m/<book>.json
+
+  - id: real_deep_query_sparse_replay
+    type: real_replay
+    status: executable_now
+    question: 在同一份真实稀疏 order book 上，仅把 query 变深，grid 的相对排名会不会改善
+    hypothesis: 如果 deep query alone 有效，grid 至少应在这个 family 里缩小与 l2tree 的差距
+    primary_metrics:
+      - avg_query_ns
+      - max_query_ns
+      - updates_per_sec
+      - peak_resident_bytes
+    entrypoint:
+      kind: existing
+      file: crates/adapters/tardis/bin/l2_baseline.rs
+      bin: tardis-l2-baseline
+    primary_params:
+      dataset: /home/ubuntu/michael/binance-futures_incremental_book_L2_2024-12-10_BTCUSDT.csv.gz
+      mode: replay_periodic_query
+      depth: 500
+      query_interval: 1000
+      limit: 10000000
+      books:
+        - baseline
+        - l2tree
+        - l2vec
+        - l2grid
+    bounded_variants:
+      depth:
+        - 100
+        - 1000
+      conditional_query_interval:
+        trigger: query_elapsed_ns / elapsed_ns < 0.10 for all books at depth=500 q=1000
+        allowed_value: 100
+    output_dir: real_deep_query_sparse_replay_btcusdt_10m
+    command_template: |
+      source .venv/bin/activate && \
+      LD_LIBRARY_PATH=/home/ubuntu/.local/share/uv/python/cpython-3.13.9-linux-x86_64-gnu/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
+      cargo run -p nautilus-tardis --bin tardis-l2-baseline -- \
+        --dataset /home/ubuntu/michael/binance-futures_incremental_book_L2_2024-12-10_BTCUSDT.csv.gz \
+        --mode replay_periodic_query \
+        --book <baseline|l2tree|l2vec|l2grid> \
+        --depth 500 \
+        --query-interval 1000 \
+        --limit 10000000 \
+        --output cufe_undergraduate_playground/results/comparisons/l2_grid_phase2/real_deep_query_sparse_replay_btcusdt_10m/depth500_q1000/<book>.json
+
+  - id: synthetic_dense_contiguous_home_court
+    type: synthetic
+    status: requires_new_runner
+    question: 当 pages 真正稠密且深度足够大时，grid 是否出现主场优势
+    hypothesis: 如果 grid 路线有价值，最先出现正信号的地方就应该是这里
+    primary_metrics:
+      - deep_query_mean_ns
+      - updates_per_sec
+      - peak_resident_bytes
+      - occupancy_distribution
+    entrypoint:
+      kind: new
+      proposed_file: crates/adapters/tardis/bin/l2_synthetic_matrix.rs
+      proposed_bin: tardis-l2-synthetic-matrix
+    primary_params:
+      levels_per_side: 1024
+      price_pattern: dense_contiguous
+      tick_step: 1
+      operations: 2000000
+      update_ratio: 60
+      insert_ratio: 20
+      delete_ratio: 20
+      query_depth: 500
+      query_interval: 100
+      books:
+        - baseline
+        - l2tree
+        - l2vec
+        - l2grid
+    bounded_variants:
+      query_depth:
+        - 100
+        - 1000
+    validity_checks:
+      - p50_active_slots_per_populated_page >= 16
+      - fraction_populated_pages_with_ge_32_slots >= 0.50
+    output_dir: synthetic_dense_contiguous_home_court_1024lvl
+    command_template: |
+      source .venv/bin/activate && \
+      LD_LIBRARY_PATH=/home/ubuntu/.local/share/uv/python/cpython-3.13.9-linux-x86_64-gnu/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
+      cargo run -p nautilus-tardis --bin tardis-l2-synthetic-matrix -- \
+        --book <baseline|l2tree|l2vec|l2grid> \
+        --levels-per-side 1024 \
+        --price-pattern dense_contiguous \
+        --tick-step 1 \
+        --operations 2000000 \
+        --update-ratio 60 \
+        --insert-ratio 20 \
+        --delete-ratio 20 \
+        --query-depth 500 \
+        --query-interval 100 \
+        --output cufe_undergraduate_playground/results/comparisons/l2_grid_phase2/synthetic_dense_contiguous_home_court_1024lvl/depth500_q100/<book>.json
+
+  - id: synthetic_sparse_page_control
+    type: synthetic
+    status: requires_new_runner
+    question: 如果保持同样的深度和 mix、但强制 pages 稀疏，grid 的优势是否消失
+    hypothesis: 如果 dense case 有优势而 sparse control 没有，更可能说明优势来自 density
+    primary_metrics:
+      - deep_query_mean_ns
+      - updates_per_sec
+      - peak_resident_bytes
+      - occupancy_distribution
+    entrypoint:
+      kind: new
+      proposed_file: crates/adapters/tardis/bin/l2_synthetic_matrix.rs
+      proposed_bin: tardis-l2-synthetic-matrix
+    primary_params:
+      levels_per_side: 1024
+      price_pattern: sparse_jump
+      tick_step: 64
+      operations: 2000000
+      update_ratio: 60
+      insert_ratio: 20
+      delete_ratio: 20
+      query_depth: 500
+      query_interval: 100
+      books:
+        - baseline
+        - l2tree
+        - l2vec
+        - l2grid
+    bounded_variants:
+      query_depth:
+        - 100
+        - 1000
+    validity_checks:
+      - p95_active_slots_per_populated_page <= 4
+      - p50_active_slots_per_populated_page <= 1
+    output_dir: synthetic_sparse_page_control_1024lvl
+    command_template: |
+      source .venv/bin/activate && \
+      LD_LIBRARY_PATH=/home/ubuntu/.local/share/uv/python/cpython-3.13.9-linux-x86_64-gnu/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
+      cargo run -p nautilus-tardis --bin tardis-l2-synthetic-matrix -- \
+        --book <baseline|l2tree|l2vec|l2grid> \
+        --levels-per-side 1024 \
+        --price-pattern sparse_jump \
+        --tick-step 64 \
+        --operations 2000000 \
+        --update-ratio 60 \
+        --insert-ratio 20 \
+        --delete-ratio 20 \
+        --query-depth 500 \
+        --query-interval 100 \
+        --output cufe_undergraduate_playground/results/comparisons/l2_grid_phase2/synthetic_sparse_page_control_1024lvl/depth500_q100/<book>.json
+
+matrix_expansion_rules:
+  - trigger: depth=500 q=1000 in real_deep_query_sparse_replay yields query share below 10 percent for all books
+    allowed_change: only add q=100
+  - trigger: synthetic_dense_contiguous_home_court fails dense validity checks
+    allowed_change: only retune generation to achieve density, do not add a new family
+  - trigger: dense and sparse synthetic families produce a clear ranking flip
+    allowed_change: add one larger active depth, 2048, as confirmation
+
+phase_exit_criteria:
+  - canonical workload families frozen at four
+  - every family has a question and a hypothesis
+  - every family has entrypoint status and parameter schema
+  - output directory naming is fixed
+  - expansion rules are explicit and bounded

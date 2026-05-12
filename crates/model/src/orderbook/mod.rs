@@ -20,6 +20,9 @@ pub mod analysis;
 pub mod book;
 pub mod display;
 pub mod error;
+pub mod l2;
+pub mod l2_grid;
+pub mod l2_vec;
 pub mod ladder;
 pub mod level;
 pub mod own;
@@ -31,6 +34,9 @@ mod tests;
 pub use crate::orderbook::{
     book::OrderBook,
     error::{BookIntegrityError, BookViewError, InvalidBookOperation},
+    l2::{L2BookBackendKind, L2BookOps, L2TreeBook},
+    l2_grid::L2GridBook,
+    l2_vec::L2VecBook,
     ladder::BookPrice,
     level::BookLevel,
     own::OwnBookOrder,

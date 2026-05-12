@@ -1,0 +1,125 @@
+{
+  "timestamp_utc": "2026-04-10T06:44:04.649424779+00:00",
+  "commit_id": "076fe374f769ab65654aa5d472f8970ae47607eb",
+  "dataset": "/home/ubuntu/michael/binance-futures_incremental_book_L2_2024-12-10_BTCUSDT.csv.gz",
+  "limit": 100000,
+  "sample_every_deltas": 10000,
+  "layout": {
+    "price_raw_size_bytes": 16,
+    "quantity_raw_size_bytes": 16,
+    "price_size_bytes": 32,
+    "quantity_size_bytes": 32,
+    "level_size_bytes": 32,
+    "vec_level_size_bytes": 24,
+    "l2_vec_book_size_bytes": 96
+  },
+  "replay_shift": {
+    "total_deltas": 100000,
+    "total_chunks": 10,
+    "sample_count": 10,
+    "final_snapshot": {
+      "bids": {
+        "active_levels": 3356,
+        "reserved_levels": 4096,
+        "spare_capacity": 740
+      },
+      "asks": {
+        "active_levels": 2927,
+        "reserved_levels": 4096,
+        "spare_capacity": 1169
+      }
+    },
+    "peak_snapshot": {
+      "bids": {
+        "active_levels": 3356,
+        "reserved_levels": 4096,
+        "spare_capacity": 740
+      },
+      "asks": {
+        "active_levels": 2927,
+        "reserved_levels": 4096,
+        "spare_capacity": 1169
+      }
+    },
+    "operations": {
+      "counts_by_kind": {
+        "AddInsertNew": 2002,
+        "Clear": 1,
+        "DeleteExisting": 19640,
+        "DeleteMissing": 4142,
+        "UpdateExistingSizeChange": 50294,
+        "UpdateMissingInsert": 23921
+      },
+      "total_shift_events": 43382,
+      "total_shifted_levels": 79409671,
+      "total_shifted_bytes": 2541109472,
+      "avg_shifted_levels_per_shift_event": 1830.4751048822093,
+      "avg_shifted_bytes_per_shift_event": 58575.2033562307,
+      "avg_shifted_bytes_per_delta": 25411.09472,
+      "max_shifted_levels": 3398,
+      "max_shifted_bytes": 108736,
+      "shift_histogram": [
+        {
+          "label": "0",
+          "count": 56618
+        },
+        {
+          "label": "1-4",
+          "count": 297
+        },
+        {
+          "label": "5-16",
+          "count": 710
+        },
+        {
+          "label": "17-64",
+          "count": 550
+        },
+        {
+          "label": "65-256",
+          "count": 1593
+        },
+        {
+          "label": "257-1024",
+          "count": 5985
+        },
+        {
+          "label": ">1024",
+          "count": 34247
+        }
+      ],
+      "insert_positions": {
+        "head": 783,
+        "middle": 23055,
+        "tail": 2085
+      },
+      "remove_positions": {
+        "head": 786,
+        "middle": 18760,
+        "tail": 94
+      }
+    },
+    "bids": {
+      "avg_active_levels_per_sample": 2666.9,
+      "p50_active_levels_per_sample": 2898,
+      "p95_active_levels_per_sample": 3356,
+      "max_active_levels": 3356,
+      "avg_reserved_levels_per_sample": 3686.4,
+      "max_reserved_levels": 4096,
+      "avg_spare_capacity_per_sample": 1019.5,
+      "max_spare_capacity": 1819,
+      "avg_utilization_per_sample": 0.738232421875
+    },
+    "asks": {
+      "avg_active_levels_per_sample": 2494.3,
+      "p50_active_levels_per_sample": 2744,
+      "p95_active_levels_per_sample": 3013,
+      "max_active_levels": 3013,
+      "avg_reserved_levels_per_sample": 3686.4,
+      "max_reserved_levels": 4096,
+      "avg_spare_capacity_per_sample": 1192.1,
+      "max_spare_capacity": 1852,
+      "avg_utilization_per_sample": 0.692578125
+    }
+  }
+}

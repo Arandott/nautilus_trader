@@ -226,6 +226,7 @@ cdef class DataEngine(Component):
         self._buffer_deltas = config.buffer_deltas
         self._emit_quotes_from_book = config.emit_quotes_from_book
         self._emit_quotes_from_book_depths = config.emit_quotes_from_book_depths
+        self._l2_book_backend = config.l2_book_backend
 
         if config.external_clients:
             self._external_clients = set(config.external_clients)
@@ -1028,6 +1029,7 @@ cdef class DataEngine(Component):
         cdef:
             list[Instrument] instruments
             str root
+            str l2_book_backend = command.params.get("l2_book_backend", self._l2_book_backend)
 
         # Create order book(s)
         if command.instrument_id.symbol.is_composite():
@@ -1035,9 +1037,9 @@ cdef class DataEngine(Component):
             instruments = self._cache.instruments(venue=command.instrument_id.venue, underlying=root)
 
             for instrument in instruments:
-                self._create_new_book(instrument.id, command.book_type)
+                self._create_new_book(instrument.id, command.book_type, l2_book_backend)
         else:
-            self._create_new_book(command.instrument_id, command.book_type)
+            self._create_new_book(command.instrument_id, command.book_type, l2_book_backend)
 
         cdef str topic = self._topic_cache.get_book_topic(command.data_type.type, command.instrument_id)
         if not self._msgbus.is_subscribed(
@@ -1050,10 +1052,11 @@ cdef class DataEngine(Component):
                 priority=10,
             )
 
-    cpdef void _create_new_book(self, InstrumentId instrument_id, BookType book_type):
+    cpdef void _create_new_book(self, InstrumentId instrument_id, BookType book_type, str l2_book_backend = "generic"):
         order_book = OrderBook(
             instrument_id=instrument_id,
             book_type=book_type,
+            l2_backend=l2_book_backend,
         )
         self._cache.add_order_book(order_book)
         self._log.debug(f"Created {type(order_book).__name__} for {instrument_id}")
@@ -2510,7 +2513,11 @@ cdef class DataEngine(Component):
             return
 
         book_type = response.params.get("book_type", BookType.L2_MBP)
-        order_book = OrderBook(instrument_id, book_type)
+        order_book = OrderBook(
+            instrument_id,
+            book_type,
+            l2_backend=response.params.get("l2_book_backend", self._l2_book_backend),
+        )
         original_start_ns = dt_to_unix_nanos(original_start_date)
 
         if original_start_ns <= delta.ts_init:

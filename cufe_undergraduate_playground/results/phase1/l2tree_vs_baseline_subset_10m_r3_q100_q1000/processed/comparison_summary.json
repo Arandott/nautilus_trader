@@ -1,0 +1,44 @@
+{
+  "baseline::replay_only": {
+    "baseline_avg_query_ns": 0,
+    "baseline_elapsed_s": 53.308580991,
+    "baseline_peak_mb": 51.06640625,
+    "baseline_updates_per_sec": 187590.00542481392,
+    "elapsed_reduction_pct": 22.27149001959822,
+    "l2tree_avg_query_ns": 0,
+    "l2tree_elapsed_s": 41.435965696,
+    "l2tree_peak_mb": 31.52994728088379,
+    "l2tree_updates_per_sec": 241336.8737769624,
+    "peak_mem_reduction_pct": 38.25696853127629,
+    "query_improvement_pct": null,
+    "throughput_gain_pct": 28.651243028877797
+  },
+  "baseline::replay_periodic_query::q100": {
+    "baseline_avg_query_ns": 3228,
+    "baseline_elapsed_s": 53.71985524,
+    "baseline_peak_mb": 51.078125,
+    "baseline_updates_per_sec": 186151.5648570153,
+    "elapsed_reduction_pct": 21.474701872260667,
+    "l2tree_avg_query_ns": 2095,
+    "l2tree_elapsed_s": 42.183676481,
+    "l2tree_peak_mb": 31.513020515441895,
+    "l2tree_updates_per_sec": 237071.93420148885,
+    "peak_mem_reduction_pct": 38.30427308081122,
+    "query_improvement_pct": 35.09913258983891,
+    "throughput_gain_pct": 27.35425264009247
+  },
+  "baseline::replay_periodic_query::q1000": {
+    "baseline_avg_query_ns": 4888,
+    "baseline_elapsed_s": 53.368341863,
+    "baseline_peak_mb": 51.05859375,
+    "baseline_updates_per_sec": 187379.40435977688,
+    "elapsed_reduction_pct": 21.77318826736133,
+    "l2tree_avg_query_ns": 2603,
+    "l2tree_elapsed_s": 41.748352314,
+    "l2tree_peak_mb": 31.540364265441895,
+    "l2tree_updates_per_sec": 239531.16320880034,
+    "peak_mem_reduction_pct": 38.22711918022244,
+    "query_improvement_pct": 46.747135842880525,
+    "throughput_gain_pct": 27.83217239227089
+  }
+}

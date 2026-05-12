@@ -1,0 +1,70 @@
+{
+  "baseline": {
+    "best_bid_ask": {
+      "mean_point_estimate": 19.448115259433152
+    },
+    "delete_existing_level": {
+      "mean_point_estimate": 206.1977756541151
+    },
+    "insert_new_level": {
+      "mean_point_estimate": 261.0862314045473
+    },
+    "top_10_query": {
+      "mean_point_estimate": 106.09571773089341
+    },
+    "update_existing_level": {
+      "mean_point_estimate": 77.21533117055536
+    }
+  },
+  "l2grid": {
+    "best_bid_ask": {
+      "mean_point_estimate": 45.53337405797074
+    },
+    "delete_existing_level": {
+      "mean_point_estimate": 300.7071559496239
+    },
+    "insert_new_level": {
+      "mean_point_estimate": 463.4191115808736
+    },
+    "top_10_query": {
+      "mean_point_estimate": 96.16187993577118
+    },
+    "update_existing_level": {
+      "mean_point_estimate": 31.36584902970541
+    }
+  },
+  "l2tree": {
+    "best_bid_ask": {
+      "mean_point_estimate": 16.53527819905406
+    },
+    "delete_existing_level": {
+      "mean_point_estimate": 79.42459287650004
+    },
+    "insert_new_level": {
+      "mean_point_estimate": 73.71873790567854
+    },
+    "top_10_query": {
+      "mean_point_estimate": 75.92350385752493
+    },
+    "update_existing_level": {
+      "mean_point_estimate": 17.471613985452695
+    }
+  },
+  "l2vec": {
+    "best_bid_ask": {
+      "mean_point_estimate": 10.473402333901117
+    },
+    "delete_existing_level": {
+      "mean_point_estimate": 69.04896405221963
+    },
+    "insert_new_level": {
+      "mean_point_estimate": 59.23869915777653
+    },
+    "top_10_query": {
+      "mean_point_estimate": 18.464955908917812
+    },
+    "update_existing_level": {
+      "mean_point_estimate": 28.449700273306156
+    }
+  }
+}

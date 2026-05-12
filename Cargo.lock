@@ -5941,6 +5941,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "chrono",
+ "clap",
  "csv",
  "derive_builder",
  "dotenvy",

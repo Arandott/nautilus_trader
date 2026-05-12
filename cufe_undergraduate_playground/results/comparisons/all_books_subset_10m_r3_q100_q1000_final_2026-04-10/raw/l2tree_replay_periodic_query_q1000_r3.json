@@ -1,0 +1,23 @@
+{
+  "dataset": "/home/ubuntu/michael/binance-futures_incremental_book_L2_2024-12-10_BTCUSDT.csv.gz",
+  "book": "l2tree",
+  "mode": "replay_periodic_query",
+  "depth": 10,
+  "chunk_size": 10000,
+  "limit": 10000000,
+  "query_interval": 1000,
+  "instrument_id": "BTCUSDT.BINANCE",
+  "total_chunks": 1000,
+  "total_deltas": 10000000,
+  "elapsed_ns": 41959655269,
+  "updates_per_sec": 238324.16963129936,
+  "query_count": 10000,
+  "query_elapsed_ns": 26006441,
+  "avg_query_ns": 2600,
+  "max_query_ns": 19860,
+  "book_update_count": 10000000,
+  "current_resident_bytes": 34033664,
+  "peak_resident_bytes": 34033664,
+  "commit_id": "076fe374f769ab65654aa5d472f8970ae47607eb",
+  "timestamp_utc": "2026-04-10T07:13:09.738520249+00:00"
+}

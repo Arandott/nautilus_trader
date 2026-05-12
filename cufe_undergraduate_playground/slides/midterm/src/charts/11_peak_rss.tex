@@ -1,0 +1,36 @@
+\documentclass[tikz,border=4pt]{standalone}
+\usepackage{ctex}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+\definecolor{PrimaryBlue}{HTML}{1E3A5F}
+\definecolor{PrimaryTeal}{HTML}{0F766E}
+\definecolor{AccentOrange}{HTML}{C26D2D}
+\definecolor{AccentGray}{HTML}{64748B}
+
+\begin{document}
+\begin{tikzpicture}
+  \begin{axis}[
+    width=16cm,
+    height=8.5cm,
+    ybar,
+    bar width=10pt,
+    ymin=0,
+    ylabel={MB},
+    symbolic x coords={replay,q100,q1000},
+    xtick=data,
+    xticklabels={纯回放,周期查询 q=100,周期查询 q=1000},
+    xticklabel style={font=\small,align=center},
+    ymajorgrids=true,
+    grid style={dashed,gray!30},
+    legend style={at={(0.5,1.02)},anchor=south,legend columns=4,font=\small},
+    enlarge x limits=0.18,
+  ]
+    \addplot+[fill=AccentGray!65,draw=AccentGray!90] table[x=label,y=baseline,col sep=comma]{../data/peak_rss_mb.csv};
+    \addplot+[fill=PrimaryBlue!70,draw=PrimaryBlue] table[x=label,y=l2tree,col sep=comma]{../data/peak_rss_mb.csv};
+    \addplot+[fill=AccentOrange!80,draw=AccentOrange!95] table[x=label,y=l2vec,col sep=comma]{../data/peak_rss_mb.csv};
+    \addplot+[fill=PrimaryTeal!75,draw=PrimaryTeal!95] table[x=label,y=l2grid,col sep=comma]{../data/peak_rss_mb.csv};
+    \legend{Baseline,L2TreeBook,L2VecBook,L2GridBook}
+  \end{axis}
+\end{tikzpicture}
+\end{document}

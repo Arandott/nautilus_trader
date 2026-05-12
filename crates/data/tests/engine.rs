@@ -54,7 +54,7 @@ use nautilus_common::{
     },
     testing::wait_until,
 };
-use nautilus_core::{UUID4, UnixNanos};
+use nautilus_core::{Params, UUID4, UnixNanos};
 use nautilus_data::{client::DataClientAdapter, engine::DataEngine};
 #[cfg(feature = "defi")]
 use nautilus_model::defi::tick_map::tick_math::get_tick_at_sqrt_ratio;
@@ -69,16 +69,17 @@ use nautilus_model::defi::{
 use nautilus_model::identifiers::InstrumentId;
 use nautilus_model::{
     data::{
-        Bar, BarType, Data, DataType, FundingRateUpdate, IndexPriceUpdate, MarkPriceUpdate,
-        OrderBookDeltas, OrderBookDeltas_API, OrderBookDepth10, QuoteTick, TradeTick,
+        Bar, BarType, BookOrder, Data, DataType, FundingRateUpdate, IndexPriceUpdate,
+        MarkPriceUpdate, OrderBookDeltas, OrderBookDeltas_API, OrderBookDepth10, QuoteTick,
+        TradeTick,
         stubs::{OrderBookDeltaTestBuilder, stub_delta, stub_deltas, stub_depth10},
     },
-    enums::{BookType, PriceType},
+    enums::{BookType, OrderSide, PriceType},
     identifiers::{ClientId, TraderId, Venue},
     instruments::{CurrencyPair, Instrument, InstrumentAny, stubs::audusd_sim},
-    orderbook::OrderBook,
+    orderbook::{L2BookBackendKind, OrderBook},
     stubs::TestDefault,
-    types::Price,
+    types::{Price, Quantity},
 };
 use rstest::*;
 
@@ -1621,6 +1622,118 @@ fn test_process_book_depth10(
 
     assert_eq!(messages.len(), 1);
     assert!(messages.contains(&depth));
+}
+
+#[rstest]
+fn test_managed_l2_depth10_subscription_with_tree_backend_updates_cache(
+    audusd_sim: CurrencyPair,
+    data_engine: Rc<RefCell<DataEngine>>,
+    data_client: DataClientAdapter,
+) {
+    let client_id = data_client.client_id;
+    let venue = data_client.venue;
+    data_engine.borrow_mut().register_client(data_client, None);
+
+    let mut params = Params::new();
+    params.insert("l2_book_backend".to_string(), "tree".into());
+    let sub = SubscribeBookDepth10::new(
+        audusd_sim.id,
+        BookType::L2_MBP,
+        Some(client_id),
+        venue,
+        UUID4::new(),
+        UnixNanos::default(),
+        None,
+        true,
+        None,
+        Some(params),
+    );
+    let cmd = DataCommand::Subscribe(SubscribeCommand::BookDepth10(sub));
+
+    data_engine.borrow_mut().execute(cmd);
+
+    let mut depth = stub_depth10();
+    depth.instrument_id = audusd_sim.id;
+    let best_bid = depth.bids[0];
+    let best_ask = depth.asks[0];
+
+    data_engine.borrow_mut().process_data(Data::from(depth));
+
+    let data_engine = data_engine.borrow();
+    let cache = data_engine.get_cache();
+    let book = cache
+        .order_book(&audusd_sim.id)
+        .expect("managed subscription should create order book in cache");
+
+    assert_eq!(book.l2_backend(), L2BookBackendKind::Tree);
+    assert_eq!(book.best_bid_price(), Some(best_bid.price));
+    assert_eq!(book.best_bid_size(), Some(best_bid.size));
+    assert_eq!(book.best_ask_price(), Some(best_ask.price));
+    assert_eq!(book.best_ask_size(), Some(best_ask.size));
+}
+
+#[rstest]
+fn test_managed_l2_deltas_subscription_with_tree_shadow_backend_updates_cache(
+    audusd_sim: CurrencyPair,
+    data_engine: Rc<RefCell<DataEngine>>,
+    data_client: DataClientAdapter,
+) {
+    let client_id = data_client.client_id;
+    let venue = data_client.venue;
+    data_engine.borrow_mut().register_client(data_client, None);
+
+    let mut params = Params::new();
+    params.insert("l2_book_shadow_backend".to_string(), "tree".into());
+    let sub = SubscribeBookDeltas::new(
+        audusd_sim.id,
+        BookType::L2_MBP,
+        Some(client_id),
+        venue,
+        UUID4::new(),
+        UnixNanos::default(),
+        None,
+        true,
+        None,
+        Some(params),
+    );
+    let cmd = DataCommand::Subscribe(SubscribeCommand::BookDeltas(sub));
+
+    data_engine.borrow_mut().execute(cmd);
+
+    let mut bid_builder = OrderBookDeltaTestBuilder::new(audusd_sim.id);
+    let bid = bid_builder
+        .book_order(BookOrder::new(
+            OrderSide::Buy,
+            Price::from("1.0000"),
+            Quantity::from("100"),
+            1,
+        ))
+        .build();
+    let mut ask_builder = OrderBookDeltaTestBuilder::new(audusd_sim.id);
+    let ask = ask_builder
+        .book_order(BookOrder::new(
+            OrderSide::Sell,
+            Price::from("1.0002"),
+            Quantity::from("200"),
+            2,
+        ))
+        .sequence(2)
+        .build();
+    let deltas = OrderBookDeltas_API::new(OrderBookDeltas::new(audusd_sim.id, vec![bid, ask]));
+
+    data_engine.borrow_mut().process_data(Data::Deltas(deltas));
+
+    let data_engine = data_engine.borrow();
+    let cache = data_engine.get_cache();
+    let book = cache
+        .order_book(&audusd_sim.id)
+        .expect("managed subscription should create order book in cache");
+
+    assert_eq!(book.l2_backend(), L2BookBackendKind::Generic);
+    assert_eq!(book.best_bid_price(), Some(Price::from("1.0000")));
+    assert_eq!(book.best_bid_size(), Some(Quantity::from("100")));
+    assert_eq!(book.best_ask_price(), Some(Price::from("1.0002")));
+    assert_eq!(book.best_ask_size(), Some(Quantity::from("200")));
 }
 
 #[rstest]

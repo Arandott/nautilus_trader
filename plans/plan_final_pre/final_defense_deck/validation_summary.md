@@ -12,6 +12,7 @@ Generated deck: `final_defense_l2_book_v2.pptx`
 - `python-pptx` slide count check: 12 slides.
 - `SLIDES_LAYOUT_WARN=1 node final_defense_l2_book_v2.js`: no severe text/text overlap remains; remaining warnings are intentional editable-shape overlaps (cover background layer and bar-track/bar-fill pairs).
 - Targeted fixes applied after review: slide 5 implementation branch layout, slide 6/8 metric-card text sizing, slide 10 chart labels and conclusion box, darker body-page color tone.
+- Final slide update: added an open-source/reproducibility strip with the GitHub branch link and `README_L2_BOOK.md` entry.
 
 ## Notes
 

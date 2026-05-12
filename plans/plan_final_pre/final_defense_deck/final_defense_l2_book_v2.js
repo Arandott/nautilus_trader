@@ -91,6 +91,24 @@ function panel(slide, x, y, w, h, fill = C.paper, line = C.line) {
   });
 }
 
+function linkText(slide, str, url, x, y, w, h, opts = {}) {
+  slide.addText(str, {
+    x,
+    y,
+    w,
+    h,
+    fontFace: FONT,
+    fontSize: opts.size ?? 8,
+    bold: opts.bold ?? false,
+    color: opts.color ?? C.white,
+    align: opts.align ?? "left",
+    valign: opts.valign ?? "top",
+    margin: 0,
+    fit: "shrink",
+    hyperlink: { url },
+  });
+}
+
 function header(slide, n, title, insight) {
   bg(slide);
   text(slide, `0${n}`.slice(-2), 0.72, 0.38, 0.58, 0.24, {
@@ -705,6 +723,46 @@ function miniFlow(slide, x, y, w, h, title, color) {
   text(slide, "扩大数据集、继续生产化 Tree、优化 Vec/Grid 条件场景、完善 live 前验证。", 7.48, 5.58, 4.42, 0.16, {
     size: 8.8,
     color: C.ink,
+  });
+  panel(slide, 1.08, 6.12, 11.18, 0.58, C.cover2, C.cover2);
+  slide.addShape(S.rect, {
+    x: 1.08,
+    y: 6.12,
+    w: 0.08,
+    h: 0.58,
+    fill: { color: C.teal },
+    line: { color: C.teal, transparency: 100 },
+  });
+  text(slide, "开源与复现实验", 1.38, 6.28, 1.52, 0.18, {
+    size: 8.6,
+    bold: true,
+    color: C.white,
+  });
+  text(slide, "Code", 3.36, 6.22, 0.48, 0.14, { size: 6.6, bold: true, color: C.teal });
+  linkText(
+    slide,
+    "github.com/Arandott/nautilus_trader/tree/cbw/l2-book-upload",
+    "https://github.com/Arandott/nautilus_trader/tree/cbw/l2-book-upload",
+    3.36,
+    6.39,
+    4.1,
+    0.16,
+    { size: 6.8, color: C.white },
+  );
+  text(slide, "README", 8.0, 6.22, 0.78, 0.14, { size: 6.6, bold: true, color: C.teal });
+  linkText(
+    slide,
+    "README_L2_BOOK.md",
+    "https://github.com/Arandott/nautilus_trader/blob/cbw/l2-book-upload/README_L2_BOOK.md",
+    8.0,
+    6.39,
+    2.0,
+    0.16,
+    { size: 6.8, color: C.white },
+  );
+  text(slide, "包含 benchmark、真实 replay、Rust/Python e2e 运行入口", 10.2, 6.34, 1.76, 0.18, {
+    size: 6.4,
+    color: "C8D7E2",
   });
 }
 
